@@ -5,10 +5,20 @@ unzip.py のテスト
 
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from kaito.unzip import ZipEntry, extract, extract_all, list_entries
+from kaito.unzip import (
+    ARCHIVE_EXTENSIONS,
+    ZipEntry,
+    extract,
+    extract_all,
+    extract_archive,
+    is_supported,
+    list_archive,
+    list_entries,
+)
 
 
 class TestZipEntry:
@@ -161,3 +171,87 @@ class TestExtractEdgeCases:
         dest = tmp_dir / "out"
         extract_all(empty_zip, dest)
         assert not dest.exists()
+
+
+class TestArchiveExtensions:
+    """is_supported / ARCHIVE_EXTENSIONS のテスト"""
+
+    def test_is_supported_zip(self) -> None:
+        assert is_supported("test.zip")
+
+    def test_is_supported_rar(self) -> None:
+        assert is_supported("test.rar")
+
+    def test_is_supported_7z(self) -> None:
+        assert is_supported("test.7z")
+
+    def test_is_supported_case_insensitive(self) -> None:
+        assert is_supported("test.ZIP")
+        assert is_supported("test.RAR")
+
+    def test_is_supported_unsupported(self) -> None:
+        assert not is_supported("test.tar.gz")
+        assert not is_supported("test.txt")
+
+    def test_archive_extensions_set(self) -> None:
+        assert ARCHIVE_EXTENSIONS == {".zip", ".rar", ".7z"}
+
+
+class TestListArchive:
+    """list_archive のテスト"""
+
+    def test_list_zip(self, normal_zip: Path) -> None:
+        entries, encrypted = list_archive(normal_zip)
+        assert len(entries) == 3
+        assert not encrypted
+
+    def test_list_rar_success(self, tmp_path: Path) -> None:
+        rar = tmp_path / "test.rar"
+        rar.touch()
+        with (
+            patch("kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"]),
+        ):
+            entries, encrypted = list_archive(rar)
+            assert len(entries) == 2
+            assert entries[0].name == "file.txt"
+            assert entries[0].is_dir is False
+            assert entries[1].name == "dir/"
+            assert entries[1].is_dir
+            assert not encrypted
+
+    def test_list_rar_from_patool(self, tmp_path: Path) -> None:
+        rar = tmp_path / "test.rar"
+        rar.touch()
+        with (
+            pytest.raises(RuntimeError, match="アーカイブの一覧取得に失敗"),
+        ):
+            list_archive(rar)
+
+    def test_list_unsupported(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.tar.gz"
+        f.touch()
+        with pytest.raises(ValueError):
+            list_archive(f)
+
+
+class TestExtractArchive:
+    """extract_archive のテスト"""
+
+    def test_extract_zip(self, normal_zip: Path, tmp_dir: Path) -> None:
+        dest = tmp_dir / "out"
+        extract_archive(normal_zip, dest)
+        assert (dest / "hello.txt").read_text() == "Hello World"
+
+    def test_extract_rar_from_patool(self, tmp_path: Path) -> None:
+        rar = tmp_path / "test.rar"
+        rar.touch()
+        with (
+            pytest.raises(RuntimeError, match="アーカイブの展開に失敗"),
+        ):
+            extract_archive(rar, tmp_path / "out")
+
+    def test_extract_unsupported(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.txt"
+        f.touch()
+        with pytest.raises(ValueError, match="未対応"):
+            extract_archive(f, tmp_path / "out")

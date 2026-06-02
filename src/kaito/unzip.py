@@ -1,7 +1,7 @@
 """
 src/kaito/unzip.py
-ZIPファイル解凍のコアロジック
-Python標準のzipfileモジュールで解凍処理を行う
+ZIP/RAR/7zファイル解凍のコアロジック
+ZIPは標準zipfile、RAR/7zはpatoolibで処理
 関連: gui/unzip_app.py (このモジュールを呼ぶGUI)
 """
 
@@ -11,10 +11,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol
 
+import patoolib
+
 
 @dataclass
 class ZipEntry:
-    """ZIP内の1エントリの情報"""
+    """アーカイブ内の1エントリの情報"""
     name: str
     size: int
     compressed_size: int
@@ -29,6 +31,60 @@ ProgressCallback = Callable[[int, int, str], None]
 class PasswordPrompt(Protocol):
     """パスワード入力のためのプロトコル"""
     def __call__(self) -> str | None: ...
+
+
+ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
+
+
+def is_supported(path: str | Path) -> bool:
+    """対応アーカイブ形式かを判定"""
+    return Path(path).suffix.lower() in ARCHIVE_EXTENSIONS
+
+
+def list_archive(
+    path: str | Path,
+) -> tuple[list[ZipEntry], bool]:
+    """アーカイブの内容一覧を返す"""
+    ext = Path(path).suffix.lower()
+    if ext == ".zip":
+        return list_entries(path)
+    elif ext in ARCHIVE_EXTENSIONS:
+        return _list_patool_archive(path)
+    else:
+        raise ValueError(f"未対応のアーカイブ形式です: {ext}")
+
+
+def _list_patool_archive(path: str | Path) -> tuple[list[ZipEntry], bool]:
+    """patoolibでアーカイブの内容一覧を取得（非ZIP形式）"""
+    try:
+        names = patoolib.list_archive(str(path)) or []
+    except Exception as e:
+        raise RuntimeError(f"アーカイブの一覧取得に失敗しました: {e}")
+    entries = [
+        ZipEntry(name=n, size=0, compressed_size=0, modified=datetime.now(), is_dir=n.endswith("/"))
+        for n in names
+    ]
+    # patoolibは暗号化情報を提供しない
+    return entries, False
+
+
+def extract_archive(
+    path: str | Path,
+    dest: str | Path,
+    password: str | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> None:
+    """アーカイブを展開する"""
+    ext = Path(path).suffix.lower()
+    if ext == ".zip":
+        extract_all(path, dest, password=password, on_progress=on_progress)
+    elif ext in ARCHIVE_EXTENSIONS:
+        try:
+            patoolib.extract_archive(str(path), outdir=str(dest), password=password)
+        except Exception as e:
+            raise RuntimeError(f"アーカイブの展開に失敗しました: {e}")
+    else:
+        raise ValueError(f"未対応のアーカイブ形式です: {ext}")
 
 
 def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:

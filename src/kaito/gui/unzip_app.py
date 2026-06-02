@@ -16,7 +16,12 @@ import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
 
 from kaito.settings import SettingsManager
-from kaito.unzip import ZipEntry, extract_all, list_entries
+from kaito.unzip import (
+    ZipEntry,
+    extract_archive,
+    is_supported,
+    list_archive,
+)
 
 _DROP_BORDER_COLOR = "#3a7ebf"
 _DROP_HIGHLIGHT_COLOR = "#1a6ebf"
@@ -57,7 +62,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # 起動時にファイルが渡されたら読み込む
         if cli_path is not None:
-            self._load_zip(cli_path)
+            self._load_archive(cli_path)
 
     def _build_ui(self) -> None:  # pragma: no cover
         self.grid_columnconfigure(0, weight=1)
@@ -92,7 +97,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._drop_label = ctk.CTkLabel(
             self._drop_frame,
-            text="ZIPファイルをここにドラッグ&ドロップ\nまたは「参照」ボタンで選択",
+            text="ZIP/RAR/7zファイルをここにドラッグ&ドロップ\nまたは「参照」ボタンで選択",
             font=ctk.CTkFont(size=20),
             text_color="gray",
         )
@@ -202,23 +207,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # パスを抽出: {} で囲まれている場合と複数ファイルに対応
         path_str = raw.strip("{}").split()[0] if " " in raw else raw.strip("{}")
         path = Path(path_str)
-        if path.suffix.lower() == ".zip" and path.exists():
-            self._load_zip(path)
+        if is_supported(path) and path.exists():
+            self._load_archive(path)
 
     def _on_browse(self) -> None:
         path = filedialog.askopenfilename(
-            title="ZIPファイルを選択",
-            filetypes=[("ZIPファイル", "*.zip"), ("すべてのファイル", "*.*")],
+            title="アーカイブファイルを選択",
+            filetypes=[
+                ("アーカイブ", "*.zip *.rar *.7z"),
+                ("ZIP", "*.zip"),
+                ("RAR", "*.rar"),
+                ("7z", "*.7z"),
+                ("すべてのファイル", "*.*"),
+            ],
         )
         if not path:
             return
-        self._load_zip(Path(path))
+        self._load_archive(Path(path))
 
-    def _load_zip(self, path: Path) -> None:
+    def _load_archive(self, path: Path) -> None:
         try:
-            self._entries, self._is_encrypted = list_entries(path)
+            self._entries, self._is_encrypted = list_archive(path)
         except Exception as e:
-            self._status_var.set(f"エラー: ZIPファイルを開けません ({e})")
+            self._status_var.set(f"エラー: ファイルを開けません ({e})")
             self._entries = []
             self._refresh_tree()
             self._show_drop_zone()
@@ -310,7 +321,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             ))
 
         try:
-            extract_all(zip_path, dest, password=password, on_progress=on_progress)
+            extract_archive(zip_path, dest, password=password, on_progress=on_progress)
             self.after(0, self._on_extract_done)
         except Exception as exc:
             self.after(0, lambda e=exc: self._on_extract_error(str(e)))

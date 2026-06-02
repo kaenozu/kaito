@@ -214,7 +214,7 @@ class TestUnzipAppMethods:
         return _make_app_mock()
 
     def test_on_drop_no_data(self, app: MagicMock) -> None:
-        with patch.object(app, "_load_zip") as mock_load:
+        with patch.object(app, "_load_archive") as mock_load:
             event = MagicMock()
             type(event).data = ""
             app._on_drop(event)
@@ -223,7 +223,7 @@ class TestUnzipAppMethods:
     def test_on_drop_non_zip(self, app: MagicMock, tmp_path: Path) -> None:
         event = MagicMock()
         type(event).data = str(tmp_path / "readme.txt")
-        with patch.object(app, "_load_zip") as mock_load:
+        with patch.object(app, "_load_archive") as mock_load:
             app._on_drop(event)
             mock_load.assert_not_called()
 
@@ -233,7 +233,7 @@ class TestUnzipAppMethods:
         event = MagicMock()
         type(event).data = str(z)
         with (
-            patch.object(app, "_load_zip") as mock_load,
+            patch.object(app, "_load_archive") as mock_load,
             patch.object(Path, "exists", return_value=True),
         ):
             app._on_drop(event)
@@ -254,7 +254,7 @@ class TestUnzipAppMethods:
     def test_on_browse_no_file(self, app: MagicMock) -> None:
         with (
             patch("tkinter.filedialog.askopenfilename", return_value=""),
-            patch.object(app, "_load_zip") as mock_load,
+            patch.object(app, "_load_archive") as mock_load,
         ):
             app._on_browse()
             mock_load.assert_not_called()
@@ -264,36 +264,36 @@ class TestUnzipAppMethods:
         z.touch()
         with (
             patch("tkinter.filedialog.askopenfilename", return_value=str(z)),
-            patch.object(app, "_load_zip") as mock_load,
+            patch.object(app, "_load_archive") as mock_load,
         ):
             app._on_browse()
             mock_load.assert_called_once()
 
-    def test_load_zip_success(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_success(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("hello.txt", "data")
             zf.writestr("sub/file.txt", "data2")
         app._dest_var.get.return_value = ""
-        app._load_zip(z)
+        app._load_archive(z)
         assert app._zip_path == z
         assert len(app._entries) == 2
         assert app._path_var.set.called
         assert app._dest_var.set.called
 
-    def test_load_zip_error(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_error(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "bad.zip"
         z.write_text("not a zip")
-        app._load_zip(z)
+        app._load_archive(z)
         app._status_var.set.assert_called()
         assert app._zip_path is None
 
-    def test_load_zip_with_existing_dest(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_with_existing_dest(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         app._dest_var.get.return_value = "C:\\custom\\path"
-        app._load_zip(z)
+        app._load_archive(z)
         # dest_var は既に設定済みなので上書きしない
         app._dest_var.set.assert_not_called()
 
