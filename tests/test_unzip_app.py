@@ -3,13 +3,14 @@ tests/test_unzip_app.py
 unzip_app.py のテスト（GUIコンポーネントは全てmock）
 """
 
+from contextlib import ExitStack
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kaito.gui.unzip_app import _format_size, main as app_main
+from kaito.gui.unzip_app import _format_size, _read_archive_entry, main as app_main
 
 
 # ---- _format_size のテスト ----
@@ -111,6 +112,13 @@ def _make_app_mock() -> MagicMock:
     app._settings.get_password.return_value = None
     app._open_on_done_var = MagicMock()
     app._open_on_done_var.get.return_value = False
+    app._theme_var = MagicMock()
+    app._theme_menu = MagicMock()
+    app._recent_var = MagicMock()
+    app._recent_menu = MagicMock()
+    app._preview_frame = MagicMock()
+    app._preview_label = MagicMock()
+    app._temp_dir = None
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -122,24 +130,34 @@ def _make_app_mock() -> MagicMock:
     return app
 
 
+def _init_patches() -> list:
+    """__init__ テスト用の共通パッチリストを返す"""
+    from kaito.gui.unzip_app import UnzipApp
+    return [
+        patch.object(UnzipApp, "_build_ui"),
+        patch.object(UnzipApp, "drop_target_register"),
+        patch.object(UnzipApp, "dnd_bind"),
+        patch.object(UnzipApp, "title"),
+        patch.object(UnzipApp, "geometry"),
+        patch.object(UnzipApp, "minsize"),
+        patch.object(UnzipApp, "grid_columnconfigure"),
+        patch.object(UnzipApp, "grid_rowconfigure"),
+        patch.object(UnzipApp, "TkdndVersion", create=True),
+        patch("kaito.gui.unzip_app.TkinterDnD._require"),
+        patch.object(UnzipApp, "_open_on_done_var", create=True),
+        patch.object(UnzipApp, "_recent_menu", create=True),
+        patch.object(UnzipApp, "_recent_var", create=True),
+    ]
+
+
 class TestUnzipAppInit:
     """__init__ のテスト（cli_path の有無）"""
 
     def test_init_no_path(self) -> None:
         from kaito.gui.unzip_app import UnzipApp
-        with (
-            patch.object(UnzipApp, "_build_ui"),
-            patch.object(UnzipApp, "drop_target_register"),
-            patch.object(UnzipApp, "dnd_bind"),
-            patch.object(UnzipApp, "title"),
-            patch.object(UnzipApp, "geometry"),
-            patch.object(UnzipApp, "minsize"),
-            patch.object(UnzipApp, "grid_columnconfigure"),
-            patch.object(UnzipApp, "grid_rowconfigure"),
-            patch.object(UnzipApp, "TkdndVersion", create=True),
-            patch("kaito.gui.unzip_app.TkinterDnD._require"),
-            patch.object(UnzipApp, "_open_on_done_var", create=True),
-        ):
+        with ExitStack() as stack:
+            for p in _init_patches():
+                stack.enter_context(p)
             app = UnzipApp(cli_path=None)
             assert app._zip_path is None
             assert app._entries == []
@@ -152,18 +170,7 @@ class TestUnzipAppInit:
             zf.writestr("a.txt", "data")
 
         from kaito.gui.unzip_app import UnzipApp
-        with (
-            patch("customtkinter.CTk.__init__", return_value=None),
-            patch.object(UnzipApp, "_build_ui"),
-            patch.object(UnzipApp, "drop_target_register"),
-            patch.object(UnzipApp, "dnd_bind"),
-            patch.object(UnzipApp, "title"),
-            patch.object(UnzipApp, "geometry"),
-            patch.object(UnzipApp, "minsize"),
-            patch.object(UnzipApp, "grid_columnconfigure"),
-            patch.object(UnzipApp, "grid_rowconfigure"),
-            patch.object(UnzipApp, "TkdndVersion", create=True),
-            patch("kaito.gui.unzip_app.TkinterDnD._require"),
+        extra = [
             patch.object(UnzipApp, "_path_var", create=True),
             patch.object(UnzipApp, "_dest_var", create=True),
             patch.object(UnzipApp, "_status_var", create=True),
@@ -172,37 +179,30 @@ class TestUnzipAppInit:
             patch.object(UnzipApp, "_drop_frame", create=True),
             patch.object(UnzipApp, "_list_frame", create=True),
             patch.object(UnzipApp, "_extract_btn", create=True),
-            patch.object(UnzipApp, "_open_on_done_var", create=True),
-        ):
+            patch("customtkinter.CTk.__init__", return_value=None),
+        ]
+        with ExitStack() as stack:
+            for p in _init_patches() + extra:
+                stack.enter_context(p)
             app = UnzipApp(cli_path=z)
             assert app._zip_path == z
             assert len(app._entries) == 1
 
     def test_init_restores_saved_dest(self) -> None:
         from kaito.gui.unzip_app import SettingsManager, UnzipApp
-        with (
-            patch("customtkinter.CTk.__init__", return_value=None),
-            patch.object(UnzipApp, "_build_ui"),
-            patch.object(UnzipApp, "drop_target_register"),
-            patch.object(UnzipApp, "dnd_bind"),
-            patch.object(UnzipApp, "title"),
-            patch.object(UnzipApp, "geometry"),
-            patch.object(UnzipApp, "minsize"),
-            patch.object(UnzipApp, "grid_columnconfigure"),
-            patch.object(UnzipApp, "grid_rowconfigure"),
-            patch.object(UnzipApp, "TkdndVersion", create=True),
-            patch("kaito.gui.unzip_app.TkinterDnD._require"),
-            patch.object(UnzipApp, "_path_var", create=True),
-            patch.object(UnzipApp, "_dest_var", create=True) as dest_var,
-            patch.object(UnzipApp, "_status_var", create=True),
-            patch.object(UnzipApp, "_tree", create=True),
-            patch.object(UnzipApp, "_refresh_tree"),
-            patch.object(UnzipApp, "_drop_frame", create=True),
-            patch.object(UnzipApp, "_list_frame", create=True),
-            patch.object(UnzipApp, "_extract_btn", create=True),
-            patch.object(UnzipApp, "_open_on_done_var", create=True),
-            patch.object(SettingsManager, "get", return_value="C:\\saved\\path"),
-        ):
+        with ExitStack() as stack:
+            for p in _init_patches():
+                stack.enter_context(p)
+            stack.enter_context(patch.object(UnzipApp, "_path_var", create=True))
+            dest_var = stack.enter_context(patch.object(UnzipApp, "_dest_var", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_status_var", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_tree", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_refresh_tree"))
+            stack.enter_context(patch.object(UnzipApp, "_drop_frame", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_list_frame", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_extract_btn", create=True))
+            stack.enter_context(patch("customtkinter.CTk.__init__", return_value=None))
+            stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
             UnzipApp(cli_path=None)
             dest_var.set.assert_called_with("C:\\saved\\path")
 
@@ -468,3 +468,153 @@ class TestUnzipAppMethods:
             dlg.return_value.get_input.return_value = None
             result = app._ask_password()
             assert result is None
+
+    def test_on_theme_changed(self, app: MagicMock) -> None:
+        with patch("kaito.gui.unzip_app.ctk.set_appearance_mode") as mock_set:
+            app._on_theme_changed("dark")
+            mock_set.assert_called_with("dark")
+            app._settings.set.assert_called_with("theme", "dark")
+
+    def test_on_recent_selected_default(self, app: MagicMock) -> None:
+        with patch.object(app, "_load_archive") as mock_load:
+            app._on_recent_selected("最近のファイル")
+            mock_load.assert_not_called()
+
+    def test_on_recent_selected_loads(self, app: MagicMock, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        z.touch()
+        with (
+            patch.object(app, "_load_archive") as mock_load,
+            patch.object(Path, "exists", return_value=True),
+        ):
+            app._on_recent_selected(str(z))
+            mock_load.assert_called_once_with(z)
+
+    def test_refresh_recent_menu_with_files(self, app: MagicMock) -> None:
+        app._settings.get.return_value = ["a.zip", "b.zip"]
+        app._refresh_recent_menu()
+        app._recent_menu.configure.assert_called_with(values=["a.zip", "b.zip"])
+
+    def test_refresh_recent_menu_empty(self, app: MagicMock) -> None:
+        app._settings.get.return_value = []
+        app._refresh_recent_menu()
+        app._recent_menu.configure.assert_not_called()
+
+    def test_on_tree_select_no_zip(self, app: MagicMock) -> None:
+        app._zip_path = None
+        app._on_tree_select()
+        app._preview_label.configure.assert_not_called()
+
+    def test_on_tree_select_no_selection(self, app: MagicMock) -> None:
+        app._zip_path = Path("x.zip")
+        app._tree.selection.return_value = ()
+        app._on_tree_select()
+
+    def test_on_tree_select_shows_preview(self, app: MagicMock) -> None:
+        app._zip_path = Path("x.zip")
+        app._tree.selection.return_value = ("item1",)
+        app._tree.item.return_value = ("1", "hello.txt", "10", "8", "2025-01-01")
+        mock_pv = MagicMock()
+        app.__dict__["_show_preview"] = mock_pv
+        try:
+            app._on_tree_select()
+            mock_pv.assert_called_once_with("hello.txt")
+        finally:
+            app.__dict__.pop("_show_preview", None)
+
+    def test_show_preview_text(self, app: MagicMock, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        import zipfile
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("hello.txt", "Hello World")
+        app._zip_path = z
+        with patch.object(app, "_preview_text") as mock_pt:
+            app._show_preview("hello.txt")
+            mock_pt.assert_called_once()
+
+    def test_show_preview_image(self, app: MagicMock, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        import zipfile
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), color="red").save(buf, "PNG")
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("img.png", buf.getvalue())
+        app._zip_path = z
+        with patch.object(app, "_preview_image") as mock_pi:
+            app._show_preview("img.png")
+            mock_pi.assert_called_once()
+
+    def test_show_preview_unsupported(self, app: MagicMock) -> None:
+        app._zip_path = Path("x.zip")
+        app._show_preview("data.bin")
+        app._preview_label.configure.assert_called()
+
+    def test_preview_text_success(self, app: MagicMock, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        import zipfile
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("hello.txt", "Hello World")
+        app._zip_path = z
+        app.__dict__["_preview_label"] = MagicMock()
+        app.__dict__["_preview_frame"] = MagicMock()
+        app._preview_text("hello.txt")
+        app.__dict__["_preview_label"].configure.assert_called()
+
+    def test_preview_text_error(self, app: MagicMock) -> None:
+        app._zip_path = Path("bad.zip")
+        app._preview_text("nonexistent.txt")
+        app._preview_label.configure.assert_called()
+
+    def test_show_preview_with_tempdir(self, app: MagicMock) -> None:
+        import tempfile
+        td = tempfile.TemporaryDirectory()
+        app._temp_dir = td
+        app.__dict__["_preview_label"] = MagicMock()
+        app.__dict__["_preview_frame"] = MagicMock()
+        app._zip_path = Path("x.zip")
+        app._show_preview("data.bin")
+        app.__dict__["_preview_label"].configure.assert_called()
+
+    def test_on_tree_select_bad_values(self, app: MagicMock) -> None:
+        app._zip_path = Path("x.zip")
+        app._tree.selection.return_value = ("item1",)
+        app._tree.item.return_value = ("just_name",)  # len < 2
+        with patch.object(app, "_show_preview") as mock_pv:
+            app._on_tree_select()
+            mock_pv.assert_not_called()
+
+    def test_preview_image_success(self, app: MagicMock, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        import zipfile
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (50, 30), color="red").save(buf, "PNG")
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("img.png", buf.getvalue())
+        app._zip_path = z
+        app.__dict__["_preview_label"] = MagicMock()
+        app.__dict__["_preview_frame"] = MagicMock()
+        app._preview_image("img.png")
+        app.__dict__["_preview_label"].configure.assert_called()
+
+    def test_preview_image_error(self, app: MagicMock) -> None:
+        app._zip_path = Path("bad.zip")
+        app.__dict__["_preview_label"] = MagicMock()
+        app.__dict__["_preview_frame"] = MagicMock()
+        app._preview_image("nonexistent.png")
+        app.__dict__["_preview_label"].configure.assert_called()
+
+    def test_read_archive_entry_zip(self, tmp_path: Path) -> None:
+        z = tmp_path / "test.zip"
+        import zipfile
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("hello.txt", "data")
+        assert _read_archive_entry(z, "hello.txt") == b"data"
+
+    def test_read_archive_entry_non_zip(self, tmp_path: Path) -> None:
+        z = tmp_path / "test.rar"
+        z.touch()
+        assert _read_archive_entry(z, "x.txt") == b""

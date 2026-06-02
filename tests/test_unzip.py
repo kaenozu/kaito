@@ -219,6 +219,14 @@ class TestListArchive:
             assert entries[1].is_dir
             assert not encrypted
 
+    def test_list_patool_password_protected(self, tmp_path: Path) -> None:
+        rar = tmp_path / "secret.rar"
+        rar.touch()
+        with patch("kaito.unzip.patoolib.list_archive", side_effect=RuntimeError("password required")):
+            entries, encrypted = list_archive(rar)
+            assert entries == []
+            assert encrypted
+
     def test_list_rar_from_patool(self, tmp_path: Path) -> None:
         rar = tmp_path / "test.rar"
         rar.touch()

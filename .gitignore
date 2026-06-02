@@ -5,6 +5,9 @@ __pycache__/
 build/
 dist/
 *.spec
+!build.spec
 *.egg-info/
 .coverage
 .pytest_cache/
+test/
+a.txt

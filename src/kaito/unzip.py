@@ -59,12 +59,14 @@ def _list_patool_archive(path: str | Path) -> tuple[list[ZipEntry], bool]:
     try:
         names = patoolib.list_archive(str(path)) or []
     except Exception as e:
+        msg = str(e).lower()
+        if "password" in msg or "encrypted" in msg:
+            return [], True
         raise RuntimeError(f"アーカイブの一覧取得に失敗しました: {e}")
     entries = [
         ZipEntry(name=n, size=0, compressed_size=0, modified=datetime.now(), is_dir=n.endswith("/"))
         for n in names
     ]
-    # patoolibは暗号化情報を提供しない
     return entries, False
 
 

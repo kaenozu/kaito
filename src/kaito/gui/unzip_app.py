@@ -5,13 +5,18 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 関連: unzip.py (解凍コアロジック)
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
+import io
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from threading import Thread
 from tkinter import filedialog, ttk
+
+from PIL import Image
 
 import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
@@ -26,6 +31,9 @@ from kaito.unzip import (
 
 _DROP_BORDER_COLOR = "#3a7ebf"
 _DROP_HIGHLIGHT_COLOR = "#1a6ebf"
+
+_TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json", ".xml", ".yml", ".yaml", ".ini", ".cfg", ".log", ".csv", ".toml"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
 
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -45,6 +53,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._entries: list[ZipEntry] = []
         self._is_encrypted = False
         self._extracting = False
+        self._temp_dir: tempfile.TemporaryDirectory | None = None
 
         self._build_ui()
 
@@ -55,6 +64,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if saved_dest:
             self._dest_var.set(saved_dest)
         self._open_on_done_var.set(self._settings.get("open_on_done", True))
+
+        self._refresh_recent_menu()
 
         # ウィンドウ全体をドロップターゲットに設定
         self.drop_target_register("*")
@@ -87,6 +98,22 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             file_frame, text="参照", width=80, command=self._on_browse
         )
         self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
+
+        self._theme_var = ctk.StringVar(value=ctk.get_appearance_mode().lower())
+        self._theme_menu = ctk.CTkOptionMenu(
+            file_frame, values=["system", "light", "dark"],
+            variable=self._theme_var, width=90,
+            command=self._on_theme_changed,
+        )
+        self._theme_menu.grid(row=0, column=3, padx=(0, 4), pady=8)
+
+        self._recent_var = ctk.StringVar(value="最近のファイル")
+        self._recent_menu = ctk.CTkOptionMenu(
+            file_frame, values=["最近のファイル"],
+            variable=self._recent_var, width=120,
+            command=self._on_recent_selected,
+        )
+        self._recent_menu.grid(row=0, column=4, padx=(0, 8), pady=8)
 
         # --- ファイル一覧 ---
         # --- ドロップゾーン (ZIP未選択時) ---
@@ -139,6 +166,15 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
+        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+
+        # --- プレビュー ---
+        self._preview_frame = ctk.CTkFrame(self._list_frame)
+        self._preview_label = ctk.CTkLabel(
+            self._preview_frame, text="", anchor="w", justify="left",
+            font=ctk.CTkFont(size=12),
+        )
+        self._preview_label.pack(fill="both", expand=True, padx=8, pady=4)
 
         # --- 展開先 ---
         dest_frame = ctk.CTkFrame(self)
@@ -187,6 +223,23 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extract_btn.grid(row=2, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
 
     # ---- イベントハンドラ ----
+
+    def _on_theme_changed(self, mode: str) -> None:
+        ctk.set_appearance_mode(mode)
+        self._settings.set("theme", mode)
+
+    def _on_recent_selected(self, name: str) -> None:
+        if name == "最近のファイル":
+            return
+        path = Path(name)
+        if path.exists():
+            self._load_archive(path)
+
+    def _refresh_recent_menu(self) -> None:
+        files = self._settings.get("recent_files", [])
+        if files:
+            self._recent_menu.configure(values=files)
+            self._recent_var.set(files[0] if len(files) == 1 else "最近のファイル")
 
     def _on_drag_enter(self, _event: object = None) -> None:
         self._highlight_drop(True)
@@ -258,6 +311,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._archive_paths = [path]
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
+        self._refresh_recent_menu()
 
         # 展開先のデフォルト: ZIPファイルと同じディレクトリ/ZIPファイル名
         default_dest = path.parent / path.stem
@@ -284,6 +338,59 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 _format_size(e.compressed_size),
                 e.modified.strftime("%Y-%m-%d %H:%M"),
             ))
+
+    def _on_tree_select(self, _event: object = None) -> None:
+        if self._zip_path is None:
+            return
+        sel = self._tree.selection()
+        if not sel:
+            return
+        values = self._tree.item(sel[0], "values")
+        if not values or len(values) < 2:
+            return
+        entry_name: str = values[1]
+        self._show_preview(entry_name)
+
+    def _show_preview(self, name: str) -> None:
+        if self._temp_dir is not None:
+            self._temp_dir.cleanup()
+        self._preview_frame.grid_forget()
+        self._preview_label.configure(text="")
+
+        ext = Path(name).suffix.lower()
+        if ext in _TEXT_EXTENSIONS:
+            self._preview_text(name)
+        elif ext in _IMAGE_EXTENSIONS:
+            self._preview_image(name)
+        else:
+            self._preview_label.configure(text=f"プレビュー不可 ({ext})")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+
+    def _preview_text(self, name: str) -> None:
+        assert self._zip_path is not None
+        try:
+            content = _read_archive_entry(self._zip_path, name)
+        except Exception:
+            self._preview_label.configure(text="プレビューを読み込めませんでした")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+        text = content.decode("utf-8", errors="replace")[:2000]
+        self._preview_label.configure(text=text)
+        self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+
+    def _preview_image(self, name: str) -> None:
+        assert self._zip_path is not None
+        try:
+            data = _read_archive_entry(self._zip_path, name)
+            img = Image.open(io.BytesIO(data))
+            img.thumbnail((400, 250))
+            ctk_img = ctk.CTkImage(img, size=img.size)
+            self._preview_label.configure(image=ctk_img, text="")
+        except Exception:
+            self._preview_label.configure(text="画像をプレビューできません")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+        self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
     def _show_drop_zone(self) -> None:
         self._list_frame.grid_forget()
@@ -368,7 +475,6 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.grid_remove()
         if self._open_on_done_var.get() and self._zip_path is not None:
             dest = Path(self._dest_var.get()) if self._dest_var.get() else self._zip_path.parent
-            import subprocess
             subprocess.Popen(["explorer", str(dest)], shell=True)
 
     def _on_extract_error(self, msg: str) -> None:
@@ -392,6 +498,16 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         result = dialog.get_input()
         return result if result else None
+
+
+def _read_archive_entry(archive_path: Path | str, name: str) -> bytes:
+    """ZIP内の1エントリを読み込む。非ZIP形式は空バイトを返す。"""
+    p = Path(archive_path)
+    if p.suffix.lower() == ".zip":
+        import zipfile
+        with zipfile.ZipFile(p, "r") as zf:
+            return zf.read(name)
+    return b""
 
 
 def _format_size(size: int) -> str:
