@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kaito-unzip = "kaito.gui.unzip_app:main"
+kaito = "kaito.gui.unzip_app:main"
 
 [tool.uv]
 package = true

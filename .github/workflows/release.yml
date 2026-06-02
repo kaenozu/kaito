@@ -25,9 +25,9 @@ jobs:
         run: uv sync
 
       - name: Build exe
-        run: uv run pyinstaller --onefile --windowed --name "kaito-unzip" --add-data ".venv/Lib/site-packages/customtkinter;customtkinter/" --hidden-import "tkinterdnd2" --collect-all "tkinterdnd2" src/kaito/gui/unzip_app.py
+        run: uv run pyinstaller --onefile --windowed --name "kaito" --add-data ".venv/Lib/site-packages/customtkinter;customtkinter/" --hidden-import "tkinterdnd2" --collect-all "tkinterdnd2" src/kaito/gui/unzip_app.py
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/kaito-unzip.exe
+          files: dist/kaito.exe
