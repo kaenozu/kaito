@@ -93,6 +93,7 @@ def _make_app_mock() -> MagicMock:
 
     # __init__ で設定されるインスタンス変数
     app._zip_path = None
+    app._archive_paths = []
     app._entries = []
     app._is_encrypted = False
     app._extracting = False
@@ -239,6 +240,35 @@ class TestUnzipAppMethods:
             app._on_drop(event)
             mock_load.assert_called_once()
 
+    def test_on_drop_multiple(self, app: MagicMock, tmp_path: Path) -> None:
+        z1 = tmp_path / "a.zip"
+        z2 = tmp_path / "b.rar"
+        z3 = tmp_path / "c.txt"
+        z1.touch()
+        z2.touch()
+        z3.touch()
+        event = MagicMock()
+        type(event).data = f"{z1} {z2} {z3}"
+        with (
+            patch.object(app, "_load_archive") as mock_load,
+            patch.object(app, "_add_to_queue") as mock_add,
+            patch.object(Path, "exists", return_value=True),
+        ):
+            app._on_drop(event)
+            mock_load.assert_called_once_with(z1)
+            mock_add.assert_called_once_with(z2)
+
+    def test_add_to_queue(self, app: MagicMock) -> None:
+        app._archive_paths = [Path("a.zip")]
+        app._add_to_queue(Path("b.zip"))
+        assert len(app._archive_paths) == 2
+
+    def test_update_queue_status(self, app: MagicMock) -> None:
+        app._archive_paths = [Path("a.zip"), Path("b.zip")]
+        app._status_var.get.return_value = "3エントリ"
+        app._update_queue_status()
+        app._status_var.set.assert_called_with("[2ファイル] 3エントリ")
+
     def test_drag_enter_highlights(self, app: MagicMock) -> None:
         app._on_drag_enter()
         app._drop_frame.configure.assert_called_with(border_color="#1a6ebf")
@@ -319,14 +349,12 @@ class TestUnzipAppMethods:
             app._on_dest_browse()
             app._dest_var.set.assert_not_called()
 
-    def test_on_extract_no_zip(self, app: MagicMock) -> None:
-        app._zip_path = None
+    def test_on_extract_no_queue(self, app: MagicMock) -> None:
         app._on_extract()
-        # _set_ui_enabled は呼ばれない
         app._browse_btn.configure.assert_not_called()
 
     def test_on_extract_already_busy(self, app: MagicMock) -> None:
-        app._zip_path = Path("x.zip")
+        app._archive_paths = [Path("x.zip")]
         app._extracting = True
         app._on_extract()
         app._browse_btn.configure.assert_not_called()
@@ -336,16 +364,19 @@ class TestUnzipAppMethods:
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         app._zip_path = z
+        app._archive_paths = [z]
         app._is_encrypted = False
         app._dest_var.get.return_value = ""
-        app._on_extract()
-        assert app._extracting
+        with patch("threading.Thread"):
+            app._on_extract()
+            assert app._extracting
 
     def test_on_extract_encrypted_manual(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         app._zip_path = z
+        app._archive_paths = [z]
         app._is_encrypted = True
         app._dest_var.get.return_value = str(tmp_path / "out")
         with (
@@ -362,6 +393,7 @@ class TestUnzipAppMethods:
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         app._zip_path = z
+        app._archive_paths = [z]
         app._is_encrypted = True
         with (
             patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg,
@@ -370,40 +402,32 @@ class TestUnzipAppMethods:
             app._on_extract()
             assert not app._extracting
 
-    def test_do_extract_success(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_do_batch_extract_success(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         dest = tmp_path / "out"
-        app._do_extract(z, dest, password=None)
-        assert (dest / "a.txt").read_text() == "data"
-        # after で _on_extract_done がキューされた
+        app._zip_path = z
+        app._do_batch_extract([z], dest, active_password=None)
+        assert (dest / z.stem / "a.txt").read_text() == "data"
         after_calls = app.after.call_args_list
         assert len(after_calls) >= 1
 
-        # キューされたコールバックを実行
-        for _, kwargs in after_calls:
-            cb = kwargs if callable(kwargs) else None
-            if cb is None and len(after_calls[0]) > 1:
-                cb = after_calls[0][1]
-            if cb:
-                cb()
-
-    def test_do_extract_error(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_do_batch_extract_error(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "bad.zip"
         z.write_text("not a zip")
         dest = tmp_path / "out"
-        app._do_extract(z, dest, password=None)
-        # エラーコールバックがキューされたことを確認
+        app._do_batch_extract([z], dest, active_password=None)
         assert app.after.called
 
     def test_on_extract_done_no_open(self, app: MagicMock) -> None:
         app._extracting = True
         app._open_on_done_var.get.return_value = False
+        app._archive_paths = [Path("a.zip")]
         app._on_extract_done()
         assert not app._extracting
         app._progress.set.assert_called_with(1)
-        app._status_var.set.assert_called_with("解凍完了")
+        app._status_var.set.assert_called_with("解凍完了 (1ファイル)")
 
     def test_on_extract_done_open_folder(self, app: MagicMock) -> None:
         app._extracting = True

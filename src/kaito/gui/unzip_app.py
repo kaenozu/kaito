@@ -7,6 +7,7 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 
 __version__ = "0.4.0"
 
+import re
 import sys
 from pathlib import Path
 from threading import Thread
@@ -40,6 +41,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.minsize(600, 400)
 
         self._zip_path: Path | None = None
+        self._archive_paths: list[Path] = []
         self._entries: list[ZipEntry] = []
         self._is_encrypted = False
         self._extracting = False
@@ -200,15 +202,22 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
 
     def _on_drop(self, event: object) -> None:
-        """ドラッグ&ドロップでファイルを受け取る"""
+        """ドラッグ&ドロップでファイルを受け取る（複数ファイル対応）"""
         raw = getattr(event, "data", "")
         if not raw:
             return
-        # パスを抽出: {} で囲まれている場合と複数ファイルに対応
-        path_str = raw.strip("{}").split()[0] if " " in raw else raw.strip("{}")
-        path = Path(path_str)
-        if is_supported(path) and path.exists():
-            self._load_archive(path)
+        paths = [p.strip("{}") for p in re.findall(r'\{[^}]+\}|\S+', raw)]
+        loaded = False
+        for p in paths:
+            path = Path(p)
+            if is_supported(path) and path.exists():
+                if loaded:
+                    self._add_to_queue(path)
+                else:
+                    self._load_archive(path)
+                    loaded = True
+        if loaded:
+            self._update_queue_status()
 
     def _on_browse(self) -> None:
         path = filedialog.askopenfilename(
@@ -225,6 +234,15 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         self._load_archive(Path(path))
 
+    def _add_to_queue(self, path: Path) -> None:
+        self._archive_paths.append(path)
+
+    def _update_queue_status(self) -> None:
+        q = len(self._archive_paths)
+        if q > 0:
+            current = self._status_var.get()
+            self._status_var.set(f"[{q}ファイル] {current}")
+
     def _load_archive(self, path: Path) -> None:
         try:
             self._entries, self._is_encrypted = list_archive(path)
@@ -237,6 +255,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         self._zip_path = path
+        self._archive_paths = [path]
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
 
@@ -281,55 +300,69 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._settings.set("last_dest", path)
 
     def _on_extract(self) -> None:
-        if self._extracting or self._zip_path is None:
+        if self._extracting or not self._archive_paths:
             return
 
         dest = Path(self._dest_var.get()) if self._dest_var.get() else Path.cwd()
-        dest.mkdir(parents=True, exist_ok=True)
 
-        password: str | None = None
-        if self._is_encrypted:
-            password = self._settings.get_password(str(self._zip_path))
-            if password is None:
-                password = self._ask_password()
-                if password is None:
+        # メインスレッドでパスワード取得（アクティブアーカイブのみ）
+        active_password: str | None = None
+        if self._is_encrypted and self._zip_path is not None:
+            active_password = self._settings.get_password(str(self._zip_path))
+            if active_password is None:
+                active_password = self._ask_password()
+                if active_password is None:
                     return
-                self._settings.set_password(str(self._zip_path), password)
+                self._settings.set_password(str(self._zip_path), active_password)
 
         self._extracting = True
         self._set_ui_enabled(False)
         self._progress.set(0)
 
         Thread(
-            target=self._do_extract,
-            args=(self._zip_path, dest, password),
+            target=self._do_batch_extract,
+            args=(list(self._archive_paths), dest, active_password),
             daemon=True,
         ).start()
 
-    def _do_extract(
-        self, zip_path: Path, dest: Path, password: str | None
+    def _do_batch_extract(
+        self, paths: list[Path], dest: Path, active_password: str | None
     ) -> None:
         self.after(0, self._progress.grid)
         self.after(0, lambda: self._progress.set(0))
+        total_archives = len(paths)
 
-        def on_progress(current: int, total: int, current_name: str = "") -> None:
-            pct = current / total
-            self.after(0, lambda: self._progress.set(pct))
-            name_part = f" - {current_name}" if current_name else ""
-            self.after(0, lambda: self._status_var.set(
-                f"解凍中... {pct:.0%} ({current}/{total}){name_part}"
-            ))
+        for idx, archive_path in enumerate(paths):
+            password = active_password if archive_path == self._zip_path else None
+            entry_archive_name = archive_path.name
+            archive_dest = dest / archive_path.stem
+            archive_dest.mkdir(parents=True, exist_ok=True)
 
-        try:
-            extract_archive(zip_path, dest, password=password, on_progress=on_progress)
-            self.after(0, self._on_extract_done)
-        except Exception as exc:
-            self.after(0, lambda e=exc: self._on_extract_error(str(e)))
+            try:
+                def on_progress(
+                    current: int, total: int,
+                    current_name: str = "", _a=entry_archive_name,
+                ) -> None:
+                    pct = current / total
+                    self.after(0, lambda p=pct: self._progress.set(p))
+                    name_part = f" - {current_name}" if current_name else ""
+                    self.after(0, lambda: self._status_var.set(
+                        f"[{idx+1}/{total_archives}] {_a}: {pct:.0%} ({current}/{total}){name_part}"
+                    ))
+
+                extract_archive(archive_path, archive_dest, password=password, on_progress=on_progress)
+            except Exception as exc:
+                self.after(0, lambda e=exc, a=entry_archive_name: self._on_extract_error(f"{a}: {e}"))
+                return
+
+        self.after(0, self._on_extract_done)
 
     def _on_extract_done(self) -> None:
         self._extracting = False
         self._set_ui_enabled(True)
-        self._status_var.set("解凍完了")
+        n = len(self._archive_paths)
+        self._status_var.set(f"解凍完了 ({n}ファイル)")
+        self._archive_paths = []
         self._settings.set("last_dest", self._dest_var.get())
         self._progress.set(1)
         self._progress.grid_remove()
