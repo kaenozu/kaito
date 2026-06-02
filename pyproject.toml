@@ -1,0 +1,31 @@
+[project]
+name = "kaito"
+version = "0.1.0"
+description = "ZIP解凍ソフト - GUI decompression tool"
+requires-python = ">=3.12"
+dependencies = [
+    "customtkinter>=5.2.2",
+    "tkinterdnd2>=0.4.4.1",
+]
+
+[project.scripts]
+kaito-unzip = "kaito.gui.unzip_app:main"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.20.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.pyright]
+typeCheckingMode = "basic"
+include = ["src"]
