@@ -3,7 +3,6 @@ tests/test_unzip_app.py
 unzip_app.py のテスト（GUIコンポーネントは全てmock）
 """
 
-import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -105,6 +104,10 @@ def _make_app_mock() -> MagicMock:
     app._browse_btn = MagicMock()
     app._dest_btn = MagicMock()
     app._extract_btn = MagicMock()
+    app._drop_frame = MagicMock()
+    app._list_frame = MagicMock()
+    app._open_on_done_var = MagicMock()
+    app._open_on_done_var.get.return_value = False
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -146,6 +149,7 @@ class TestUnzipAppInit:
 
         from kaito.gui.unzip_app import UnzipApp
         with (
+            patch("customtkinter.CTk.__init__", return_value=None),
             patch.object(UnzipApp, "_build_ui"),
             patch.object(UnzipApp, "drop_target_register"),
             patch.object(UnzipApp, "dnd_bind"),
@@ -161,6 +165,9 @@ class TestUnzipAppInit:
             patch.object(UnzipApp, "_status_var", create=True),
             patch.object(UnzipApp, "_tree", create=True),
             patch.object(UnzipApp, "_refresh_tree"),
+            patch.object(UnzipApp, "_drop_frame", create=True),
+            patch.object(UnzipApp, "_list_frame", create=True),
+            patch.object(UnzipApp, "_extract_btn", create=True),
         ):
             app = UnzipApp(cli_path=z)
             assert app._zip_path == z
@@ -346,12 +353,22 @@ class TestUnzipAppMethods:
         # エラーコールバックがキューされたことを確認
         assert app.after.called
 
-    def test_on_extract_done(self, app: MagicMock) -> None:
+    def test_on_extract_done_no_open(self, app: MagicMock) -> None:
         app._extracting = True
+        app._open_on_done_var.get.return_value = False
         app._on_extract_done()
         assert not app._extracting
         app._progress.set.assert_called_with(1)
         app._status_var.set.assert_called_with("解凍完了")
+
+    def test_on_extract_done_open_folder(self, app: MagicMock) -> None:
+        app._extracting = True
+        app._open_on_done_var.get.return_value = True
+        app._zip_path = Path("dummy.zip")
+        app._dest_var.get.return_value = "C:\\out"
+        with patch("subprocess.Popen") as mock_popen:
+            app._on_extract_done()
+            mock_popen.assert_called_once_with(["explorer", "C:\\out"], shell=True)
 
     def test_on_extract_error(self, app: MagicMock) -> None:
         app._extracting = True

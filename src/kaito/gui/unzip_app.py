@@ -5,6 +5,8 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 関連: unzip.py (解凍コアロジック)
 """
 
+__version__ = "0.4.0"
+
 import sys
 from pathlib import Path
 from threading import Thread
@@ -24,8 +26,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.TkdndVersion = TkinterDnD._require(self)
 
-        self.title("解凍ソフト")
-        self.geometry("720x520")
+        self.title(f"kaito v{__version__}")
+        self.geometry("800x520")
         self.minsize(600, 400)
 
         self._zip_path: Path | None = None
@@ -45,7 +47,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _build_ui(self) -> None:  # pragma: no cover
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # --- ZIPファイル選択 ---
         file_frame = ctk.CTkFrame(self)
@@ -66,33 +68,50 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
 
         # --- ファイル一覧 ---
-        list_frame = ctk.CTkFrame(self)
-        list_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
-        list_frame.grid_rowconfigure(1, weight=1)
-        list_frame.grid_columnconfigure(0, weight=1)
+        # --- ドロップゾーン (ZIP未選択時) ---
+        self._drop_frame = ctk.CTkFrame(
+            self, border_width=2, border_color="#3a7ebf"
+        )
+        self._drop_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
+        self._drop_frame.grid_rowconfigure(0, weight=1)
+        self._drop_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(list_frame, text="内容:").grid(
+        self._drop_label = ctk.CTkLabel(
+            self._drop_frame,
+            text="ZIPファイルをここにドラッグ&ドロップ\nまたは「参照」ボタンで選択",
+            font=ctk.CTkFont(size=20),
+            text_color="gray",
+        )
+        self._drop_label.grid(row=0, column=0, sticky="nsew")
+
+        # --- ファイル一覧 (ZIP読込後) ---
+        self._list_frame = ctk.CTkFrame(self)
+        self._list_frame.grid_rowconfigure(1, weight=1)
+        self._list_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self._list_frame, text="内容:").grid(
             row=0, column=0, padx=8, pady=(8, 2), sticky="w"
         )
 
-        # ttk.Treeview を CTkFrame に埋め込む
-        tree_frame = ctk.CTkFrame(list_frame)
+        tree_frame = ctk.CTkFrame(self._list_frame)
         tree_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        columns = ("name", "size", "compressed", "date")
+        columns = ("#", "name", "size", "compressed", "date")
         self._tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", height=12
         )
+        self._tree.heading("#", text="#")
         self._tree.heading("name", text="名前")
         self._tree.heading("size", text="サイズ")
         self._tree.heading("compressed", text="圧縮後")
         self._tree.heading("date", text="更新日時")
+        self._tree.column("#", width=35, minwidth=30, stretch=False, anchor="e")
         self._tree.column("name", width=280, minwidth=160, stretch=True)
-        self._tree.column("size", width=90, minwidth=70, stretch=False)
-        self._tree.column("compressed", width=90, minwidth=70, stretch=False)
-        self._tree.column("date", width=140, minwidth=100, stretch=False)
+        self._tree.column("size", width=80, minwidth=60, stretch=False)
+        self._tree.column("compressed", width=80, minwidth=60, stretch=False)
+        self._tree.column("date", width=130, minwidth=90, stretch=False)
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=vsb.set)
@@ -126,17 +145,25 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress = ctk.CTkProgressBar(bottom_frame, mode="determinate")
         self._progress.grid(row=0, column=0, columnspan=3, padx=8, pady=(8, 4), sticky="ew")
         self._progress.set(0)
+        self._progress.grid_remove()  # 解凍中のみ表示
 
-        self._status_var = ctk.StringVar(value="ZIPファイルを選択してください")
+        self._open_on_done_var = ctk.BooleanVar(value=True)
+        self._open_check = ctk.CTkCheckBox(
+            bottom_frame, text="完了後にフォルダを開く",
+            variable=self._open_on_done_var, onvalue=True, offvalue=False,
+        )
+        self._open_check.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
+
+        self._status_var = ctk.StringVar(value="ファイルを選択してください")
         self._status_label = ctk.CTkLabel(
             bottom_frame, textvariable=self._status_var, anchor="w"
         )
-        self._status_label.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
+        self._status_label.grid(row=2, column=0, padx=8, pady=(0, 8), sticky="w")
 
         self._extract_btn = ctk.CTkButton(
-            bottom_frame, text="解凍実行", command=self._on_extract
+            bottom_frame, text="解凍実行", command=self._on_extract, state="disabled"
         )
-        self._extract_btn.grid(row=1, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
+        self._extract_btn.grid(row=2, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
 
     # ---- イベントハンドラ ----
 
@@ -165,6 +192,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._entries, self._is_encrypted = list_entries(path)
         except Exception as e:
             self._status_var.set(f"エラー: ZIPファイルを開けません ({e})")
+            self._entries = []
+            self._refresh_tree()
+            self._show_drop_zone()
+            self._extract_btn.configure(state="disabled")
             return
 
         self._zip_path = path
@@ -175,22 +206,34 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if not self._dest_var.get():
             self._dest_var.set(str(default_dest))
 
+        total_size = sum(e.size for e in self._entries)
         self._refresh_tree()
+        self._show_file_list()
+        self._extract_btn.configure(state="normal")
         self._status_var.set(
-            f"{len(self._entries)} 個のエントリ"
+            f"{len(self._entries)} 個のエントリ ({_format_size(total_size)})"
             + (" (パスワード保護)" if self._is_encrypted else "")
         )
 
     def _refresh_tree(self) -> None:
         for row in self._tree.get_children():
             self._tree.delete(row)
-        for e in self._entries:
+        for i, e in enumerate(self._entries, start=1):
             self._tree.insert("", "end", values=(
+                i,
                 e.name,
                 _format_size(e.size),
                 _format_size(e.compressed_size),
                 e.modified.strftime("%Y-%m-%d %H:%M"),
             ))
+
+    def _show_drop_zone(self) -> None:
+        self._list_frame.grid_forget()
+        self._drop_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
+
+    def _show_file_list(self) -> None:
+        self._drop_frame.grid_forget()
+        self._list_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
 
     def _on_dest_browse(self) -> None:
         path = filedialog.askdirectory(title="展開先フォルダを選択")
@@ -223,10 +266,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _do_extract(
         self, zip_path: Path, dest: Path, password: str | None
     ) -> None:
+        self.after(0, self._progress.grid)
+        self.after(0, lambda: self._progress.set(0))
+
         def on_progress(current: int, total: int) -> None:
-            self.after(0, lambda: self._progress.set(current / total))
+            pct = current / total
+            self.after(0, lambda: self._progress.set(pct))
             self.after(0, lambda: self._status_var.set(
-                f"解凍中... {current}/{total}"
+                f"解凍中... {pct:.0%} ({current}/{total})"
             ))
 
         try:
@@ -240,12 +287,18 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._set_ui_enabled(True)
         self._status_var.set("解凍完了")
         self._progress.set(1)
+        self._progress.grid_remove()
+        if self._open_on_done_var.get() and self._zip_path is not None:
+            dest = Path(self._dest_var.get()) if self._dest_var.get() else self._zip_path.parent
+            import subprocess
+            subprocess.Popen(["explorer", str(dest)], shell=True)
 
     def _on_extract_error(self, msg: str) -> None:
         self._extracting = False
         self._set_ui_enabled(True)
         self._status_var.set(f"エラー: {msg}")
         self._progress.set(0)
+        self._progress.grid_remove()
 
     def _set_ui_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
