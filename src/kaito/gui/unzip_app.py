@@ -13,6 +13,7 @@ from tkinter import filedialog, ttk
 import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
 
+from kaito.crack import generate_candidates, try_crack
 from kaito.unzip import ZipEntry, extract_all, list_entries
 
 
@@ -254,13 +255,123 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extract_btn.configure(state=state)
 
     def _ask_password(self) -> str | None:
-        """パスワード入力ダイアログを表示"""
+        """パスワード入力／復元ダイアログを表示"""
+        dialog = _PasswordChoiceDialog(self)
+        self.wait_window(dialog)
+        choice = dialog.choice
+
+        if choice == "manual":
+            pw_dialog = ctk.CTkInputDialog(
+                title="パスワード",
+                text="このZIPファイルはパスワードで保護されています\nパスワードを入力してください:",
+            )
+            result = pw_dialog.get_input()
+            return result if result else None
+
+        elif choice == "crack":
+            hint = self._ask_hint()
+            self._start_crack(hint)
+            return None  # crack thread handles extraction on success
+
+        return None
+
+    def _ask_hint(self) -> str:
         dialog = ctk.CTkInputDialog(
-            title="パスワード",
-            text="このZIPファイルはパスワードで保護されています\nパスワードを入力してください:",
+            title="パスワード復元",
+            text="ヒントを入力してください（例: 夏の旅行、誕生日など）\n空欄のままでも候補を試します:",
         )
         result = dialog.get_input()
-        return result if result else None
+        return result if result else ""
+
+    def _start_crack(self, hint: str) -> None:
+        if self._zip_path is None:
+            return
+        self._extracting = True
+        self._set_ui_enabled(False)
+        self._progress.set(0)
+        self._status_var.set("パスワードを解析中...")
+        Thread(
+            target=self._do_crack,
+            args=(self._zip_path, hint),
+            daemon=True,
+        ).start()
+
+    def _do_crack(self, zip_path: Path, hint: str) -> None:
+        def on_progress(current: int, total: int) -> None:
+            self.after(0, lambda: self._progress.set(current / total))
+            self.after(0, lambda: self._status_var.set(
+                f"パスワード復元中... {current}/{total}"
+            ))
+
+        candidates = generate_candidates(zip_path, hint)
+        found = try_crack(zip_path, candidates, on_progress=on_progress)
+
+        if found:
+            dest = Path(self._dest_var.get()) if self._dest_var.get() else Path.cwd()
+            self.after(0, lambda: self._status_var.set(
+                f"パスワード発見: {found}  解凍中..."
+            ))
+            self.after(0, lambda: self._progress.set(0))
+            try:
+                extract_all(zip_path, dest, password=found, on_progress=on_progress)
+                self.after(0, self._on_extract_done)
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._on_extract_error(str(e)))
+        else:
+            self.after(0, self._on_crack_failed)
+
+    def _on_crack_failed(self) -> None:
+        self._extracting = False
+        self._set_ui_enabled(True)
+        self._status_var.set("パスワードが見つかりませんでした")
+        self._progress.set(0)
+
+
+class _PasswordChoiceDialog(ctk.CTkToplevel):
+    """パスワード入力方法を選ぶダイアログ"""
+
+    def __init__(self, parent: ctk.CTk) -> None:
+        super().__init__(parent)
+        self.choice: str | None = None
+        self.title("パスワード保護")
+        self.geometry("380x200")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        ctk.CTkLabel(
+            self,
+            text="このZIPファイルはパスワードで保護されています",
+            wraplength=340,
+        ).pack(pady=(20, 4))
+
+        ctk.CTkLabel(
+            self,
+            text="方法を選んでください",
+            wraplength=340,
+        ).pack(pady=(0, 16))
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(pady=4)
+
+        ctk.CTkButton(
+            btn_frame, text="手動で入力", width=110,
+            command=lambda: self._choose("manual"),
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            btn_frame, text="パスワードを復元", width=130,
+            command=lambda: self._choose("crack"),
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            btn_frame, text="キャンセル", width=90,
+            command=lambda: self._choose(None),
+        ).pack(side="left", padx=4)
+
+    def _choose(self, choice: str | None) -> None:
+        self.choice = choice
+        self.destroy()
 
 
 def _format_size(size: int) -> str:
