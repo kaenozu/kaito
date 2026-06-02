@@ -15,6 +15,7 @@ from tkinter import filedialog, ttk
 import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
 
+from kaito.settings import SettingsManager
 from kaito.unzip import ZipEntry, extract_all, list_entries
 
 
@@ -36,6 +37,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extracting = False
 
         self._build_ui()
+
+        self._settings = SettingsManager()
+
+        # 保存済み設定を復元
+        saved_dest = self._settings.get("last_dest")
+        if saved_dest:
+            self._dest_var.set(saved_dest)
+        self._open_on_done_var.set(self._settings.get("open_on_done", True))
 
         # ウィンドウ全体をドロップターゲットに設定
         self.drop_target_register("*")
@@ -200,6 +209,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._zip_path = path
         self._path_var.set(str(path))
+        self._settings.add_recent_file(str(path))
 
         # 展開先のデフォルト: ZIPファイルと同じディレクトリ/ZIPファイル名
         default_dest = path.parent / path.stem
@@ -239,6 +249,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         path = filedialog.askdirectory(title="展開先フォルダを選択")
         if path:
             self._dest_var.set(path)
+            self._settings.set("last_dest", path)
 
     def _on_extract(self) -> None:
         if self._extracting or self._zip_path is None:
@@ -249,9 +260,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         password: str | None = None
         if self._is_encrypted:
-            password = self._ask_password()
+            password = self._settings.get_password(str(self._zip_path))
             if password is None:
-                return
+                password = self._ask_password()
+                if password is None:
+                    return
+                self._settings.set_password(str(self._zip_path), password)
 
         self._extracting = True
         self._set_ui_enabled(False)
@@ -286,6 +300,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extracting = False
         self._set_ui_enabled(True)
         self._status_var.set("解凍完了")
+        self._settings.set("last_dest", self._dest_var.get())
         self._progress.set(1)
         self._progress.grid_remove()
         if self._open_on_done_var.get() and self._zip_path is not None:
@@ -328,7 +343,8 @@ def _format_size(size: int) -> str:
 
 
 def main() -> None:
-    ctk.set_appearance_mode("system")
+    settings = SettingsManager()
+    ctk.set_appearance_mode(settings.get("theme", "system"))
     ctk.set_default_color_theme("blue")
     cli_path: Path | None = None
     if len(sys.argv) > 1:

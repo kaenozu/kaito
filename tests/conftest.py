@@ -45,6 +45,6 @@ def zip_with_dir_entries(tmp_dir: Path) -> Path:
 def empty_zip(tmp_dir: Path) -> Path:
     """空のZIPファイル"""
     path = tmp_dir / "empty.zip"
-    with zipfile.ZipFile(path, "w") as zf:
+    with zipfile.ZipFile(path, "w"):
         pass
     return path

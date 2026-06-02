@@ -1,0 +1,118 @@
+"""
+tests/test_settings.py
+settings.py のテスト
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from kaito.settings import MAX_RECENT_FILES, SettingsManager
+
+
+class TestSettingsManager:
+    def test_defaults_on_missing_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            assert sm.get("theme") == "system"
+            assert sm.get("last_dest") == ""
+            assert sm.get("open_on_done") is True
+            assert sm.get("recent_files") == []
+
+    def test_load_existing(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"theme": "dark", "last_dest": "C:\\out"}))
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            assert sm.get("theme") == "dark"
+            assert sm.get("last_dest") == "C:\\out"
+            assert sm.get("open_on_done") is True
+
+    def test_set_and_persist(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            sm.set("theme", "light")
+            assert sm.get("theme") == "light"
+            # ファイルに保存されている
+            raw = json.loads(cfg.read_text())
+            assert raw["theme"] == "light"
+
+    def test_add_recent_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            sm.add_recent_file("C:\\a.zip")
+            sm.add_recent_file("C:\\b.zip")
+            assert sm.get("recent_files") == ["C:\\b.zip", "C:\\a.zip"]
+
+    def test_recent_file_dedup(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            sm.add_recent_file("C:\\a.zip")
+            sm.add_recent_file("C:\\b.zip")
+            sm.add_recent_file("C:\\a.zip")  # 重複 → 先頭に移動
+            assert sm.get("recent_files") == ["C:\\a.zip", "C:\\b.zip"]
+
+    def test_recent_file_max(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            for i in range(MAX_RECENT_FILES + 3):
+                sm.add_recent_file(f"C:\\file{i}.zip")
+            assert len(sm.get("recent_files")) == MAX_RECENT_FILES
+
+    def test_password_session(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            assert sm.get_password("C:\\a.zip") is None
+            sm.set_password("C:\\a.zip", "secret")
+            assert sm.get_password("C:\\a.zip") == "secret"
+            sm.clear_passwords()
+            assert sm.get_password("C:\\a.zip") is None
+
+    def test_password_not_persisted(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            sm.set_password("C:\\a.zip", "secret")
+            sm.save()
+            raw = json.loads(cfg.read_text())
+            assert "password" not in raw
+
+    def test_save_creates_dir(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "nonexistent" / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            sm.set("theme", "dark")
+            assert cfg.exists()
+
+    def test_corrupted_json(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("not json{{{")
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            assert sm.get("theme") == "system"
+
+    def test_get_with_default(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=cfg):
+            sm = SettingsManager()
+            assert sm.get("nonexistent", "fallback") == "fallback"
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only test")
+    def test_get_path_windows(self) -> None:
+        with patch.dict(os.environ, {"APPDATA": "C:\\Users\\test\\AppData\\Roaming"}):
+            sm = SettingsManager.__new__(SettingsManager)
+            path = sm._get_path()
+            assert "AppData" in str(path)
+            assert path.name == "settings.json"

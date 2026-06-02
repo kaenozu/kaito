@@ -106,6 +106,8 @@ def _make_app_mock() -> MagicMock:
     app._extract_btn = MagicMock()
     app._drop_frame = MagicMock()
     app._list_frame = MagicMock()
+    app._settings = MagicMock()
+    app._settings.get_password.return_value = None
     app._open_on_done_var = MagicMock()
     app._open_on_done_var.get.return_value = False
     app.after = MagicMock()
@@ -135,6 +137,7 @@ class TestUnzipAppInit:
             patch.object(UnzipApp, "grid_rowconfigure"),
             patch.object(UnzipApp, "TkdndVersion", create=True),
             patch("kaito.gui.unzip_app.TkinterDnD._require"),
+            patch.object(UnzipApp, "_open_on_done_var", create=True),
         ):
             app = UnzipApp(cli_path=None)
             assert app._zip_path is None
@@ -168,10 +171,39 @@ class TestUnzipAppInit:
             patch.object(UnzipApp, "_drop_frame", create=True),
             patch.object(UnzipApp, "_list_frame", create=True),
             patch.object(UnzipApp, "_extract_btn", create=True),
+            patch.object(UnzipApp, "_open_on_done_var", create=True),
         ):
             app = UnzipApp(cli_path=z)
             assert app._zip_path == z
             assert len(app._entries) == 1
+
+    def test_init_restores_saved_dest(self) -> None:
+        from kaito.gui.unzip_app import SettingsManager, UnzipApp
+        with (
+            patch("customtkinter.CTk.__init__", return_value=None),
+            patch.object(UnzipApp, "_build_ui"),
+            patch.object(UnzipApp, "drop_target_register"),
+            patch.object(UnzipApp, "dnd_bind"),
+            patch.object(UnzipApp, "title"),
+            patch.object(UnzipApp, "geometry"),
+            patch.object(UnzipApp, "minsize"),
+            patch.object(UnzipApp, "grid_columnconfigure"),
+            patch.object(UnzipApp, "grid_rowconfigure"),
+            patch.object(UnzipApp, "TkdndVersion", create=True),
+            patch("kaito.gui.unzip_app.TkinterDnD._require"),
+            patch.object(UnzipApp, "_path_var", create=True),
+            patch.object(UnzipApp, "_dest_var", create=True) as dest_var,
+            patch.object(UnzipApp, "_status_var", create=True),
+            patch.object(UnzipApp, "_tree", create=True),
+            patch.object(UnzipApp, "_refresh_tree"),
+            patch.object(UnzipApp, "_drop_frame", create=True),
+            patch.object(UnzipApp, "_list_frame", create=True),
+            patch.object(UnzipApp, "_extract_btn", create=True),
+            patch.object(UnzipApp, "_open_on_done_var", create=True),
+            patch.object(SettingsManager, "get", return_value="C:\\saved\\path"),
+        ):
+            UnzipApp(cli_path=None)
+            dest_var.set.assert_called_with("C:\\saved\\path")
 
 
 class TestUnzipAppMethods:
