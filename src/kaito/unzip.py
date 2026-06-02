@@ -22,8 +22,8 @@ class ZipEntry:
     is_dir: bool
 
 
-ProgressCallback = Callable[[int, int], None]
-"""進捗コールバック: (current, total)"""
+ProgressCallback = Callable[[int, int, str], None]
+"""進捗コールバック: (current, total, current_name)"""
 
 
 class PasswordPrompt(Protocol):
@@ -81,7 +81,7 @@ def extract(
                 zf.extract(name, str(dest))
 
             if on_progress:
-                on_progress(i + 1, total)
+                on_progress(i + 1, total, name)
 
 
 def extract_all(

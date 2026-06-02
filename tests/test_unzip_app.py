@@ -239,6 +239,18 @@ class TestUnzipAppMethods:
             app._on_drop(event)
             mock_load.assert_called_once()
 
+    def test_drag_enter_highlights(self, app: MagicMock) -> None:
+        app._on_drag_enter()
+        app._drop_frame.configure.assert_called_with(border_color="#1a6ebf")
+
+    def test_drag_leave_restores(self, app: MagicMock) -> None:
+        app._on_drag_leave()
+        app._drop_frame.configure.assert_called_with(border_color="#3a7ebf")
+
+    def test_highlight_drop_drop_frame_missing(self, app: MagicMock) -> None:
+        app._drop_frame.configure.side_effect = AttributeError
+        app._highlight_drop(True)  # should not raise
+
     def test_on_browse_no_file(self, app: MagicMock) -> None:
         with (
             patch("tkinter.filedialog.askopenfilename", return_value=""),

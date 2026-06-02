@@ -114,7 +114,7 @@ class TestExtract:
         dest = tmp_dir / "out"
         calls: list[tuple[int, int]] = []
 
-        def progress(current: int, total: int) -> None:
+        def progress(current: int, total: int, _name: str = "") -> None:
             calls.append((current, total))
 
         extract_all(normal_zip, dest, on_progress=progress)

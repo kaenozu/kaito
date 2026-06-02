@@ -18,6 +18,9 @@ from tkinterdnd2 import TkinterDnD
 from kaito.settings import SettingsManager
 from kaito.unzip import ZipEntry, extract_all, list_entries
 
+_DROP_BORDER_COLOR = "#3a7ebf"
+_DROP_HIGHLIGHT_COLOR = "#1a6ebf"
+
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """ZIP解凍GUIメインウィンドウ"""
@@ -49,6 +52,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # ウィンドウ全体をドロップターゲットに設定
         self.drop_target_register("*")
         self.dnd_bind("<<Drop>>", self._on_drop)
+        self.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+        self.dnd_bind("<<DragLeave>>", self._on_drag_leave)
 
         # 起動時にファイルが渡されたら読み込む
         if cli_path is not None:
@@ -79,7 +84,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # --- ファイル一覧 ---
         # --- ドロップゾーン (ZIP未選択時) ---
         self._drop_frame = ctk.CTkFrame(
-            self, border_width=2, border_color="#3a7ebf"
+            self, border_width=2, border_color=_DROP_BORDER_COLOR
         )
         self._drop_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
         self._drop_frame.grid_rowconfigure(0, weight=1)
@@ -175,6 +180,19 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extract_btn.grid(row=2, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
 
     # ---- イベントハンドラ ----
+
+    def _on_drag_enter(self, _event: object = None) -> None:
+        self._highlight_drop(True)
+
+    def _on_drag_leave(self, _event: object = None) -> None:
+        self._highlight_drop(False)
+
+    def _highlight_drop(self, highlight: bool) -> None:
+        color = _DROP_HIGHLIGHT_COLOR if highlight else _DROP_BORDER_COLOR
+        try:
+            self._drop_frame.configure(border_color=color)
+        except AttributeError:
+            pass
 
     def _on_drop(self, event: object) -> None:
         """ドラッグ&ドロップでファイルを受け取る"""
@@ -283,11 +301,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.after(0, self._progress.grid)
         self.after(0, lambda: self._progress.set(0))
 
-        def on_progress(current: int, total: int) -> None:
+        def on_progress(current: int, total: int, current_name: str = "") -> None:
             pct = current / total
             self.after(0, lambda: self._progress.set(pct))
+            name_part = f" - {current_name}" if current_name else ""
             self.after(0, lambda: self._status_var.set(
-                f"解凍中... {pct:.0%} ({current}/{total})"
+                f"解凍中... {pct:.0%} ({current}/{total}){name_part}"
             ))
 
         try:
