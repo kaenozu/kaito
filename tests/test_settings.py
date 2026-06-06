@@ -116,3 +116,13 @@ class TestSettingsManager:
             path = sm._get_path()
             assert "AppData" in str(path)
             assert path.name == "settings.json"
+
+    def test_get_path_non_windows(self) -> None:
+        with (
+            patch("sys.platform", "linux"),
+            patch("platformdirs.user_config_dir", return_value="/home/user/.config/kaito"),
+        ):
+            sm = SettingsManager.__new__(SettingsManager)
+            path = sm._get_path()
+            assert path.name == "settings.json"
+            assert "kaito" in str(path)

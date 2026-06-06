@@ -507,12 +507,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
 
 def _read_archive_entry(archive_path: Path | str, name: str) -> bytes:
-    """ZIP内の1エントリを読み込む。非ZIP形式は空バイトを返す。"""
+    """アーカイブ内の1エントリを読み込む。ZIPはzipfile、RAR/7zはpatoolib経由で一時展開。"""
     p = Path(archive_path)
-    if p.suffix.lower() == ".zip":
+    ext = p.suffix.lower()
+    if ext == ".zip":
         import zipfile
         with zipfile.ZipFile(p, "r") as zf:
             return zf.read(name)
+    elif ext in {".rar", ".7z"}:
+        import patoolib
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                patoolib.extract_archive(str(p), outdir=tmpdir)
+            except Exception:
+                return b""
+            # 展開されたファイルを探す（nameはアーカイブ内の相対パス）
+            extracted = Path(tmpdir) / name
+            if extracted.exists():
+                return extracted.read_bytes()
+            # パス区切り文字が異なる場合があるので再帰的に探す
+            for f in Path(tmpdir).rglob("*"):
+                if f.is_file() and f.name == Path(name).name:
+                    return f.read_bytes()
     return b""
 
 

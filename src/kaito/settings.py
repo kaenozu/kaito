@@ -5,10 +5,11 @@ src/kaito/settings.py
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
+
+import platformdirs
 
 DEFAULT_SETTINGS = {
     "theme": "system",
@@ -31,10 +32,10 @@ class SettingsManager:
 
     def _get_path(self) -> Path:
         if sys.platform == "win32":
-            base = Path(os.environ.get("APPDATA", "~/.config"))
-        else:  # pragma: no cover (Linux/macOSはCI未対応)
-            base = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config"))
-        return (base / "kaito").resolve() / "settings.json"
+            base = Path(platformdirs.user_config_dir("kaito", roaming=True))
+        else:
+            base = Path(platformdirs.user_config_dir("kaito"))
+        return base / "settings.json"
 
     def _load(self) -> None:
         try:

@@ -646,6 +646,45 @@ class TestUnzipAppMethods:
         z.touch()
         assert _read_archive_entry(z, "x.txt") == b""
 
+    def test_read_archive_entry_rar_mocked(self, tmp_path: Path) -> None:
+        """patoolib.extract_archiveをモックしてRARプレビューパスをテスト"""
+        z = tmp_path / "test.rar"
+        z.touch()
+        with patch("patoolib.extract_archive") as mock_extract:
+            def mock_extract_archive(path, outdir):
+                # 疑似的にファイルをサブディレクトリに作成（fallback検索をテスト）
+                extracted = Path(outdir) / "subdir" / "hello.txt"
+                extracted.parent.mkdir(parents=True, exist_ok=True)
+                extracted.write_bytes(b"RAR content")
+            mock_extract.side_effect = mock_extract_archive
+            result = _read_archive_entry(z, "hello.txt")
+            assert result == b"RAR content"
+
+    def test_read_archive_entry_7z_mocked(self, tmp_path: Path) -> None:
+        """patoolib.extract_archiveをモックして7zプレビューパスをテスト"""
+        z = tmp_path / "test.7z"
+        z.touch()
+        with patch("patoolib.extract_archive") as mock_extract:
+            def mock_extract_archive(path, outdir):
+                extracted = Path(outdir) / "subdir" / "image.png"
+                extracted.parent.mkdir(parents=True, exist_ok=True)
+                extracted.write_bytes(b"PNG content")
+            mock_extract.side_effect = mock_extract_archive
+            result = _read_archive_entry(z, "subdir/image.png")
+            assert result == b"PNG content"
+
+    def test_read_archive_entry_rar_not_found(self, tmp_path: Path) -> None:
+        """展開後にファイルが見つからない場合"""
+        z = tmp_path / "test.rar"
+        z.touch()
+        with patch("patoolib.extract_archive") as mock_extract:
+            def mock_extract_archive(path, outdir):
+                # 空のディレクトリだけ作成
+                pass
+            mock_extract.side_effect = mock_extract_archive
+            result = _read_archive_entry(z, "missing.txt")
+            assert result == b""
+
 
 # ---- _truncate_path のテスト ----
 
