@@ -5,7 +5,7 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 関連: unzip.py (解凍コアロジック)
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 import io
 import re
@@ -34,6 +34,8 @@ _DROP_HIGHLIGHT_COLOR = "#1a6ebf"
 
 _TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json", ".xml", ".yml", ".yaml", ".ini", ".cfg", ".log", ".csv", ".toml"}
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
+_MAX_PREVIEW_CHARS = 2000
+_MAX_IMAGE_DIMENSION = (400, 250)
 
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -54,6 +56,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._is_encrypted = False
         self._extracting = False
         self._temp_dir: tempfile.TemporaryDirectory | None = None
+        self._current_image: ctk.CTkImage | None = None
 
         self._build_ui()
 
@@ -115,7 +118,6 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._recent_menu.grid(row=0, column=4, padx=(0, 8), pady=8)
 
-        # --- ファイル一覧 ---
         # --- ドロップゾーン (ZIP未選択時) ---
         self._drop_frame = ctk.CTkFrame(
             self, border_width=2, border_color=_DROP_BORDER_COLOR
@@ -202,7 +204,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress = ctk.CTkProgressBar(bottom_frame, mode="determinate")
         self._progress.grid(row=0, column=0, columnspan=3, padx=8, pady=(8, 4), sticky="ew")
         self._progress.set(0)
-        self._progress.grid_remove()  # 解凍中のみ表示
+        self._progress.grid_remove()
 
         self._open_on_done_var = ctk.BooleanVar(value=True)
         self._open_check = ctk.CTkCheckBox(
@@ -238,8 +240,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _refresh_recent_menu(self) -> None:
         files = self._settings.get("recent_files", [])
         if files:
-            self._recent_menu.configure(values=files)
-            self._recent_var.set(files[0] if len(files) == 1 else "最近のファイル")
+            display_files = [_truncate_path(f) for f in files]
+            self._recent_menu.configure(values=display_files)
+            self._recent_var.set(display_files[0] if len(display_files) == 1 else "最近のファイル")
 
     def _on_drag_enter(self, _event: object = None) -> None:
         self._highlight_drop(True)
@@ -374,7 +377,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._preview_label.configure(text="プレビューを読み込めませんでした")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
-        text = content.decode("utf-8", errors="replace")[:2000]
+        text = content.decode("utf-8", errors="replace")[:_MAX_PREVIEW_CHARS]
         self._preview_label.configure(text=text)
         self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
@@ -383,9 +386,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         try:
             data = _read_archive_entry(self._zip_path, name)
             img = Image.open(io.BytesIO(data))
-            img.thumbnail((400, 250))
+            # メモリ安全のためサムネイルサイズに制限
+            img.thumbnail(_MAX_IMAGE_DIMENSION)
             ctk_img = ctk.CTkImage(img, size=img.size)
             self._preview_label.configure(image=ctk_img, text="")
+            # 参照を保持 (GC防止)
+            self._current_image = ctk_img
         except Exception:
             self._preview_label.configure(text="画像をプレビューできません")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
@@ -510,6 +516,19 @@ def _read_archive_entry(archive_path: Path | str, name: str) -> bytes:
     return b""
 
 
+def _truncate_path(path: str, max_len: int = 60) -> str:
+    """長いパスを省略表示"""
+    if len(path) <= max_len:
+        return path
+    p = Path(path)
+    name = p.name
+    if len(name) >= max_len - 3:
+        return name[: max_len - 3] + "..."
+    remain = max_len - len(name) - 3
+    parent = str(p.parent)
+    return "..." + parent[-(remain - 3) :] + "\\" + name
+
+
 def _format_size(size: int) -> str:
     if size < 1024:
         return f"{size} B"
@@ -528,7 +547,7 @@ def main() -> None:
     cli_path: Path | None = None
     if len(sys.argv) > 1:
         p = Path(sys.argv[1])
-        if p.suffix.lower() == ".zip" and p.exists():
+        if p.suffix.lower() in {".zip", ".rar", ".7z"} and p.exists():
             cli_path = p
     app = UnzipApp(cli_path=cli_path)
     app.mainloop()  # pragma: no cover
