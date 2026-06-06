@@ -475,7 +475,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.grid_remove()
         if self._open_on_done_var.get() and self._zip_path is not None:
             dest = Path(self._dest_var.get()) if self._dest_var.get() else self._zip_path.parent
-            subprocess.Popen(["explorer", str(dest)], shell=True)
+            subprocess.Popen(["explorer", str(dest)])
 
     def _on_extract_error(self, msg: str) -> None:
         self._extracting = False

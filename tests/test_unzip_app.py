@@ -45,6 +45,7 @@ class TestMain:
             patch("kaito.gui.unzip_app.ctk.set_appearance_mode") as mode,
             patch("kaito.gui.unzip_app.ctk.set_default_color_theme") as theme,
             patch("kaito.gui.unzip_app.UnzipApp") as app,
+            patch("kaito.gui.unzip_app.SettingsManager.get", return_value="system"),
         ):
             app_main()
             mode.assert_called_once_with("system")
@@ -436,7 +437,7 @@ class TestUnzipAppMethods:
         app._dest_var.get.return_value = "C:\\out"
         with patch("subprocess.Popen") as mock_popen:
             app._on_extract_done()
-            mock_popen.assert_called_once_with(["explorer", "C:\\out"], shell=True)
+            mock_popen.assert_called_once_with(["explorer", "C:\\out"])
 
     def test_on_extract_error(self, app: MagicMock) -> None:
         app._extracting = True
