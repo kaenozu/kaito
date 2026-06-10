@@ -5,7 +5,7 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 関連: unzip.py (解凍コアロジック)
 """
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 import io
 import re
@@ -61,6 +61,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._build_ui()
 
         self._settings = SettingsManager()
+
+        self._tree_poll_id: str | None = None
+        self._apply_tree_style()
+        self._start_theme_poll()
 
         # 保存済み設定を復元
         saved_dest = self._settings.get("last_dest")
@@ -224,10 +228,89 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._extract_btn.grid(row=2, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
 
+    @staticmethod
+    def _resolve_mode() -> bool:
+        """現在の実際の外観モードがdarkかどうかを返す（systemを解決）"""
+        mode = ctk.get_appearance_mode().lower()
+        if mode == "system":
+            try:
+                import darkdetect
+                return bool(darkdetect.isDark())
+            except ImportError:  # pragma: no cover
+                return False
+        return mode == "dark"
+
+    def _apply_tree_style(self) -> None:
+        """外観モードに合わせてファイル一覧(Treeview)の色を設定"""
+        is_dark = self._resolve_mode()
+        style = ttk.Style()
+        if is_dark:
+            style.theme_use("clam")
+            style.configure("Treeview",
+                background="#2b2b2b",
+                foreground="#dce4ee",
+                fieldbackground="#2b2b2b",
+                borderwidth=0,
+            )
+            style.configure("Treeview.Heading",
+                background="#333333",
+                foreground="#dce4ee",
+                relief="flat",
+            )
+            style.map("Treeview",
+                background=[("selected", "#1f538d")],
+                foreground=[("selected", "#ffffff")],
+            )
+            style.map("Treeview.Heading",
+                background=[("active", "#404040")],
+            )
+        else:
+            style.theme_use("clam")
+            style.configure("Treeview",
+                background="#ffffff",
+                foreground="#000000",
+                fieldbackground="#ffffff",
+                borderwidth=0,
+            )
+            style.configure("Treeview.Heading",
+                background="#f0f0f0",
+                foreground="#000000",
+                relief="flat",
+            )
+            style.map("Treeview",
+                background=[("selected", "#e5f3ff")],
+                foreground=[("selected", "#000000")],
+            )
+            style.map("Treeview.Heading",
+                background=[("active", "#e0e0e0")],
+            )
+
+    def _start_theme_poll(self) -> None:
+        """systemモード時にOSテーマ変更を検出してスタイルを更新"""
+        self._stop_theme_poll()
+        if ctk.get_appearance_mode().lower() != "system":
+            return
+        self._tree_last_dark = self._resolve_mode()
+        self._tree_poll_id = self.after(2000, self._poll_appearance_mode)
+
+    def _stop_theme_poll(self) -> None:
+        if self._tree_poll_id is not None:
+            self.after_cancel(self._tree_poll_id)
+            self._tree_poll_id = None
+
+    def _poll_appearance_mode(self) -> None:
+        is_dark = self._resolve_mode()
+        if is_dark != self._tree_last_dark:
+            self._tree_last_dark = is_dark
+            self._apply_tree_style()
+        self._tree_poll_id = self.after(2000, self._poll_appearance_mode)
+
     # ---- イベントハンドラ ----
 
     def _on_theme_changed(self, mode: str) -> None:
         ctk.set_appearance_mode(mode)
+        self._apply_tree_style()
+        self._start_theme_poll()
         self._settings.set("theme", mode)
 
     def _on_recent_selected(self, name: str) -> None:

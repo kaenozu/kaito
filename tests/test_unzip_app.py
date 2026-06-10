@@ -146,6 +146,7 @@ def _make_app_mock() -> MagicMock:
     app._preview_frame = MagicMock()
     app._preview_label = MagicMock()
     app._temp_dir = None
+    app._tree_poll_id = None
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -174,6 +175,9 @@ def _init_patches() -> list:
         patch.object(UnzipApp, "_open_on_done_var", create=True),
         patch.object(UnzipApp, "_recent_menu", create=True),
         patch.object(UnzipApp, "_recent_var", create=True),
+        patch.object(UnzipApp, "_apply_tree_style"),
+        patch.object(UnzipApp, "_start_theme_poll"),
+        patch.object(UnzipApp, "_dest_var", create=True),
     ]
 
 
@@ -232,6 +236,66 @@ class TestUnzipAppInit:
             stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
             UnzipApp(cli_path=None)
             dest_var.set.assert_called_with("C:\\saved\\path")
+
+
+class TestUnzipAppTheme:
+    """テーマ関連メソッドのテスト"""
+
+    def test_resolve_mode_light(self) -> None:
+        from kaito.gui.unzip_app import UnzipApp
+        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Light"):
+            assert not UnzipApp._resolve_mode()
+
+    def test_resolve_mode_dark(self) -> None:
+        from kaito.gui.unzip_app import UnzipApp
+        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Dark"):
+            assert UnzipApp._resolve_mode()
+
+    def test_resolve_mode_system_dark(self) -> None:
+        from kaito.gui.unzip_app import UnzipApp
+        with (
+            patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="System"),
+            patch("darkdetect.isDark", return_value=True),
+        ):
+            assert UnzipApp._resolve_mode()
+
+    def test_apply_tree_style_dark(self) -> None:
+        """実アプリインスタンスでdark/light両モードのスタイル適用をテスト"""
+        from tkinter import ttk
+        from kaito.gui.unzip_app import UnzipApp
+        with (
+            ExitStack() as stack,
+            patch.object(UnzipApp, "_build_ui"),
+            patch.object(UnzipApp, "drop_target_register"),
+            patch.object(UnzipApp, "dnd_bind"),
+            patch.object(UnzipApp, "title"),
+            patch.object(UnzipApp, "geometry"),
+            patch.object(UnzipApp, "minsize"),
+            patch.object(UnzipApp, "grid_columnconfigure"),
+            patch.object(UnzipApp, "grid_rowconfigure"),
+            patch.object(UnzipApp, "_dest_var", create=True),
+            patch.object(UnzipApp, "_status_var", create=True),
+            patch.object(UnzipApp, "_path_var", create=True),
+            patch.object(UnzipApp, "_tree", create=True),
+            patch.object(UnzipApp, "_open_on_done_var", create=True),
+            patch.object(UnzipApp, "_preview_frame", create=True),
+            patch.object(UnzipApp, "_recent_var", create=True),
+            patch.object(UnzipApp, "_recent_menu", create=True),
+            patch.object(UnzipApp, "_start_theme_poll"),
+            patch.object(UnzipApp, "_refresh_recent_menu"),
+        ):
+            app = UnzipApp(cli_path=None)
+            style = ttk.Style()
+            # darkモードのスタイルを適用
+            with patch.object(UnzipApp, "_resolve_mode", return_value=True):
+                app._apply_tree_style()
+            assert style.lookup("Treeview", "foreground") == "#dce4ee"
+            assert style.lookup("Treeview", "background") == "#2b2b2b"
+            # lightモードのスタイルを適用
+            with patch.object(UnzipApp, "_resolve_mode", return_value=False):
+                app._apply_tree_style()
+            assert style.lookup("Treeview", "foreground") == "#000000"
+            assert style.lookup("Treeview", "background") == "#ffffff"
 
 
 class TestUnzipAppMethods:
@@ -501,6 +565,44 @@ class TestUnzipAppMethods:
             app._on_theme_changed("dark")
             mock_set.assert_called_with("dark")
             app._settings.set.assert_called_with("theme", "dark")
+
+    def test_start_theme_poll_system(self, app: MagicMock) -> None:
+        with (
+            patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="System"),
+            patch.object(app, "_resolve_mode", return_value=True),
+        ):
+            app._tree_poll_id = None
+            app._start_theme_poll()
+            assert app._tree_poll_id is not None
+            app.after.assert_called_with(2000, app._poll_appearance_mode)
+
+    def test_start_theme_poll_non_system(self, app: MagicMock) -> None:
+        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Light"):
+            app._start_theme_poll()
+            assert app._tree_poll_id is None
+
+    def test_stop_theme_poll_cancels(self, app: MagicMock) -> None:
+        app._tree_poll_id = "123"
+        app.after_cancel = MagicMock()
+        app._stop_theme_poll()
+        app.after_cancel.assert_called_with("123")
+        assert app._tree_poll_id is None
+
+    def test_poll_appearance_mode_no_change(self, app: MagicMock) -> None:
+        with patch.object(app, "_resolve_mode", return_value=True):
+            app._tree_last_dark = True
+            app._poll_appearance_mode()
+            app.after.assert_called_with(2000, app._poll_appearance_mode)
+
+    def test_poll_appearance_mode_changed(self, app: MagicMock) -> None:
+        with (
+            patch.object(app, "_resolve_mode", return_value=False),
+            patch.object(app, "_apply_tree_style") as mock_style,
+        ):
+            app._tree_last_dark = True
+            app._poll_appearance_mode()
+            mock_style.assert_called_once()
+            assert not app._tree_last_dark
 
     def test_on_recent_selected_default(self, app: MagicMock) -> None:
         with patch.object(app, "_load_archive") as mock_load:

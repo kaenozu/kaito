@@ -2,7 +2,7 @@
 ; Build: run with Inno Setup Compiler (ISCC)
 
 #define MyAppName "kaito"
-#define MyAppVersion "0.6.1"
+#define MyAppVersion "0.6.2"
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
 #define MyAppExeName "kaito.exe"
