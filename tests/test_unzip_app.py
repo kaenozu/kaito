@@ -220,6 +220,7 @@ class TestUnzipAppInit:
             patch.object(UnzipApp, "_drop_frame", create=True),
             patch.object(UnzipApp, "_list_frame", create=True),
             patch.object(UnzipApp, "_extract_btn", create=True),
+            patch.object(UnzipApp, "_compress_btn", create=True),
             patch("customtkinter.CTk.__init__", return_value=None),
         ]
         with ExitStack() as stack:
@@ -243,6 +244,7 @@ class TestUnzipAppInit:
             stack.enter_context(patch.object(UnzipApp, "_drop_frame", create=True))
             stack.enter_context(patch.object(UnzipApp, "_list_frame", create=True))
             stack.enter_context(patch.object(UnzipApp, "_extract_btn", create=True))
+            stack.enter_context(patch.object(UnzipApp, "_compress_btn", create=True))
             stack.enter_context(patch("customtkinter.CTk.__init__", return_value=None))
             stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
             UnzipApp(cli_path=None)

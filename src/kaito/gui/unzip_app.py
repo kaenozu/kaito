@@ -261,6 +261,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._extract_btn.grid(row=2, column=3, padx=(4, 8), pady=(0, 8), sticky="e")
 
+        # 初期状態: 圧縮表示、解凍非表示
+        self._extract_btn.grid_remove()
+
     @staticmethod
     def _resolve_mode() -> bool:
         """現在の実際の外観モードがdarkかどうかを返す（systemを解決）"""
@@ -474,6 +477,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         total_size = sum(e.size for e in self._entries)
         self._refresh_tree()
         self._show_file_list()
+        self._compress_btn.grid_remove()
+        self._extract_btn.grid()
         self._extract_btn.configure(state="normal")
         self._status_var.set(
             f"{len(self._entries)} 個のエントリ ({_format_size(total_size)})"
@@ -559,6 +564,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _show_drop_zone(self) -> None:
         self._list_frame.grid_forget()
         self._drop_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
+        self._compress_btn.grid()
+        self._compress_btn.configure(state="normal")
+        self._extract_btn.grid_remove()
+        self._extract_btn.configure(state="disabled")
 
     def _show_file_list(self) -> None:
         self._drop_frame.grid_forget()
@@ -638,13 +647,16 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._set_ui_enabled(True)
         n = len(self._archive_paths)
         self._status_var.set(f"解凍完了 ({n}ファイル)")
+        last_zip = self._zip_path
+        self._zip_path = None
         self._archive_paths = []
         self._settings.set("last_dest", self._dest_var.get())
         self._progress.set(1)
         self._progress.grid_remove()
-        if self._open_on_done_var.get() and self._zip_path is not None:
-            dest = Path(self._dest_var.get()) if self._dest_var.get() else self._zip_path.parent
+        if self._open_on_done_var.get() and last_zip is not None:
+            dest = Path(self._dest_var.get()) if self._dest_var.get() else last_zip.parent
             subprocess.Popen(["explorer", str(dest)])
+        self._show_drop_zone()
 
     def _on_extract_error(self, msg: str) -> None:
         self._extracting = False
