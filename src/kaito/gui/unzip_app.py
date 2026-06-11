@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 from threading import Thread
 from tkinter import filedialog, ttk
-from zipfile import BadZipFile
 
 from PIL import Image
 
@@ -401,7 +400,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _load_archive(self, path: Path) -> None:
         try:
             self._entries, self._is_encrypted = list_archive(path)
-        except (BadZipFile, OSError, RuntimeError) as e:
+        except (ValueError, OSError, RuntimeError) as e:
             self._status_var.set(f"エラー: ファイルを開けません ({e})")
             self._entries = []
             self._refresh_tree()
@@ -424,7 +423,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             try:
                 import patoolib
                 patoolib.extract_archive(str(path), outdir=self._temp_dir.name)
-            except (RuntimeError, OSError) as e:
+            except Exception as e:
                 self._status_var.set(f"警告: RAR/7zのプレビューを展開できません ({e})")
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
@@ -662,7 +661,7 @@ def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | No
                 import patoolib
                 try:
                     patoolib.extract_archive(str(p), outdir=tmpdir.name)
-                except (RuntimeError, OSError):
+                except Exception:
                     # プレビューできない場合は空を返す
                     return b""
                 root = tmpdir.name
