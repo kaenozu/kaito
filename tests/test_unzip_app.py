@@ -1028,17 +1028,17 @@ class TestContextMenu:
         ):
             from kaito.gui.unzip_app import install_context_menu
             install_context_menu()
-            assert mock_create.call_count == 10
-            assert mock_set.call_count == 10
-            # 解凍メニュー名（valueに"解凍"）が3件
+            assert mock_create.call_count == 12  # SFA(3)*2 + *(1)*2 + *(1)*2 + Dir(1)*2
+            assert mock_set.call_count == 12
+            # 解凍メニュー名（valueに"解凍"）が4件（SFA 3 + * fallback 1）
             extract_names = [c for c in mock_set.mock_calls if "解凍" in str(c)]
-            assert len(extract_names) == 3
+            assert len(extract_names) == 4
             # 圧縮メニュー名（valueに"圧縮"）が2件
             compress_names = [c for c in mock_set.mock_calls if "圧縮" in str(c)]
             assert len(compress_names) == 2
-            # command文字列（"%1"を含む）が5件
+            # command文字列（"%1"を含む）が6件（SFA 3 + *fallback 1 + *compress 1 + Dir 1）
             cmd_calls = [c for c in mock_set.mock_calls if "%1" in str(c)]
-            assert len(cmd_calls) == 5
+            assert len(cmd_calls) == 6
 
     def test_uninstall_context_menu(self) -> None:
         """削除が呼ばれる（実際のレジストリは触らない）"""

@@ -797,8 +797,12 @@ _CONTEXT_EXTENSIONS = [".zip", ".rar", ".7z"]
 
 def _get_exe_path() -> Path:
     """kaito実行ファイルのパスを返す"""
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False):  # PyInstallerビルド
         return Path(sys.executable)
+    # 開発環境: dist/kaito.exe を返す
+    dev_exe = Path(sys.executable).parent.parent / "dist" / "kaito.exe"
+    if dev_exe.exists():
+        return dev_exe
     return Path(sys.executable)
 
 
@@ -808,9 +812,17 @@ def install_context_menu() -> None:
     exe_str = f'"{exe}"'
     base = r"Software\Classes"
 
-    # 解凍: 各拡張子
+    # 解凍: SystemFileAssociations (標準状態で有効) + * (カスタムProgID対策)
     for ext in _CONTEXT_EXTENSIONS:
         key_path = f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract"
+        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
+        cmd_path = f"{key_path}\\command"
+        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')
+    # 全ファイルにも登録（例: CubeICE などが ProgID を乗っ取っている場合の救済）
+    for shell_root in [f"{base}\\*"]:
+        key_path = f"{shell_root}\\shell\\kaito_extract"
         with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
             SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
         cmd_path = f"{key_path}\\command"
@@ -850,6 +862,7 @@ def uninstall_context_menu() -> None:
 
     for ext in _CONTEXT_EXTENSIONS:
         _delete_key_recursive(HKEY_CURRENT_USER, f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract")
+    _delete_key_recursive(HKEY_CURRENT_USER, f"{base}\\*\\shell\\kaito_extract")
 
     for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
         _delete_key_recursive(HKEY_CURRENT_USER, f"{shell_root}\\shell\\kaito_compress")
