@@ -683,9 +683,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """圧縮ファイル保存ダイアログ＋実行"""
         if not self._compress_sources:
             return
-        default_name = self._compress_sources[0].stem + ".zip"
+        first = self._compress_sources[0]
+        default_name = first.stem + ".zip"
+        default_dir = str(first.parent) if first.parent != Path() else "."
         output = filedialog.asksaveasfilename(
             title="圧縮ファイルの保存先",
+            initialdir=default_dir,
             defaultextension=".zip",
             initialfile=default_name,
             filetypes=[
