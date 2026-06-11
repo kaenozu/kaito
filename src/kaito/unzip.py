@@ -51,7 +51,8 @@ def list_archive(
     passwordはRAR/7zではpatoolib.list_archiveが非対応なため実質利用しないが、
     extract_archiveとのAPI一貫性のために受け付ける。
     """
-    _ = password  # RAR/7zのlist_archiveはpatoolib経由でpassword非対応
+    # RAR/7zのlist_archiveはpatoolib経由でpassword非対応のため破棄
+    del password  # noqa: F841 (API一貫性のために接受的)
     ext = Path(path).suffix.lower()
     if ext == ".zip":
         return list_entries(path)
