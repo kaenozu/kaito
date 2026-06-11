@@ -44,13 +44,18 @@ class SettingsManager:
             self._data = {**DEFAULT_SETTINGS, **loaded}
         except (FileNotFoundError, json.JSONDecodeError):
             self._data = dict(DEFAULT_SETTINGS)
+        except (PermissionError, OSError, UnicodeDecodeError):
+            self._data = dict(DEFAULT_SETTINGS)
 
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(self._data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        try:
+            self._path.write_text(
+                json.dumps(self._data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except (PermissionError, OSError) as e:
+            raise RuntimeError(f"設定の保存に失敗しました: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)

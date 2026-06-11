@@ -12,10 +12,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from threading import Thread
 from tkinter import filedialog, ttk
+from zipfile import BadZipFile
 try:
     from winreg import (  # type: ignore[attr-defined]
         CreateKeyEx,
@@ -79,6 +81,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._compress_sources: list[Path] = []
         self._compressing = False
         self._compress_no_dialog = False
+        self._extract_lock = threading.Lock()  # スレッドセーフティ用
 
         self._build_ui()
 
@@ -444,7 +447,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _load_archive(self, path: Path) -> None:
         try:
             self._entries, self._is_encrypted = list_archive(path)
-        except Exception as e:
+        except (BadZipFile, OSError, RuntimeError) as e:
             self._status_var.set(f"エラー: ファイルを開けません ({e})")
             self._entries = []
             self._refresh_tree()
@@ -467,8 +470,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             try:
                 import patoolib
                 patoolib.extract_archive(str(path), outdir=self._temp_dir.name)
-            except Exception:
-                pass
+            except (RuntimeError, OSError) as e:
+                self._status_var.set(f"警告: RAR/7zのプレビューを展開できません ({e})")
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
         self._refresh_recent_menu()
@@ -537,8 +540,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         cache = self._temp_dir.name if self._temp_dir else None
         try:
             content = _read_archive_entry(self._zip_path, name, cache_dir=cache)
-        except Exception:
-            self._preview_label.configure(text="プレビューを読み込めませんでした")
+        except (IOError, OSError) as e:
+            self._preview_label.configure(text=f"プレビューを読み込めませんでした ({e})")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
         text = content.decode("utf-8", errors="replace")[:_MAX_PREVIEW_CHARS]
@@ -557,8 +560,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._preview_label.configure(image=ctk_img, text="")
             # 参照を保持 (GC防止)
             self._current_image = ctk_img
-        except Exception:
-            self._preview_label.configure(text="画像をプレビューできません")
+        except (IOError, OSError) as e:
+            self._preview_label.configure(text=f"画像をプレビューできません ({e})")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
         self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
@@ -589,33 +592,41 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # メインスレッドでパスワード取得（アクティブアーカイブのみ）
         active_password: str | None = None
-        if self._is_encrypted and self._zip_path is not None:
-            active_password = self._settings.get_password(str(self._zip_path))
+        with self._extract_lock:
+            current_zip_path = self._zip_path
+        if self._is_encrypted and current_zip_path is not None:
+            active_password = self._settings.get_password(str(current_zip_path))
             if active_password is None:
                 active_password = self._ask_password()
                 if active_password is None:
                     return
-                self._settings.set_password(str(self._zip_path), active_password)
+                self._settings.set_password(str(current_zip_path), active_password)
 
         self._extracting = True
         self._set_ui_enabled(False)
         self._progress.set(0)
 
+        # 共有状態のアーカイブパスをコピーしてスレッドに渡す
+        with self._extract_lock:
+            paths_copy = list(self._archive_paths)
+            zip_path_copy = self._zip_path
+
         Thread(
             target=self._do_batch_extract,
-            args=(list(self._archive_paths), dest, active_password),
+            args=(paths_copy, dest, active_password, zip_path_copy),
             daemon=True,
         ).start()
 
     def _do_batch_extract(
-        self, paths: list[Path], dest: Path, active_password: str | None
+        self, paths: list[Path], dest: Path, active_password: str | None,
+        zip_path: Path | None
     ) -> None:
         self.after(0, self._progress.grid)
         self.after(0, lambda: self._progress.set(0))
         total_archives = len(paths)
 
         for idx, archive_path in enumerate(paths):
-            password = active_password if archive_path == self._zip_path else None
+            password = active_password if archive_path == zip_path else None
             entry_archive_name = archive_path.name
             archive_dest = dest / archive_path.stem
             archive_dest.mkdir(parents=True, exist_ok=True)
@@ -638,7 +649,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     ))
 
                 extract_archive(archive_path, archive_dest, password=password, on_progress=on_progress)
-            except Exception as exc:
+            except (RuntimeError, OSError, PermissionError) as exc:
                 self.after(0, lambda e=exc, a=entry_archive_name: self._on_extract_error(f"{a}: {e}"))
                 return
 
@@ -653,6 +664,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._zip_path = None
         self._archive_paths = []
         self._settings.set("last_dest", self._dest_var.get())
+        self._settings.clear_passwords()  # 安全のためメモリからパスワードをクリア
         self._progress.set(1)
         self._progress.grid_remove()
         if self._open_on_done_var.get() and last_zip is not None:
@@ -795,7 +807,8 @@ def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | No
                 import patoolib
                 try:
                     patoolib.extract_archive(str(p), outdir=tmpdir.name)
-                except Exception:
+                except (RuntimeError, OSError):
+                    # プレビューできない場合は空を返す
                     return b""
                 root = tmpdir.name
             extracted = Path(root) / name
@@ -935,7 +948,7 @@ def main() -> None:
             cli_compress_path = p
     elif args:
         p = Path(args[0])
-        if p.suffix.lower() in {".zip", ".rar", ".7z"} and p.exists():
+        if is_supported(p) and p.exists():
             cli_path = p
 
     app = UnzipApp(cli_path=cli_path, cli_compress_path=cli_compress_path)

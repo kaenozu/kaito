@@ -22,16 +22,18 @@ ZIP/RAR/7z 解凍GUIツール
 pip install kaito
 ```
 
-またはリポジトリをクローンして:
+または、リポジトリをクローンして setup:
 
 ```bash
+git clone https://github.com/yourusername/kaito.git
+cd kaito
 uv sync
 ```
 
 ## 使い方
 
 ```bash
-# GUI起動
+# GUIを起動
 uv run kaito
 
 # ファイルを指定して起動
@@ -47,16 +49,16 @@ uv run kaito path/to/archive.zip
 ## 開発
 
 ```bash
-# 依存関係インストール
+# 依存関係をインストール
 uv sync
 
-# テスト実行
+# テストを実行
 uv run pytest --cov=src/kaito
 
-# リンター
+# リンターを実行
 uv run ruff check src/
 
-# 型チェック
+# 型チェックを実行
 uv run pyright src/
 ```
 
