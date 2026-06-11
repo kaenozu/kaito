@@ -43,8 +43,15 @@ def is_supported(path: str | Path) -> bool:
 
 def list_archive(
     path: str | Path,
+    password: str | None = None,
 ) -> tuple[list[ZipEntry], bool]:
-    """アーカイブの内容一覧を返す"""
+    """アーカイブの内容一覧を返す
+
+    ZIPは常に一覧可能。RAR/7zは暗号化されていると空の一覧+暗号化フラグを返す。
+    passwordはRAR/7zではpatoolib.list_archiveが非対応なため実質利用しないが、
+    extract_archiveとのAPI一貫性のために受け付ける。
+    """
+    _ = password  # RAR/7zのlist_archiveはpatoolib経由でpassword非対応
     ext = Path(path).suffix.lower()
     if ext == ".zip":
         return list_entries(path)

@@ -147,6 +147,11 @@ def _make_app_mock() -> MagicMock:
     app._preview_label = MagicMock()
     app._temp_dir = None
     app._tree_poll_id = None
+    app._tree_last_dark = None
+    app._search_var = MagicMock()
+    app._search_var.get.return_value = ""
+    app._search_entry = MagicMock()
+    app._settings_btn = MagicMock()
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -178,6 +183,8 @@ def _init_patches() -> list:
         patch.object(UnzipApp, "_apply_tree_style"),
         patch.object(UnzipApp, "_start_theme_poll"),
         patch.object(UnzipApp, "_dest_var", create=True),
+        patch.object(UnzipApp, "_search_var", create=True),
+        patch.object(UnzipApp, "_settings_btn", create=True),
     ]
 
 
@@ -220,6 +227,7 @@ class TestUnzipAppInit:
             assert len(app._entries) == 1
 
     def test_init_restores_saved_dest(self) -> None:
+        """過去の展開先は復元しない（常にアーカイブ名ベース）"""
         from kaito.gui.unzip_app import SettingsManager, UnzipApp
         with ExitStack() as stack:
             for p in _init_patches():
@@ -235,7 +243,8 @@ class TestUnzipAppInit:
             stack.enter_context(patch("customtkinter.CTk.__init__", return_value=None))
             stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
             UnzipApp(cli_path=None)
-            dest_var.set.assert_called_with("C:\\saved\\path")
+            # 過去の展開先を復元しなくなった
+            dest_var.set.assert_not_called()
 
 
 class TestUnzipAppTheme:
@@ -260,42 +269,25 @@ class TestUnzipAppTheme:
             assert UnzipApp._resolve_mode()
 
     def test_apply_tree_style_dark(self) -> None:
-        """実アプリインスタンスでdark/light両モードのスタイル適用をテスト"""
-        from tkinter import ttk
+        """暗黙のクラムテーマと色設定をmockで検証(dark)"""
         from kaito.gui.unzip_app import UnzipApp
-        with (
-            ExitStack() as stack,
-            patch.object(UnzipApp, "_build_ui"),
-            patch.object(UnzipApp, "drop_target_register"),
-            patch.object(UnzipApp, "dnd_bind"),
-            patch.object(UnzipApp, "title"),
-            patch.object(UnzipApp, "geometry"),
-            patch.object(UnzipApp, "minsize"),
-            patch.object(UnzipApp, "grid_columnconfigure"),
-            patch.object(UnzipApp, "grid_rowconfigure"),
-            patch.object(UnzipApp, "_dest_var", create=True),
-            patch.object(UnzipApp, "_status_var", create=True),
-            patch.object(UnzipApp, "_path_var", create=True),
-            patch.object(UnzipApp, "_tree", create=True),
-            patch.object(UnzipApp, "_open_on_done_var", create=True),
-            patch.object(UnzipApp, "_preview_frame", create=True),
-            patch.object(UnzipApp, "_recent_var", create=True),
-            patch.object(UnzipApp, "_recent_menu", create=True),
-            patch.object(UnzipApp, "_start_theme_poll"),
-            patch.object(UnzipApp, "_refresh_recent_menu"),
-        ):
-            app = UnzipApp(cli_path=None)
-            style = ttk.Style()
-            # darkモードのスタイルを適用
-            with patch.object(UnzipApp, "_resolve_mode", return_value=True):
-                app._apply_tree_style()
-            assert style.lookup("Treeview", "foreground") == "#dce4ee"
-            assert style.lookup("Treeview", "background") == "#2b2b2b"
-            # lightモードのスタイルを適用
-            with patch.object(UnzipApp, "_resolve_mode", return_value=False):
-                app._apply_tree_style()
-            assert style.lookup("Treeview", "foreground") == "#000000"
-            assert style.lookup("Treeview", "background") == "#ffffff"
+        mock_style = MagicMock(name="mock_style_dark")
+        with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
+            app = MagicMock()
+            app._resolve_mode = MagicMock(return_value=True)
+            UnzipApp._apply_tree_style(app)
+            mock_style.theme_use.assert_called_with("clam")
+            mock_style.configure.assert_any_call("Treeview", foreground="#dce4ee", background="#2b2b2b", fieldbackground="#2b2b2b", borderwidth=0)
+
+    def test_apply_tree_style_light(self) -> None:
+        """暗黙のクラムテーマと色設定をmockで検証(light)"""
+        from kaito.gui.unzip_app import UnzipApp
+        mock_style = MagicMock(name="mock_style_light")
+        with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
+            app = MagicMock()
+            app._resolve_mode = MagicMock(return_value=False)
+            UnzipApp._apply_tree_style(app)
+            mock_style.configure.assert_any_call("Treeview", foreground="#000000", background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
 
 
 class TestUnzipAppMethods:
@@ -400,7 +392,7 @@ class TestUnzipAppMethods:
         assert app._zip_path == z
         assert len(app._entries) == 2
         assert app._path_var.set.called
-        assert app._dest_var.set.called
+        assert app._dest_var.set.called  # 常にアーカイブ名のパスに設定される
 
     def test_load_archive_error(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "bad.zip"
@@ -415,8 +407,8 @@ class TestUnzipAppMethods:
             zf.writestr("a.txt", "data")
         app._dest_var.get.return_value = "C:\\custom\\path"
         app._load_archive(z)
-        # dest_var は既に設定済みなので上書きしない
-        app._dest_var.set.assert_not_called()
+        # 以前の保存値に関わらずアーカイブ名のパスに上書きされる
+        assert app._dest_var.set.called
 
     def test_refresh_tree(self, app: MagicMock) -> None:
         from datetime import datetime
@@ -429,6 +421,37 @@ class TestUnzipAppMethods:
         app._refresh_tree()
         app._tree.delete.assert_called_with("old")
         assert app._tree.insert.call_count == 2
+
+    def test_refresh_tree_filtered(self, app: MagicMock) -> None:
+        """検索絞り込みでエントリがフィルターされる"""
+        from datetime import datetime
+        from kaito.unzip import ZipEntry
+        app._entries = [
+            ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
+            ZipEntry("world.txt", 200, 160, datetime(2026, 1, 1, 0, 0, 0), False),
+        ]
+        app._tree.get_children.return_value = []
+        app._search_var.get.return_value = "hello"
+        app._refresh_tree()
+        assert app._tree.insert.call_count == 1
+
+    def test_refresh_tree_filter_empty(self, app: MagicMock) -> None:
+        """該当なしの検索でもクラッシュしない"""
+        from datetime import datetime
+        from kaito.unzip import ZipEntry
+        app._entries = [
+            ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
+        ]
+        app._tree.get_children.return_value = []
+        app._search_var.get.return_value = "zzz"
+        app._refresh_tree()
+        assert app._tree.insert.call_count == 0
+
+    def test_on_search_keyrelease(self, app: MagicMock) -> None:
+        """検索キー入力がツリー再描画を呼ぶ"""
+        with patch.object(app, "_refresh_tree") as mock_refresh:
+            app._on_search_keyrelease()
+            mock_refresh.assert_called_once()
 
     def test_on_dest_browse_with_path(self, app: MagicMock) -> None:
         with patch("tkinter.filedialog.askdirectory", return_value="C:\\out"):
@@ -553,6 +576,10 @@ class TestUnzipAppMethods:
             dlg.return_value.get_input.return_value = "secret"
             result = app._ask_password()
             assert result == "secret"
+            # ダイアログの文言がZIP/RAR/7z共通になっている
+            text_arg = dlg.call_args[1]["text"]
+            assert "アーカイブ" in text_arg
+            assert "パスワード" in text_arg
 
     def test_ask_password_cancelled(self, app: MagicMock) -> None:
         with patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg:
@@ -603,6 +630,15 @@ class TestUnzipAppMethods:
             app._poll_appearance_mode()
             mock_style.assert_called_once()
             assert not app._tree_last_dark
+
+    def test_on_open_settings(self, app: MagicMock) -> None:
+        """設定ダイアログが開かれる"""
+        with patch("kaito.gui.unzip_app.SettingsDialog") as mock_dlg:
+            app._on_open_settings()
+            mock_dlg.assert_called_once_with(
+                parent=app, settings=app._settings,
+                on_theme_changed=app._on_theme_changed,
+            )
 
     def test_on_recent_selected_default(self, app: MagicMock) -> None:
         with patch.object(app, "_load_archive") as mock_load:
@@ -762,6 +798,62 @@ class TestUnzipAppMethods:
             result = _read_archive_entry(z, "hello.txt")
             assert result == b"RAR content"
 
+    def test_load_archive_rar_mocked(self, app: MagicMock, tmp_path: Path) -> None:
+        """RARファイルでpatoolibをモックしてpre-extractionパスをテスト"""
+        z = tmp_path / "test.rar"
+        z.touch()
+        app._dest_var.get.return_value = ""
+        mock_entries = []
+        with (
+            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
+            patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
+            patch("patoolib.extract_archive"),
+        ):
+            mock_td = MagicMock()
+            mock_tmpdir.return_value = mock_td
+            mock_td.name = str(tmp_path / "extracted")
+            app._load_archive(z)
+            assert app._temp_dir is not None
+
+    def test_load_archive_rar_extract_fail(self, app: MagicMock, tmp_path: Path) -> None:
+        """RAR pre-extractionが失敗してもクラッシュしない"""
+        z = tmp_path / "test.rar"
+        z.touch()
+        app._dest_var.get.return_value = ""
+        mock_entries = []
+        with (
+            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
+            patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
+            patch("patoolib.extract_archive", side_effect=RuntimeError("extract failed")),
+        ):
+            mock_td = MagicMock()
+            mock_tmpdir.return_value = mock_td
+            mock_td.name = str(tmp_path / "extracted")
+            app._load_archive(z)  # should not raise
+            assert app._temp_dir is not None
+
+    def test_load_archive_cleanup_old_temp(self, app: MagicMock, tmp_path: Path) -> None:
+        """2つ目のZIPを開くとき前のRAR展開をクリーンアップ"""
+        old_td = MagicMock()
+        app._temp_dir = old_td
+        app._dest_var.get.return_value = ""
+        z = tmp_path / "test.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a.txt", "data")
+        app._load_archive(z)
+        old_td.cleanup.assert_called_once()
+        assert app._temp_dir is None
+
+    def test_read_archive_entry_with_cache_dir(self, tmp_path: Path) -> None:
+        """cache_dir（事前展開済みディレクトリ）から直接ファイル読み込み"""
+        z = tmp_path / "test.rar"
+        z.touch()
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        (cache_dir / "hello.txt").write_bytes(b"cached content")
+        result = _read_archive_entry(z, "hello.txt", cache_dir=str(cache_dir))
+        assert result == b"cached content"
+
     def test_read_archive_entry_7z_mocked(self, tmp_path: Path) -> None:
         """patoolib.extract_archiveをモックして7zプレビューパスをテスト"""
         z = tmp_path / "test.7z"
@@ -786,6 +878,39 @@ class TestUnzipAppMethods:
             mock_extract.side_effect = mock_extract_archive
             result = _read_archive_entry(z, "missing.txt")
             assert result == b""
+
+
+# ---- SettingsDialog のテスト ----
+
+class TestSettingsDialog:
+    """SettingsDialog の各機能をモックでテスト"""
+
+    def _make_dlg(self) -> MagicMock:
+        dlg = MagicMock()
+        dlg._settings = MagicMock()
+        dlg._on_theme_changed = MagicMock()
+        dlg._theme_var = MagicMock()
+        dlg._theme_var.get.return_value = "dark"
+        dlg._lang_var = MagicMock()
+        dlg._lang_var.get.return_value = "English"
+        return dlg
+
+    def test_save_applies_theme(self) -> None:
+        from kaito.gui.settings_dialog import SettingsDialog
+        dlg = self._make_dlg()
+        SettingsDialog._on_save(dlg)
+        dlg._settings.set.assert_any_call("theme", "dark")
+        dlg._settings.set.assert_any_call("language", "English")
+        dlg._on_theme_changed.assert_called_once_with("dark")
+        dlg.destroy.assert_called_once()
+
+    def test_save_no_callback(self) -> None:
+        """on_theme_changedがNoneでもクラッシュしない"""
+        from kaito.gui.settings_dialog import SettingsDialog
+        dlg = self._make_dlg()
+        dlg._on_theme_changed = None
+        SettingsDialog._on_save(dlg)
+        dlg.destroy.assert_called_once()
 
 
 # ---- _truncate_path のテスト ----

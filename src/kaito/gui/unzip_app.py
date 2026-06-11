@@ -5,13 +5,14 @@ CustomTkinterを使用したZIP解凍GUIアプリ
 関連: unzip.py (解凍コアロジック)
 """
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 
 import io
 import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from threading import Thread
 from tkinter import filedialog, ttk
@@ -28,6 +29,8 @@ from kaito.unzip import (
     is_supported,
     list_archive,
 )
+
+from kaito.gui.settings_dialog import SettingsDialog
 
 _DROP_BORDER_COLOR = "#3a7ebf"
 _DROP_HIGHLIGHT_COLOR = "#1a6ebf"
@@ -66,10 +69,6 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._apply_tree_style()
         self._start_theme_poll()
 
-        # 保存済み設定を復元
-        saved_dest = self._settings.get("last_dest")
-        if saved_dest:
-            self._dest_var.set(saved_dest)
         self._open_on_done_var.set(self._settings.get("open_on_done", True))
 
         self._refresh_recent_menu()
@@ -106,13 +105,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
 
-        self._theme_var = ctk.StringVar(value=ctk.get_appearance_mode().lower())
-        self._theme_menu = ctk.CTkOptionMenu(
-            file_frame, values=["system", "light", "dark"],
-            variable=self._theme_var, width=90,
-            command=self._on_theme_changed,
+        self._settings_btn = ctk.CTkButton(
+            file_frame, text="設定", width=70, command=self._on_open_settings,
         )
-        self._theme_menu.grid(row=0, column=3, padx=(0, 4), pady=8)
+        self._settings_btn.grid(row=0, column=3, padx=(0, 4), pady=8)
 
         self._recent_var = ctk.StringVar(value="最近のファイル")
         self._recent_menu = ctk.CTkOptionMenu(
@@ -141,11 +137,20 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # --- ファイル一覧 (ZIP読込後) ---
         self._list_frame = ctk.CTkFrame(self)
         self._list_frame.grid_rowconfigure(1, weight=1)
-        self._list_frame.grid_columnconfigure(0, weight=1)
+        self._list_frame.grid_columnconfigure(0, weight=0)
+        self._list_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self._list_frame, text="内容:").grid(
-            row=0, column=0, padx=8, pady=(8, 2), sticky="w"
+            row=0, column=0, padx=(8, 2), pady=(8, 2), sticky="w"
         )
+
+        self._search_var = ctk.StringVar()
+        self._search_entry = ctk.CTkEntry(
+            self._list_frame, textvariable=self._search_var,
+            placeholder_text="絞り込み...", height=24,
+        )
+        self._search_entry.grid(row=0, column=1, padx=(2, 8), pady=(6, 0), sticky="ew")
+        self._search_entry.bind("<KeyRelease>", self._on_search_keyrelease)
 
         tree_frame = ctk.CTkFrame(self._list_frame)
         tree_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
@@ -313,6 +318,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._start_theme_poll()
         self._settings.set("theme", mode)
 
+    def _on_open_settings(self) -> None:
+        """設定ダイアログを開く"""
+        SettingsDialog(
+            parent=self,
+            settings=self._settings,
+            on_theme_changed=self._on_theme_changed,
+        )
+
     def _on_recent_selected(self, name: str) -> None:
         if name == "最近のファイル":
             return
@@ -393,16 +406,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._extract_btn.configure(state="disabled")
             return
 
+        # 新しいアーカイブを開くとき、前の一時展開をクリーンアップ
+        if self._temp_dir is not None:
+            self._temp_dir.cleanup()
+            self._temp_dir = None
+
         self._zip_path = path
         self._archive_paths = [path]
+        self._search_var.set("")
+
+        # RAR/7zはプレビュー用に全展開しておく
+        if path.suffix.lower() in {".rar", ".7z"}:
+            self._temp_dir = tempfile.TemporaryDirectory()
+            try:
+                import patoolib
+                patoolib.extract_archive(str(path), outdir=self._temp_dir.name)
+            except Exception:
+                pass
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
         self._refresh_recent_menu()
 
-        # 展開先のデフォルト: ZIPファイルと同じディレクトリ/ZIPファイル名
-        default_dest = path.parent / path.stem
-        if not self._dest_var.get():
-            self._dest_var.set(str(default_dest))
+        # 展開先のデフォルト: アーカイブと同じディレクトリ/ファイル名
+        self._dest_var.set(str(path.parent / path.stem))
 
         total_size = sum(e.size for e in self._entries)
         self._refresh_tree()
@@ -416,14 +442,18 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _refresh_tree(self) -> None:
         for row in self._tree.get_children():
             self._tree.delete(row)
-        for i, e in enumerate(self._entries, start=1):
-            self._tree.insert("", "end", values=(
-                i,
-                e.name,
-                _format_size(e.size),
-                _format_size(e.compressed_size),
-                e.modified.strftime("%Y-%m-%d %H:%M"),
-            ))
+        query = self._search_var.get().strip().lower()
+        filtered = [
+            e for e in self._entries
+            if not query or query in e.name.lower()
+        ] if query else self._entries
+        rows = [
+            (i, e.name, _format_size(e.size), _format_size(e.compressed_size),
+             e.modified.strftime("%Y-%m-%d %H:%M"))
+            for i, e in enumerate(filtered, start=1)
+        ]
+        for values in rows:
+            self._tree.insert("", "end", values=values)
 
     def _on_tree_select(self, _event: object = None) -> None:
         if self._zip_path is None:
@@ -437,9 +467,11 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         entry_name: str = values[1]
         self._show_preview(entry_name)
 
+    def _on_search_keyrelease(self, _event: object = None) -> None:
+        """検索ボックスに入力があるたびにツリービューを絞り込む"""
+        self._refresh_tree()
+
     def _show_preview(self, name: str) -> None:
-        if self._temp_dir is not None:
-            self._temp_dir.cleanup()
         self._preview_frame.grid_forget()
         self._preview_label.configure(text="")
 
@@ -454,8 +486,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _preview_text(self, name: str) -> None:
         assert self._zip_path is not None
+        cache = self._temp_dir.name if self._temp_dir else None
         try:
-            content = _read_archive_entry(self._zip_path, name)
+            content = _read_archive_entry(self._zip_path, name, cache_dir=cache)
         except Exception:
             self._preview_label.configure(text="プレビューを読み込めませんでした")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
@@ -466,8 +499,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _preview_image(self, name: str) -> None:
         assert self._zip_path is not None
+        cache = self._temp_dir.name if self._temp_dir else None
         try:
-            data = _read_archive_entry(self._zip_path, name)
+            data = _read_archive_entry(self._zip_path, name, cache_dir=cache)
             img = Image.open(io.BytesIO(data))
             # メモリ安全のためサムネイルサイズに制限
             img.thumbnail(_MAX_IMAGE_DIMENSION)
@@ -535,10 +569,15 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             archive_dest.mkdir(parents=True, exist_ok=True)
 
             try:
+                _last_progress = [0.0]
                 def on_progress(
                     current: int, total: int,
                     current_name: str = "", _a=entry_archive_name,
                 ) -> None:
+                    now = time.monotonic()
+                    if now - _last_progress[0] < 0.1 and current < total:  # pragma: no cover
+                        return
+                    _last_progress[0] = now
                     pct = current / total
                     self.after(0, lambda p=pct: self._progress.set(p))
                     name_part = f" - {current_name}" if current_name else ""
@@ -583,14 +622,18 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """パスワード入力ダイアログを表示"""
         dialog = ctk.CTkInputDialog(
             title="パスワード",
-            text="このZIPファイルはパスワードで保護されています\nパスワードを入力してください:",
+            text="このアーカイブはパスワードで保護されています\nパスワードを入力してください:",
         )
         result = dialog.get_input()
         return result if result else None
 
 
-def _read_archive_entry(archive_path: Path | str, name: str) -> bytes:
-    """アーカイブ内の1エントリを読み込む。ZIPはzipfile、RAR/7zはpatoolib経由で一時展開。"""
+def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
+    """アーカイブ内の1エントリを読み込む。
+
+    ZIPはzipfileで直接読み込み。
+    RAR/7zはcache_dir（事前展開済みディレクトリ）があればそこから読み込み、なければ一時展開。
+    """
     p = Path(archive_path)
     ext = p.suffix.lower()
     if ext == ".zip":
@@ -598,21 +641,27 @@ def _read_archive_entry(archive_path: Path | str, name: str) -> bytes:
         with zipfile.ZipFile(p, "r") as zf:
             return zf.read(name)
     elif ext in {".rar", ".7z"}:
-        import patoolib
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            try:
-                patoolib.extract_archive(str(p), outdir=tmpdir)
-            except Exception:
-                return b""
-            # 展開されたファイルを探す（nameはアーカイブ内の相対パス）
-            extracted = Path(tmpdir) / name
+        tmpdir: tempfile.TemporaryDirectory | None = None
+        try:
+            if cache_dir is not None:
+                root = cache_dir
+            else:
+                tmpdir = tempfile.TemporaryDirectory()
+                import patoolib
+                try:
+                    patoolib.extract_archive(str(p), outdir=tmpdir.name)
+                except Exception:
+                    return b""
+                root = tmpdir.name
+            extracted = Path(root) / name
             if extracted.exists():
                 return extracted.read_bytes()
-            # パス区切り文字が異なる場合があるので再帰的に探す
-            for f in Path(tmpdir).rglob("*"):
+            for f in Path(root).rglob("*"):
                 if f.is_file() and f.name == Path(name).name:
                     return f.read_bytes()
+        finally:
+            if tmpdir is not None:
+                tmpdir.cleanup()
     return b""
 
 
