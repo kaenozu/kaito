@@ -155,6 +155,7 @@ def _make_app_mock() -> MagicMock:
     app._settings_btn = MagicMock()
     app._compress_sources = []
     app._compressing = False
+    app._compress_no_dialog = False
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -340,6 +341,7 @@ class TestUnzipAppMethods:
         with (
             patch.object(app, "_load_archive") as mock_load,
             patch.object(app, "_add_to_queue") as mock_add,
+            patch.object(app, "_start_compress_flow"),
             patch.object(Path, "exists", return_value=True),
         ):
             app._on_drop(event)

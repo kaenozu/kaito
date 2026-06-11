@@ -66,21 +66,32 @@ def _create_zip(
     on_progress: ProgressCallback | None = None,
 ) -> None:
     """ZIPアーカイブを作成"""
-    total = len(sources)
+    # 個別ファイル単位で進捗を計算するため総ファイル数をカウント
+    total = 0
+    for s in sources:
+        if s.is_dir():
+            total += sum(1 for f in s.rglob("*") if f.is_file())
+        else:
+            total += 1
+    done = 0
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, source in enumerate(sources):
+        for source in sources:
             if source.is_dir():
                 for f in source.rglob("*"):
                     arcname = f.relative_to(source.parent)
                     if f.is_file():
                         zf.write(f, str(arcname))
+                        done += 1
+                        if on_progress:
+                            on_progress(done, total, f.name)
                     elif f.is_dir():
                         zi = zipfile.ZipInfo(str(arcname) + "/")
                         zf.writestr(zi, "")
             else:
                 zf.write(source, source.name)
-            if on_progress:
-                on_progress(i + 1, total, source.name)
+                done += 1
+                if on_progress:
+                    on_progress(done, total, source.name)
 
 
 def is_supported(path: str | Path) -> bool:

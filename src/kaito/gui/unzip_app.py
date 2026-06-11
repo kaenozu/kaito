@@ -5,7 +5,7 @@ CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 import io
 import re
@@ -78,6 +78,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._current_image: ctk.CTkImage | None = None
         self._compress_sources: list[Path] = []
         self._compressing = False
+        self._compress_no_dialog = False
 
         self._build_ui()
 
@@ -104,6 +105,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # 起動時に圧縮対象が渡されたら圧縮フロー開始
         if cli_compress_path is not None:
             self._compress_sources = [cli_compress_path]
+            self._compress_no_dialog = True
             self.after(100, self._start_compress_flow)
 
     def _build_ui(self) -> None:  # pragma: no cover
@@ -695,6 +697,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """圧縮ファイル保存ダイアログ＋実行"""
         if not self._compress_sources:
             return
+
+        if self._compress_no_dialog:
+            self._compress_no_dialog = False
+            first = self._compress_sources[0]
+            output = first.parent / (first.stem + ".zip")
+            self._start_compress(output)
+            return
+
         first = self._compress_sources[0]
         default_name = first.stem + ".zip"
         default_dir = str(first.parent) if first.parent != Path() else "."
@@ -712,6 +722,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if not output:
             return
 
+        self._start_compress(Path(output))
+
+    def _start_compress(self, output: Path) -> None:
+        """圧縮を開始（共通）"""
         self._compressing = True
         self._set_ui_enabled(False)
         self._progress.set(0)
@@ -719,7 +733,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         Thread(
             target=self._do_compress,
-            args=(list(self._compress_sources), Path(output)),
+            args=(list(self._compress_sources), output),
             daemon=True,
         ).start()
 
@@ -745,6 +759,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.set(1)
         self._progress.grid_remove()
         self._compress_sources = []
+        if self._compress_no_dialog:
+            self.after(500, self.destroy)
 
     def _on_compress_error(self, msg: str) -> None:
         self._compressing = False
@@ -752,6 +768,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._status_var.set(f"エラー: {msg}")
         self._progress.set(0)
         self._progress.grid_remove()
+        if self._compress_no_dialog:
+            self._compress_no_dialog = False
+            self.after(2000, self.destroy)
 
 
 def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
