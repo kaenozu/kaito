@@ -50,7 +50,7 @@ class TestMain:
             app_main()
             mode.assert_called_once_with("system")
             theme.assert_called_once_with("blue")
-            app.assert_called_once_with(cli_path=None)
+            app.assert_called_once_with(cli_path=None, cli_compress_path=None)
 
     def test_main_with_zip(self, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
@@ -72,7 +72,7 @@ class TestMain:
             patch("kaito.gui.unzip_app.UnzipApp") as app,
         ):
             app_main()
-            app.assert_called_once_with(cli_path=None)
+            app.assert_called_once_with(cli_path=None, cli_compress_path=None)
 
     def test_main_nonexistent_arg(self) -> None:
         with (
@@ -82,7 +82,7 @@ class TestMain:
             patch("kaito.gui.unzip_app.UnzipApp") as app,
         ):
             app_main()
-            app.assert_called_once_with(cli_path=None)
+            app.assert_called_once_with(cli_path=None, cli_compress_path=None)
 
     def test_main_with_rar(self, tmp_path: Path) -> None:
         r = tmp_path / "test.rar"
@@ -133,6 +133,7 @@ def _make_app_mock() -> MagicMock:
     app._browse_btn = MagicMock()
     app._dest_btn = MagicMock()
     app._extract_btn = MagicMock()
+    app._compress_btn = MagicMock()
     app._drop_frame = MagicMock()
     app._list_frame = MagicMock()
     app._settings = MagicMock()
@@ -152,6 +153,8 @@ def _make_app_mock() -> MagicMock:
     app._search_var.get.return_value = ""
     app._search_entry = MagicMock()
     app._settings_btn = MagicMock()
+    app._compress_sources = []
+    app._compressing = False
     app.after = MagicMock()
     app.drop_target_register = MagicMock()
     app.dnd_bind = MagicMock()
@@ -914,6 +917,181 @@ class TestSettingsDialog:
 
 
 # ---- _truncate_path のテスト ----
+
+class TestCompressMethods:
+    """圧縮機能メソッドのテスト"""
+
+    @pytest.fixture
+    def app(self) -> MagicMock:
+        return _make_app_mock()
+
+    def test_on_compress_cancel(self, app: MagicMock) -> None:
+        with patch("tkinter.filedialog.askopenfilenames", return_value=()):
+            app._on_compress()
+            assert app._compress_sources == []
+
+    def test_on_compress_selects_files(self, app: MagicMock, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.txt"
+        f1.touch()
+        f2 = tmp_path / "b.txt"
+        f2.touch()
+        with (
+            patch("tkinter.filedialog.askopenfilenames", return_value=(str(f1), str(f2))),
+            patch.object(app, "_start_compress_flow") as mock_flow,
+        ):
+            app._on_compress()
+            assert len(app._compress_sources) == 2
+            mock_flow.assert_called_once()
+
+    def test_start_compress_flow_no_sources(self, app: MagicMock) -> None:
+        app._compress_sources = []
+        with patch.object(app, "_set_ui_enabled") as mock_set:
+            app._start_compress_flow()
+            mock_set.assert_not_called()
+
+    def test_start_compress_flow_cancel_save(self, app: MagicMock) -> None:
+        app._compress_sources = [Path("a.txt")]
+        with (
+            patch("tkinter.filedialog.asksaveasfilename", return_value=""),
+            patch.object(app, "_set_ui_enabled") as mock_set,
+        ):
+            app._start_compress_flow()
+            mock_set.assert_not_called()
+
+    def test_start_compress_flow_starts_thread(self, app: MagicMock) -> None:
+        app._compress_sources = [Path("a.txt")]
+        with (
+            patch("tkinter.filedialog.asksaveasfilename", return_value="C:\\out.zip"),
+            patch("kaito.gui.unzip_app.Thread") as mock_thread,
+        ):
+            app._start_compress_flow()
+            assert app._compressing
+            mock_thread.assert_called_once()
+
+    def test_do_compress_success(self, app: MagicMock, tmp_path: Path) -> None:
+        src = tmp_path / "a.txt"
+        src.write_text("data")
+        output = tmp_path / "out.zip"
+        with patch("kaito.gui.unzip_app.create_archive") as mock_ca:
+            app._do_compress([src], output)
+            mock_ca.assert_called_once()
+            args, kwargs = mock_ca.call_args
+            assert args[0] == [src]
+            assert args[1] == output
+            assert callable(kwargs["on_progress"])
+
+    def test_do_compress_error(self, app: MagicMock, tmp_path: Path) -> None:
+        output = tmp_path / "out.zip"
+        with patch("kaito.gui.unzip_app.create_archive", side_effect=RuntimeError("fail")):
+            app._do_compress([], output)
+            # _on_compress_error は after 経由で呼ばれる
+            assert app.after.called
+
+    def test_on_compress_done(self, app: MagicMock) -> None:
+        app._compressing = True
+        app._compress_sources = [Path("x.txt")]
+        app._on_compress_done()
+        assert not app._compressing
+        assert app._compress_sources == []
+        app._status_var.set.assert_called_with("圧縮完了")
+
+    def test_on_compress_error(self, app: MagicMock) -> None:
+        app._compressing = True
+        app._on_compress_error("disk full")
+        assert not app._compressing
+        app._status_var.set.assert_called_with("エラー: disk full")
+
+    def test_drop_starts_compress(self, app: MagicMock, tmp_path: Path) -> None:
+        """非アーカイブのファイルをドロップ → 圧縮フロー開始"""
+        f = tmp_path / "readme.txt"
+        f.touch()
+        event = MagicMock()
+        type(event).data = str(f)
+        with (
+            patch.object(app, "_start_compress_flow") as mock_flow,
+            patch.object(Path, "exists", return_value=True),
+        ):
+            app._on_drop(event)
+            assert len(app._compress_sources) == 1
+            mock_flow.assert_called_once()
+
+
+class TestContextMenu:
+    """install_context_menu / uninstall_context_menu のテスト"""
+
+    def test_install_context_menu(self) -> None:
+        mock_key = MagicMock()
+        with (
+            patch("kaito.gui.unzip_app.CreateKeyEx", return_value=mock_key) as mock_create,
+            patch("kaito.gui.unzip_app.SetValueEx") as mock_set,
+            patch("kaito.gui.unzip_app._get_exe_path", return_value=Path("C:\\kaito.exe")),
+        ):
+            from kaito.gui.unzip_app import install_context_menu
+            install_context_menu()
+            assert mock_create.call_count == 10
+            assert mock_set.call_count == 10
+            # 解凍メニュー名（valueに"解凍"）が3件
+            extract_names = [c for c in mock_set.mock_calls if "解凍" in str(c)]
+            assert len(extract_names) == 3
+            # 圧縮メニュー名（valueに"圧縮"）が2件
+            compress_names = [c for c in mock_set.mock_calls if "圧縮" in str(c)]
+            assert len(compress_names) == 2
+            # command文字列（"%1"を含む）が5件
+            cmd_calls = [c for c in mock_set.mock_calls if "%1" in str(c)]
+            assert len(cmd_calls) == 5
+
+    def test_uninstall_context_menu(self) -> None:
+        """削除が呼ばれる（実際のレジストリは触らない）"""
+        with (
+            patch("kaito.gui.unzip_app.OpenKey"),
+            patch("kaito.gui.unzip_app.DeleteKey"),
+            patch("kaito.gui.unzip_app.QueryInfoKey", return_value=(0, 0)),
+        ):
+            from kaito.gui.unzip_app import uninstall_context_menu
+            uninstall_context_menu()  # should not crash
+
+
+class TestMainCLI:
+    """main() のCLI引数テスト"""
+
+    def test_install_context_menu_flag(self) -> None:
+        with (
+            patch("sys.argv", ["kaito", "--install-context-menu"]),
+            patch("kaito.gui.unzip_app.install_context_menu") as mock_install,
+        ):
+            app_main()
+            mock_install.assert_called_once()
+
+    def test_uninstall_context_menu_flag(self) -> None:
+        with (
+            patch("sys.argv", ["kaito", "--uninstall-context-menu"]),
+            patch("kaito.gui.unzip_app.uninstall_context_menu") as mock_uninstall,
+        ):
+            app_main()
+            mock_uninstall.assert_called_once()
+
+    def test_compress_flag(self, tmp_path: Path) -> None:
+        f = tmp_path / "myfolder"
+        f.mkdir()
+        with (
+            patch("sys.argv", ["kaito", "--compress", str(f)]),
+            patch("kaito.gui.unzip_app.ctk.set_appearance_mode"),
+            patch("kaito.gui.unzip_app.ctk.set_default_color_theme"),
+            patch("kaito.gui.unzip_app.UnzipApp") as app,
+        ):
+            app_main()
+            assert app.call_args.kwargs["cli_compress_path"] == f
+
+    def test_compress_flag_nonexistent(self, tmp_path: Path) -> None:
+        with (
+            patch("sys.argv", ["kaito", "--compress", "C:\\nope"]),
+            patch("kaito.gui.unzip_app.ctk.set_appearance_mode"),
+            patch("kaito.gui.unzip_app.ctk.set_default_color_theme"),
+            patch("kaito.gui.unzip_app.UnzipApp") as app,
+        ):
+            app_main()
+            assert app.call_args.kwargs["cli_compress_path"] is None
+
 
 class TestTruncatePath:
     def test_short_path(self) -> None:

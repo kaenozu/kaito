@@ -1,6 +1,6 @@
 [project]
 name = "kaito"
-version = "0.7.0"
+version = "0.8.0"
 description = "ZIP解凍ソフト - GUI decompression tool"
 requires-python = ">=3.12"
 dependencies = [

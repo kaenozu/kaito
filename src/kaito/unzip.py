@@ -1,8 +1,8 @@
 """
 src/kaito/unzip.py
-ZIP/RAR/7zファイル解凍のコアロジック
+ZIP/RAR/7zファイルの解凍・圧縮コアロジック
 ZIPは標準zipfile、RAR/7zはpatoolibで処理
-関連: gui/unzip_app.py (このモジュールを呼ぶGUI)
+関連: gui/unzip_app.py (GUIからの呼び出し)
 """
 
 import zipfile
@@ -34,6 +34,53 @@ class PasswordPrompt(Protocol):
 
 
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
+
+
+def create_archive(
+    sources: list[Path],
+    output: Path,
+    on_progress: ProgressCallback | None = None,
+) -> None:
+    """アーカイブを作成する
+
+    Args:
+        sources: 圧縮対象のファイル/ディレクトリパス
+        output: 出力アーカイブパス（拡張子で形式決定）
+        on_progress: 進捗コールバック (current, total, name)
+    """
+    ext = output.suffix.lower()
+    if ext == ".zip":
+        _create_zip(sources, output, on_progress)
+    elif ext in ARCHIVE_EXTENSIONS:
+        try:
+            patoolib.create_archive(str(output), [str(s) for s in sources])
+        except Exception as e:
+            raise RuntimeError(f"アーカイブの作成に失敗しました: {e}")
+    else:
+        raise ValueError(f"未対応のアーカイブ形式です: {ext}")
+
+
+def _create_zip(
+    sources: list[Path],
+    output: Path,
+    on_progress: ProgressCallback | None = None,
+) -> None:
+    """ZIPアーカイブを作成"""
+    total = len(sources)
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, source in enumerate(sources):
+            if source.is_dir():
+                for f in source.rglob("*"):
+                    arcname = f.relative_to(source.parent)
+                    if f.is_file():
+                        zf.write(f, str(arcname))
+                    elif f.is_dir():
+                        zi = zipfile.ZipInfo(str(arcname) + "/")
+                        zf.writestr(zi, "")
+            else:
+                zf.write(source, source.name)
+            if on_progress:
+                on_progress(i + 1, total, source.name)
 
 
 def is_supported(path: str | Path) -> bool:

@@ -1,11 +1,11 @@
 """
 src/kaito/gui/unzip_app.py
-CustomTkinterを使用したZIP解凍GUIアプリ
+CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 ドラッグ&ドロップ対応 (tkinterdnd2)
-関連: unzip.py (解凍コアロジック)
+関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 import io
 import re
@@ -16,6 +16,21 @@ import time
 from pathlib import Path
 from threading import Thread
 from tkinter import filedialog, ttk
+try:
+    from winreg import (  # type: ignore[attr-defined]
+        CreateKeyEx,
+        DeleteKey,
+        EnumKey,
+        HKEY_CURRENT_USER,
+        KEY_SET_VALUE,
+        OpenKey,
+        QueryInfoKey,
+        REG_SZ,
+        SetValueEx,
+    )
+except ImportError:  # pragma: no cover
+    # Non-Windows: registry functions not available
+    pass
 
 from PIL import Image
 
@@ -25,6 +40,7 @@ from tkinterdnd2 import TkinterDnD
 from kaito.settings import SettingsManager
 from kaito.unzip import (
     ZipEntry,
+    create_archive,
     extract_archive,
     is_supported,
     list_archive,
@@ -44,7 +60,7 @@ _MAX_IMAGE_DIMENSION = (400, 250)
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """ZIP解凍GUIメインウィンドウ"""
 
-    def __init__(self, cli_path: Path | None = None) -> None:
+    def __init__(self, cli_path: Path | None = None, cli_compress_path: Path | None = None) -> None:
         super().__init__()
 
         self.TkdndVersion = TkinterDnD._require(self)
@@ -60,6 +76,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._extracting = False
         self._temp_dir: tempfile.TemporaryDirectory | None = None
         self._current_image: ctk.CTkImage | None = None
+        self._compress_sources: list[Path] = []
+        self._compressing = False
 
         self._build_ui()
 
@@ -82,6 +100,11 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # 起動時にファイルが渡されたら読み込む
         if cli_path is not None:
             self._load_archive(cli_path)
+
+        # 起動時に圧縮対象が渡されたら圧縮フロー開始
+        if cli_compress_path is not None:
+            self._compress_sources = [cli_compress_path]
+            self.after(100, self._start_compress_flow)
 
     def _build_ui(self) -> None:  # pragma: no cover
         self.grid_columnconfigure(0, weight=1)
@@ -208,10 +231,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # --- プログレスバー＆ボタン ---
         bottom_frame = ctk.CTkFrame(self)
         bottom_frame.grid(row=3, column=0, padx=12, pady=(4, 12), sticky="ew")
-        bottom_frame.grid_columnconfigure(1, weight=1)
+        bottom_frame.grid_columnconfigure(2, weight=1)
 
         self._progress = ctk.CTkProgressBar(bottom_frame, mode="determinate")
-        self._progress.grid(row=0, column=0, columnspan=3, padx=8, pady=(8, 4), sticky="ew")
+        self._progress.grid(row=0, column=0, columnspan=4, padx=8, pady=(8, 4), sticky="ew")
         self._progress.set(0)
         self._progress.grid_remove()
 
@@ -226,12 +249,17 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._status_label = ctk.CTkLabel(
             bottom_frame, textvariable=self._status_var, anchor="w"
         )
-        self._status_label.grid(row=2, column=0, padx=8, pady=(0, 8), sticky="w")
+        self._status_label.grid(row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="w")
+
+        self._compress_btn = ctk.CTkButton(
+            bottom_frame, text="圧縮", width=80, command=self._on_compress
+        )
+        self._compress_btn.grid(row=2, column=2, padx=(4, 4), pady=(0, 8), sticky="e")
 
         self._extract_btn = ctk.CTkButton(
             bottom_frame, text="解凍実行", command=self._on_extract, state="disabled"
         )
-        self._extract_btn.grid(row=2, column=2, padx=(4, 8), pady=(0, 8), sticky="e")
+        self._extract_btn.grid(row=2, column=3, padx=(4, 8), pady=(0, 8), sticky="e")
 
     @staticmethod
     def _resolve_mode() -> bool:
@@ -354,20 +382,33 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
 
     def _on_drop(self, event: object) -> None:
-        """ドラッグ&ドロップでファイルを受け取る（複数ファイル対応）"""
+        """ドラッグ&ドロップでファイルを受け取る（複数ファイル対応）
+        
+        アーカイブは読み込み、それ以外は圧縮候補として追加
+        """
         raw = getattr(event, "data", "")
         if not raw:
             return
         paths = [p.strip("{}") for p in re.findall(r'\{[^}]+\}|\S+', raw)]
         loaded = False
+        compress_candidates: list[Path] = []
         for p in paths:
             path = Path(p)
-            if is_supported(path) and path.exists():
+            if not path.exists():
+                continue
+            if is_supported(path) and self._zip_path is None:
                 if loaded:
                     self._add_to_queue(path)
                 else:
                     self._load_archive(path)
                     loaded = True
+            elif not is_supported(path):
+                # 非アーカイブ → 圧縮候補
+                compress_candidates.append(path)
+        if compress_candidates and self._zip_path is None:
+            self._compress_sources = compress_candidates
+            self._status_var.set(f"{len(compress_candidates)}個のファイルを圧縮できます")
+            self._start_compress_flow()
         if loaded:
             self._update_queue_status()
 
@@ -617,6 +658,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._browse_btn.configure(state=state)
         self._dest_btn.configure(state=state)
         self._extract_btn.configure(state=state)
+        self._compress_btn.configure(state=state)
 
     def _ask_password(self) -> str | None:
         """パスワード入力ダイアログを表示"""
@@ -626,6 +668,75 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         result = dialog.get_input()
         return result if result else None
+
+    # ---- 圧縮機能 ----
+
+    def _on_compress(self) -> None:
+        """ファイル/フォルダを圧縮"""
+        paths = filedialog.askopenfilenames(title="圧縮するファイルを選択")
+        if not paths:
+            return
+        self._compress_sources = [Path(p) for p in paths]
+        self._start_compress_flow()
+
+    def _start_compress_flow(self) -> None:
+        """圧縮ファイル保存ダイアログ＋実行"""
+        if not self._compress_sources:
+            return
+        default_name = self._compress_sources[0].stem + ".zip"
+        output = filedialog.asksaveasfilename(
+            title="圧縮ファイルの保存先",
+            defaultextension=".zip",
+            initialfile=default_name,
+            filetypes=[
+                ("ZIP", "*.zip"),
+                ("RAR", "*.rar"),
+                ("7z", "*.7z"),
+            ],
+        )
+        if not output:
+            return
+
+        self._compressing = True
+        self._set_ui_enabled(False)
+        self._progress.set(0)
+        self._progress.grid()
+
+        Thread(
+            target=self._do_compress,
+            args=(list(self._compress_sources), Path(output)),
+            daemon=True,
+        ).start()
+
+    def _do_compress(self, sources: list[Path], output: Path) -> None:
+        try:
+            def on_progress(cur: int, total_: int, name: str = "") -> None:
+                pct = cur / total_
+                self.after(0, lambda p=pct: self._progress.set(p))
+                self.after(0, lambda: self._status_var.set(
+                    f"圧縮中: {pct:.0%} ({cur}/{total_}) - {name}"
+                ))
+
+            create_archive(sources, output, on_progress=on_progress)
+            self.after(0, self._on_compress_done)
+        except Exception as exc:
+            msg = str(exc)
+            self.after(0, lambda: self._on_compress_error(msg))
+
+    def _on_compress_done(self) -> None:
+        self._compressing = False
+        self._set_ui_enabled(True)
+        self._status_var.set("圧縮完了")
+        self._progress.set(1)
+        self._progress.grid_remove()
+        self._compress_sources = []
+
+    def _on_compress_error(self, msg: str) -> None:
+        self._compressing = False
+        self._set_ui_enabled(True)
+        self._status_var.set(f"エラー: {msg}")
+        self._progress.set(0)
+        self._progress.grid_remove()
 
 
 def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
@@ -678,6 +789,71 @@ def _truncate_path(path: str, max_len: int = 60) -> str:
     return "..." + parent[-(remain - 3) :] + "\\" + name
 
 
+_CONTEXT_EXTENSIONS = [".zip", ".rar", ".7z"]
+
+
+def _get_exe_path() -> Path:
+    """kaito実行ファイルのパスを返す"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable)
+    return Path(sys.executable)
+
+
+def install_context_menu() -> None:
+    """Windowsコンテキストメニューにkaitoを登録"""
+    exe = _get_exe_path()
+    exe_str = f'"{exe}"'
+    base = r"Software\Classes"
+
+    # 解凍: 各拡張子
+    for ext in _CONTEXT_EXTENSIONS:
+        key_path = f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract"
+        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
+        cmd_path = f"{key_path}\\command"
+        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')
+
+    # 圧縮: ファイル・フォルダ
+    for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
+        key_path = f"{shell_root}\\shell\\kaito_compress"
+        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, "kaitoで圧縮")
+        cmd_path = f"{key_path}\\command"
+        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
+            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} --compress "%1"')
+
+    print("コンテキストメニューを登録しました")
+
+
+def _delete_key_recursive(root_key: object, sub_key: str) -> None:  # type: ignore[type-arg]
+    """レジストリキーをサブキーごと削除する"""
+    try:
+        with OpenKey(root_key, sub_key, 0, KEY_SET_VALUE) as key:  # type: ignore[arg-type]
+            info = QueryInfoKey(key)
+            for _ in range(info[0]):
+                child = EnumKey(key, 0)
+                _delete_key_recursive(key, child)
+        DeleteKey(root_key, sub_key)  # type: ignore[arg-type]
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def uninstall_context_menu() -> None:
+    """Windowsコンテキストメニューからkaitoを削除"""
+    base = r"Software\Classes"
+
+    for ext in _CONTEXT_EXTENSIONS:
+        _delete_key_recursive(HKEY_CURRENT_USER, f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract")
+
+    for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
+        _delete_key_recursive(HKEY_CURRENT_USER, f"{shell_root}\\shell\\kaito_compress")
+
+    print("コンテキストメニューを削除しました")
+
+
 def _format_size(size: int) -> str:
     if size < 1024:
         return f"{size} B"
@@ -690,15 +866,32 @@ def _format_size(size: int) -> str:
 
 
 def main() -> None:
+    args = sys.argv[1:]
+
+    if args and args[0] == "--install-context-menu":
+        install_context_menu()
+        return
+    if args and args[0] == "--uninstall-context-menu":
+        uninstall_context_menu()
+        return
+
     settings = SettingsManager()
     ctk.set_appearance_mode(settings.get("theme", "system"))
     ctk.set_default_color_theme("blue")
+
     cli_path: Path | None = None
-    if len(sys.argv) > 1:
-        p = Path(sys.argv[1])
+    cli_compress_path: Path | None = None
+
+    if args and args[0] == "--compress" and len(args) > 1:
+        p = Path(args[1])
+        if p.exists():
+            cli_compress_path = p
+    elif args:
+        p = Path(args[0])
         if p.suffix.lower() in {".zip", ".rar", ".7z"} and p.exists():
             cli_path = p
-    app = UnzipApp(cli_path=cli_path)
+
+    app = UnzipApp(cli_path=cli_path, cli_compress_path=cli_compress_path)
     app.mainloop()  # pragma: no cover
 
 

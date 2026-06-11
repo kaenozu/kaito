@@ -12,6 +12,7 @@ import pytest
 from kaito.unzip import (
     ARCHIVE_EXTENSIONS,
     ZipEntry,
+    create_archive,
     extract,
     extract_all,
     extract_archive,
@@ -240,6 +241,75 @@ class TestListArchive:
         f.touch()
         with pytest.raises(ValueError):
             list_archive(f)
+
+
+class TestCreateArchive:
+    """create_archive のテスト"""
+
+    def test_create_zip_from_files(self, tmp_dir: Path) -> None:
+        src1 = tmp_dir / "a.txt"
+        src1.write_text("AAA")
+        src2 = tmp_dir / "b.txt"
+        src2.write_text("BBB")
+        output = tmp_dir / "out.zip"
+
+        create_archive([src1, src2], output)
+
+        assert output.exists()
+        import zipfile
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+            assert "a.txt" in names
+            assert "b.txt" in names
+            assert zf.read("a.txt") == b"AAA"
+            assert zf.read("b.txt") == b"BBB"
+
+    def test_create_zip_from_dir(self, tmp_dir: Path) -> None:
+        src_dir = tmp_dir / "myfolder"
+        src_dir.mkdir()
+        (src_dir / "file1.txt").write_text("1")
+        sub = src_dir / "sub"
+        sub.mkdir()
+        (sub / "file2.txt").write_text("2")
+        output = tmp_dir / "out.zip"
+
+        create_archive([src_dir], output)
+
+        import zipfile
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+            assert "myfolder/file1.txt" in names
+            assert "myfolder/sub/file2.txt" in names
+
+    def test_create_zip_progress(self, tmp_dir: Path) -> None:
+        src1 = tmp_dir / "a.txt"
+        src1.write_text("A")
+        src2 = tmp_dir / "b.txt"
+        src2.write_text("B")
+        output = tmp_dir / "out.zip"
+
+        calls: list[tuple[int, int, str]] = []
+        def progress(cur: int, total: int, name: str = "") -> None:
+            calls.append((cur, total, name))
+
+        create_archive([src1, src2], output, on_progress=progress)
+        assert len(calls) == 2
+        assert calls[-1] == (2, 2, "b.txt")
+
+    def test_create_unsupported_raises(self, tmp_dir: Path) -> None:
+        src = tmp_dir / "a.txt"
+        src.write_text("A")
+        output = tmp_dir / "out.tar.gz"
+        with pytest.raises(ValueError):
+            create_archive([src], output)
+
+    def test_create_rar_fails_from_patool(self, tmp_dir: Path) -> None:
+        """patoolib が利用できない RAR 作成はエラー"""
+        src = tmp_dir / "a.txt"
+        src.write_text("A")
+        output = tmp_dir / "out.rar"
+        with pytest.raises(RuntimeError, match="アーカイブの作成に失敗"):
+            create_archive([src], output)
 
 
 class TestExtractArchive:
