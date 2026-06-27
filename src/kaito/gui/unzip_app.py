@@ -92,6 +92,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._start_theme_poll()
 
         self._open_on_done_var.set(self._settings.get("open_on_done", True))
+        self._close_on_done_var.set(self._settings.get("close_on_done", False))
 
         self._refresh_recent_menu()
 
@@ -249,6 +250,13 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             variable=self._open_on_done_var, onvalue=True, offvalue=False,
         )
         self._open_check.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
+
+        self._close_on_done_var = ctk.BooleanVar(value=False)
+        self._close_check = ctk.CTkCheckBox(
+            bottom_frame, text="解凍後に閉じる",
+            variable=self._close_on_done_var, onvalue=True, offvalue=False,
+        )
+        self._close_check.grid(row=1, column=1, padx=(0, 8), pady=(0, 8), sticky="w")
 
         self._status_var = ctk.StringVar(value="ファイルを選択してください")
         self._status_label = ctk.CTkLabel(
@@ -663,6 +671,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._zip_path = None
         self._archive_paths = []
         self._settings.set("open_on_done", self._open_on_done_var.get())
+        self._settings.set("close_on_done", self._close_on_done_var.get())
         self._settings.set("last_dest", self._dest_var.get())
         self._settings.clear_passwords()
         self._progress.set(1)
@@ -670,6 +679,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if self._open_on_done_var.get() and last_zip is not None:
             dest = Path(self._dest_var.get()) if self._dest_var.get() else last_zip.parent
             subprocess.Popen(["explorer", str(dest)])
+        if self._close_on_done_var.get():
+            self.after(500, self.destroy)
+            return
         self._show_drop_zone()
 
     def _on_extract_error(self, msg: str) -> None:

@@ -140,6 +140,8 @@ def _make_app_mock() -> MagicMock:
     app._settings.get_password.return_value = None
     app._open_on_done_var = MagicMock()
     app._open_on_done_var.get.return_value = False
+    app._close_on_done_var = MagicMock()
+    app._close_on_done_var.get.return_value = False
     app._theme_var = MagicMock()
     app._theme_menu = MagicMock()
     app._recent_var = MagicMock()
@@ -182,6 +184,7 @@ def _init_patches() -> list:
         patch.object(UnzipApp, "TkdndVersion", create=True),
         patch("kaito.gui.unzip_app.TkinterDnD._require"),
         patch.object(UnzipApp, "_open_on_done_var", create=True),
+        patch.object(UnzipApp, "_close_on_done_var", create=True),
         patch.object(UnzipApp, "_recent_menu", create=True),
         patch.object(UnzipApp, "_recent_var", create=True),
         patch.object(UnzipApp, "_apply_tree_style"),
@@ -558,6 +561,14 @@ class TestUnzipAppMethods:
         with patch("subprocess.Popen") as mock_popen:
             app._on_extract_done()
             mock_popen.assert_called_once_with(["explorer", "C:\\out"])
+
+    def test_on_extract_done_close(self, app: MagicMock) -> None:
+        app._extracting = True
+        app._close_on_done_var.get.return_value = True
+        app._archive_paths = [Path("a.zip")]
+        app._on_extract_done()
+        app.destroy.assert_called_once()
+        app.after.assert_called_once_with(500, app.destroy)
 
     def test_on_extract_error(self, app: MagicMock) -> None:
         app._extracting = True

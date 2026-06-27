@@ -15,6 +15,7 @@ DEFAULT_SETTINGS = {
     "theme": "system",
     "last_dest": "",
     "open_on_done": True,
+    "close_on_done": False,
     "recent_files": [],
 }
 
