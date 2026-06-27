@@ -5,7 +5,7 @@ CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
 """
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 import io
 import re
@@ -109,7 +109,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if cli_compress_path is not None:
             self._compress_sources = [cli_compress_path]
             self._compress_no_dialog = True
-            self.after(100, self._start_compress_flow)
+            self.after_idle(self._start_compress_flow)
 
     def _build_ui(self) -> None:  # pragma: no cover
         self.grid_columnconfigure(0, weight=1)
@@ -525,6 +525,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _show_preview(self, name: str) -> None:
         self._preview_frame.grid_forget()
         self._preview_label.configure(text="")
+        self._current_image = None
 
         ext = Path(name).suffix.lower()
         if ext in _TEXT_EXTENSIONS:
@@ -540,7 +541,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         cache = self._temp_dir.name if self._temp_dir else None
         try:
             content = _read_archive_entry(self._zip_path, name, cache_dir=cache)
-        except (IOError, OSError) as e:
+        except (IOError, OSError, KeyError, BadZipFile) as e:
             self._preview_label.configure(text=f"プレビューを読み込めませんでした ({e})")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
@@ -554,13 +555,11 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         try:
             data = _read_archive_entry(self._zip_path, name, cache_dir=cache)
             img = Image.open(io.BytesIO(data))
-            # メモリ安全のためサムネイルサイズに制限
             img.thumbnail(_MAX_IMAGE_DIMENSION)
             ctk_img = ctk.CTkImage(img, size=img.size)
             self._preview_label.configure(image=ctk_img, text="")
-            # 参照を保持 (GC防止)
             self._current_image = ctk_img
-        except (IOError, OSError) as e:
+        except (IOError, OSError, KeyError, BadZipFile) as e:
             self._preview_label.configure(text=f"画像をプレビューできません ({e})")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
@@ -663,8 +662,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         last_zip = self._zip_path
         self._zip_path = None
         self._archive_paths = []
+        self._settings.set("open_on_done", self._open_on_done_var.get())
         self._settings.set("last_dest", self._dest_var.get())
-        self._settings.clear_passwords()  # 安全のためメモリからパスワードをクリア
+        self._settings.clear_passwords()
         self._progress.set(1)
         self._progress.grid_remove()
         if self._open_on_done_var.get() and last_zip is not None:

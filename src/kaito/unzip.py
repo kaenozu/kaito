@@ -101,16 +101,14 @@ def is_supported(path: str | Path) -> bool:
 
 def list_archive(
     path: str | Path,
-    password: str | None = None,
+    _password: str | None = None,
 ) -> tuple[list[ZipEntry], bool]:
     """アーカイブの内容一覧を返す
 
     ZIPは常に一覧可能。RAR/7zは暗号化されていると空の一覧+暗号化フラグを返す。
-    passwordはRAR/7zではpatoolib.list_archiveが非対応なため実質利用しないが、
+    _passwordはRAR/7zではpatoolib.list_archiveが非対応なため実質利用しないが、
     extract_archiveとのAPI一貫性のために受け付ける。
     """
-    # RAR/7zのlist_archiveはpatoolib経由でpassword非対応のため破棄
-    del password  # noqa: F841 (API一貫性のために接受的)
     ext = Path(path).suffix.lower()
     if ext == ".zip":
         return list_entries(path)
@@ -156,13 +154,17 @@ def extract_archive(
 
 
 def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
-    """ZIPファイルの内容一覧を返す。戻り値: (entries, is_encrypted)"""
+    """ZIPファイルの内容一覧を返す。戻り値: (entries, is_encrypted)
+
+    暗号化検出は general purpose bit flag の bit0 (ZipCrypto) および
+    bit6 (強力暗号化 / AES) を確認する。
+    ZipCrypto 以外の暗号化方式 (AES-256 など) もカバーする。
+    """
     entries: list[ZipEntry] = []
     is_encrypted = False
     with zipfile.ZipFile(zip_path, "r") as zf:
         for info in zf.infolist():
-            # general purpose bit flagのbit0: 暗号化フラグ
-            if info.flag_bits & 0x1:
+            if info.flag_bits & 0x1 or info.flag_bits & 0x40:
                 is_encrypted = True
             entries.append(ZipEntry(
                 name=info.filename,

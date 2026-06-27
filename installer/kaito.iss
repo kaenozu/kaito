@@ -2,7 +2,7 @@
 ; Build: ISCC.exe installer\kaito.iss
 
 #define MyAppName "kaito"
-#define MyAppVersion "0.9.0"
+#define MyAppVersion "0.9.1"
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
 #define MyAppExeName "kaito.exe"
