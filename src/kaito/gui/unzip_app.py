@@ -5,7 +5,7 @@ CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
 """
 
-__version__ = "0.9.2"
+__version__ = "0.9.3"
 
 import io
 import locale
