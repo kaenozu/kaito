@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "open_on_done": True,
     "close_on_done": False,
     "recent_files": [],
+    "compression_level": 1,
 }
 
 MAX_RECENT_FILES = 10
@@ -61,7 +62,7 @@ class SettingsManager:
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
 
-    def set(self, key: str, value) -> None:
+    def set(self, key: str, value: Any) -> None:
         self._data[key] = value
         self.save()
 

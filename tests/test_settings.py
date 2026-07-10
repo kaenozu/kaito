@@ -22,6 +22,7 @@ class TestSettingsManager:
             assert sm.get("theme") == "system"
             assert sm.get("last_dest") == ""
             assert sm.get("open_on_done") is True
+            assert sm.get("compression_level") == 1
             assert sm.get("recent_files") == []
 
     def test_load_existing(self, tmp_path: Path) -> None:

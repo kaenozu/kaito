@@ -4,13 +4,14 @@ unzip_app.py のテスト（GUIコンポーネントは全てmock）
 """
 
 from contextlib import ExitStack
+from datetime import datetime
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kaito.gui.unzip_app import _format_size, _read_archive_entry, _truncate_path, main as app_main
+from kaito.gui.unzip_app import _format_size, _read_archive_entry, _resolve_extract_dest, _truncate_path, main as app_main
 
 
 # ---- _format_size のテスト ----
@@ -1106,6 +1107,59 @@ class TestMainCLI:
         ):
             app_main()
             assert app.call_args.kwargs["cli_compress_path"] is None
+
+
+class TestResolveExtractDest:
+    """_resolve_extract_dest のテスト"""
+
+    def test_single_root_no_double_nesting(self) -> None:
+        """全エントリが1つのトップレベルディレクトリを共有 → dest直下"""
+        from kaito.unzip import ZipEntry
+        dest = Path("C:\\out")
+        archive = Path("C:\\myproject.zip")
+        entries = [
+            ZipEntry(name="myproject/file1.js", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+            ZipEntry(name="myproject/sub/file2.js", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest
+
+    def test_root_files_creates_subfolder(self) -> None:
+        """ルート直下にファイルがある → archive_stemサブフォルダを作成"""
+        from kaito.unzip import ZipEntry
+        dest = Path("C:\\out")
+        archive = Path("C:\\archive.zip")
+        entries = [
+            ZipEntry(name="readme.txt", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+            ZipEntry(name="sub/file.txt", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest / "archive"
+
+    def test_no_entries(self) -> None:
+        """空のエントリ → archive_stemサブフォルダを作成"""
+        dest = Path("C:\\out")
+        archive = Path("C:\\empty.zip")
+        result = _resolve_extract_dest(dest, archive, [])
+        assert result == dest / "empty"
+
+    def test_multiple_roots(self) -> None:
+        """複数のトップレベルディレクトリ → archive_stemサブフォルダ"""
+        from kaito.unzip import ZipEntry
+        dest = Path("C:\\out")
+        archive = Path("C:\\multi.zip")
+        entries = [
+            ZipEntry(name="dir1/a.txt", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+            ZipEntry(name="dir2/b.txt", size=0, compressed_size=0,
+                     modified=datetime.now(), is_dir=False),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest / "multi"
 
 
 class TestTruncatePath:

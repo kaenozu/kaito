@@ -5,6 +5,7 @@ ZIPは標準zipfile、RAR/7zはpatoolibで処理
 関連: gui/unzip_app.py (GUIからの呼び出し)
 """
 
+import locale
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,11 +36,105 @@ class PasswordPrompt(Protocol):
 
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 
+# ZIPファイルのエンコーディング解決順
+# Windows環境（特に日本語）ではCP932でエンコードされたZIPが存在するため、
+# UTF-8→システムエンコーディングの順でフォールバックする
+_ZIP_ENCODINGS: tuple[str, ...] = ()
+
+# システムロケールに依存しないフォールバック用エンコーディング
+# ZIP仕様ではファイル名のエンコーディングが未定義のため、主要言語圏のエンコーディングを
+# 総当たりで試す（UTF-8→各国語→システムロケールの順）
+_FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "shift_jis", "euc-kr"]
+
+def get_zip_encodings() -> tuple[str, ...]:
+    """ZIPファイル名のデコードに試すエンコーディング一覧
+
+    UTF-8を最優先し、次に主要な東アジアエンコーディング(CP932/GBK/CP949)、
+    最後にシステムロケールのエンコーディングを試す。
+    """
+    global _ZIP_ENCODINGS
+    if not _ZIP_ENCODINGS:
+        seen: set[str] = set()
+        encodings: list[str] = []
+        for enc in _FALLBACK_ENCODINGS:
+            if enc not in seen:
+                seen.add(enc)
+                encodings.append(enc)
+        try:
+            sys_enc = locale.getencoding()
+            sys_lower = sys_enc.lower()
+            if sys_lower not in (e.lower() for e in seen):
+                encodings.append(sys_enc)
+        except Exception:
+            pass
+        _ZIP_ENCODINGS = tuple(encodings)
+    return _ZIP_ENCODINGS
+
+
+def _has_surrogates(names: list[str]) -> bool:
+    """文字列リストにサロゲート文字（デコード失敗の跡）が含まれるか判定"""
+    for name in names:
+        for c in name:
+            if 0xDC80 <= ord(c) <= 0xDCFF:
+                return True
+    return False
+
+
+def _encoding_tries() -> list[str]:
+    """試行するエンコーディングの優先順位一覧
+
+    UTF-8 を最優先し、フォールバックエンコーディング（CP932等）を試す。
+    デフォルト（metadata_encoding=None）は ZIP 仕様の CP437 相当になり、
+    日本語ZIPではほぼ確実に誤った結果になるため使用しない。
+    """
+    tries: list[str] = ["utf-8"]
+    for enc in get_zip_encodings():
+        if enc.lower() not in ("utf-8", "utf8"):
+            tries.append(enc)
+    return tries
+
+
+def try_zip_with_encodings[T](
+    zip_path: str | Path,
+    operation: Callable[[zipfile.ZipFile], T],
+) -> T:
+    """エンコーディングフォールバック付きでZIP操作を実行
+
+    UTF-8を最優先し、サロゲート文字（Python 3.12+が誤ったエンコーディング時に
+    挿入する \\uDC80-\\uDCFF）がなければその結果を採用する。
+    全エンコーディングでサロゲートが発生した場合でも、最後の試行結果を強制採用する。
+
+    Args:
+        zip_path: ZIPファイルパス
+        operation: ZipFileを受け取り結果を返す関数
+
+    Returns:
+        operationの結果
+
+    Raises:
+        RuntimeError: 全エンコーディングで失敗した場合
+    """
+    last_zf: zipfile.ZipFile | None = None
+    for enc in _encoding_tries():
+        try:
+            zf = zipfile.ZipFile(zip_path, "r", metadata_encoding=enc)
+        except (UnicodeDecodeError, UnicodeError, LookupError):
+            continue
+        last_zf = zf
+        names = [e.filename for e in zf.infolist()]
+        if not _has_surrogates(names):
+            return operation(zf)
+    # 全エンコーディングでサロゲート発生 → 最後の結果を強制採用
+    if last_zf is not None:
+        return operation(last_zf)
+    raise RuntimeError("ZIPファイルを開けませんでした")
+
 
 def create_archive(
     sources: list[Path],
     output: Path,
     on_progress: ProgressCallback | None = None,
+    compression_level: int = 1,
 ) -> None:
     """アーカイブを作成する
 
@@ -50,11 +145,13 @@ def create_archive(
     """
     ext = output.suffix.lower()
     if ext == ".zip":
-        _create_zip(sources, output, on_progress)
+        if not 0 <= compression_level <= 9:
+            raise ValueError("圧縮レベルは0〜9で指定してください")
+        _create_zip(sources, output, on_progress, compression_level)
     elif ext in ARCHIVE_EXTENSIONS:
         try:
             patoolib.create_archive(str(output), [str(s) for s in sources])
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             raise RuntimeError(f"アーカイブの作成に失敗しました: {e}")
     else:
         raise ValueError(f"未対応のアーカイブ形式です: {ext}")
@@ -64,6 +161,7 @@ def _create_zip(
     sources: list[Path],
     output: Path,
     on_progress: ProgressCallback | None = None,
+    compression_level: int = 1,
 ) -> None:
     """ZIPアーカイブを作成"""
     # 個別ファイル単位で進捗を計算するため総ファイル数をカウント
@@ -74,7 +172,11 @@ def _create_zip(
         else:
             total += 1
     done = 0
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+    # Python 3.12+のzipfileはデフォルトでUTF-8を使用する
+    # レベル1は標準のレベル6より大幅に速く、通常のファイルでは十分な圧縮率を保つ。
+    with zipfile.ZipFile(
+        output, "w", zipfile.ZIP_DEFLATED, compresslevel=compression_level
+    ) as zf:
         for source in sources:
             if source.is_dir():
                 for f in source.rglob("*"):
@@ -147,7 +249,7 @@ def extract_archive(
     elif ext in ARCHIVE_EXTENSIONS:
         try:
             patoolib.extract_archive(str(path), outdir=str(dest), password=password)
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             raise RuntimeError(f"アーカイブの展開に失敗しました: {e}")
     else:
         raise ValueError(f"未対応のアーカイブ形式です: {ext}")
@@ -156,14 +258,16 @@ def extract_archive(
 def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
     """ZIPファイルの内容一覧を返す。戻り値: (entries, is_encrypted)
 
+    日本語Windowsで作成されたCP932エンコードのZIPに備え、
+    UTF-8で失敗した場合はシステムエンコーディングで再試行する。
     暗号化検出は general purpose bit flag の bit0 (ZipCrypto) および
     bit6 (強力暗号化 / AES) を確認する。
-    ZipCrypto 以外の暗号化方式 (AES-256 など) もカバーする。
     """
-    entries: list[ZipEntry] = []
-    is_encrypted = False
-    with zipfile.ZipFile(zip_path, "r") as zf:
+    def _extract_entries(zf: zipfile.ZipFile) -> tuple[list[ZipEntry], bool]:
+        entries: list[ZipEntry] = []
+        is_encrypted = False
         for info in zf.infolist():
+            _ = info.filename  # デコードをトリガー
             if info.flag_bits & 0x1 or info.flag_bits & 0x40:
                 is_encrypted = True
             entries.append(ZipEntry(
@@ -173,7 +277,9 @@ def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
                 modified=datetime(*info.date_time),
                 is_dir=info.filename.endswith("/"),
             ))
-    return entries, is_encrypted
+        return entries, is_encrypted
+
+    return try_zip_with_encodings(zip_path, _extract_entries)
 
 
 def extract(
@@ -192,7 +298,7 @@ def extract(
         on_progress: 進捗コールバック (current, total)
         members: 展開するエントリ名のリスト（None=すべて）
     """
-    with zipfile.ZipFile(zip_path, "r") as zf:
+    def _do_extract(zf: zipfile.ZipFile) -> None:
         if password is not None:
             zf.setpassword(password.encode("utf-8"))
 
@@ -204,10 +310,17 @@ def extract(
             if name.endswith("/"):
                 (Path(dest) / name).mkdir(parents=True, exist_ok=True)
             else:
+                # Path traversal攻撃対策: パスを検証して安全な場所のみ展開
+                target_path = (Path(dest) / name).resolve()
+                dest_resolved = Path(dest).resolve()
+                if not str(target_path).startswith(str(dest_resolved)):
+                    raise RuntimeError(f"安全でないパスが含まれています: {name}")
                 zf.extract(name, str(dest))
 
             if on_progress:
                 on_progress(i + 1, total, name)
+
+    try_zip_with_encodings(zip_path, _do_extract)
 
 
 def extract_all(
@@ -216,9 +329,8 @@ def extract_all(
     password: str | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> None:
-    """全エントリを展開（list_entries → extract のショートカット）"""
-    entries, _ = list_entries(zip_path)
+    """全エントリを展開（extract に委譲、members=Noneですべて展開）"""
     extract(
         zip_path, dest, password=password, on_progress=on_progress,
-        members=[e.name for e in entries],
+        members=None,
     )

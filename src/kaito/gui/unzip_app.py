@@ -5,9 +5,10 @@ CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
 """
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 import io
+import locale
 import re
 import subprocess
 import sys
@@ -68,8 +69,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.TkdndVersion = TkinterDnD._require(self)
 
         self.title(f"kaito v{__version__}")
-        self.geometry("800x520")
-        self.minsize(600, 400)
+        self.geometry("900x600")
+        self.minsize(680, 460)
 
         self._zip_path: Path | None = None
         self._archive_paths: list[Path] = []
@@ -117,27 +118,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.grid_rowconfigure(1, weight=1)
 
         # --- ZIPファイル選択 ---
-        file_frame = ctk.CTkFrame(self)
-        file_frame.grid(row=0, column=0, padx=12, pady=(12, 4), sticky="ew")
+        file_frame = ctk.CTkFrame(self, corner_radius=12)
+        file_frame.grid(row=0, column=0, padx=20, pady=(18, 6), sticky="ew")
         file_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(file_frame, text="ZIPファイル:").grid(
-            row=0, column=0, padx=(8, 4), pady=8, sticky="w"
+        ctk.CTkLabel(
+            file_frame, text="アーカイブ", font=ctk.CTkFont(size=13, weight="bold"),
+        ).grid(
+            row=0, column=0, padx=(16, 8), pady=12, sticky="w"
         )
         self._path_var = ctk.StringVar()
         self._path_entry = ctk.CTkEntry(
-            file_frame, textvariable=self._path_var, state="readonly"
+            file_frame, textvariable=self._path_var, state="readonly", height=36,
         )
-        self._path_entry.grid(row=0, column=1, padx=4, pady=8, sticky="ew")
+        self._path_entry.grid(row=0, column=1, padx=4, pady=12, sticky="ew")
         self._browse_btn = ctk.CTkButton(
-            file_frame, text="参照", width=80, command=self._on_browse
+            file_frame, text="開く", width=80, height=36, command=self._on_browse
         )
-        self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
+        self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=12)
 
         self._settings_btn = ctk.CTkButton(
-            file_frame, text="設定", width=70, command=self._on_open_settings,
+            file_frame, text="⚙ 設定", width=90, height=36, command=self._on_open_settings,
         )
-        self._settings_btn.grid(row=0, column=3, padx=(0, 4), pady=8)
+        self._settings_btn.grid(row=0, column=3, padx=(0, 4), pady=12)
 
         self._recent_var = ctk.StringVar(value="最近のファイル")
         self._recent_menu = ctk.CTkOptionMenu(
@@ -145,26 +148,26 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             variable=self._recent_var, width=120,
             command=self._on_recent_selected,
         )
-        self._recent_menu.grid(row=0, column=4, padx=(0, 8), pady=8)
+        self._recent_menu.grid(row=0, column=4, padx=(0, 16), pady=12)
 
         # --- ドロップゾーン (ZIP未選択時) ---
         self._drop_frame = ctk.CTkFrame(
-            self, border_width=2, border_color=_DROP_BORDER_COLOR
+            self, border_width=1, border_color=_DROP_BORDER_COLOR, corner_radius=12
         )
-        self._drop_frame.grid(row=1, column=0, padx=12, pady=4, sticky="nsew")
+        self._drop_frame.grid(row=1, column=0, padx=20, pady=6, sticky="nsew")
         self._drop_frame.grid_rowconfigure(0, weight=1)
         self._drop_frame.grid_columnconfigure(0, weight=1)
 
         self._drop_label = ctk.CTkLabel(
             self._drop_frame,
             text="ZIP/RAR/7zファイルをここにドラッグ&ドロップ\nまたは「参照」ボタンで選択",
-            font=ctk.CTkFont(size=20),
+            font=ctk.CTkFont(size=18, weight="bold"),
             text_color="gray",
         )
         self._drop_label.grid(row=0, column=0, sticky="nsew")
 
         # --- ファイル一覧 (ZIP読込後) ---
-        self._list_frame = ctk.CTkFrame(self)
+        self._list_frame = ctk.CTkFrame(self, corner_radius=12)
         self._list_frame.grid_rowconfigure(1, weight=1)
         self._list_frame.grid_columnconfigure(0, weight=0)
         self._list_frame.grid_columnconfigure(1, weight=1)
@@ -217,8 +220,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._preview_label.pack(fill="both", expand=True, padx=8, pady=4)
 
         # --- 展開先 ---
-        dest_frame = ctk.CTkFrame(self)
-        dest_frame.grid(row=2, column=0, padx=12, pady=4, sticky="ew")
+        dest_frame = ctk.CTkFrame(self, corner_radius=12)
+        dest_frame.grid(row=2, column=0, padx=20, pady=6, sticky="ew")
         dest_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(dest_frame, text="展開先:").grid(
@@ -235,8 +238,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._dest_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
 
         # --- プログレスバー＆ボタン ---
-        bottom_frame = ctk.CTkFrame(self)
-        bottom_frame.grid(row=3, column=0, padx=12, pady=(4, 12), sticky="ew")
+        bottom_frame = ctk.CTkFrame(self, corner_radius=12)
+        bottom_frame.grid(row=3, column=0, padx=20, pady=(6, 18), sticky="ew")
         bottom_frame.grid_columnconfigure(2, weight=1)
 
         self._progress = ctk.CTkProgressBar(bottom_frame, mode="determinate")
@@ -265,12 +268,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._status_label.grid(row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="w")
 
         self._compress_btn = ctk.CTkButton(
-            bottom_frame, text="圧縮", width=80, command=self._on_compress
+            bottom_frame, text="圧縮する", width=100, height=36, command=self._on_compress
         )
         self._compress_btn.grid(row=2, column=2, padx=(4, 4), pady=(0, 8), sticky="e")
 
         self._extract_btn = ctk.CTkButton(
-            bottom_frame, text="解凍実行", command=self._on_extract, state="disabled"
+            bottom_frame, text="解凍する", width=100, height=36, command=self._on_extract, state="disabled"
         )
         self._extract_btn.grid(row=2, column=3, padx=(4, 8), pady=(0, 8), sticky="e")
 
@@ -553,7 +556,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._preview_label.configure(text=f"プレビューを読み込めませんでした ({e})")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
-        text = content.decode("utf-8", errors="replace")[:_MAX_PREVIEW_CHARS]
+        # UTF-8優先、失敗時はシステムエンコーディング（日本語CP932など）で再試行
+        text = _decode_text(content)
         self._preview_label.configure(text=text)
         self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
@@ -635,7 +639,11 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         for idx, archive_path in enumerate(paths):
             password = active_password if archive_path == zip_path else None
             entry_archive_name = archive_path.name
-            archive_dest = dest / archive_path.stem
+            try:
+                entries, _ = list_archive(archive_path)
+                archive_dest = _resolve_extract_dest(dest, archive_path, entries)
+            except Exception:
+                archive_dest = dest / archive_path.stem
             archive_dest.mkdir(parents=True, exist_ok=True)
 
             try:
@@ -678,7 +686,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.grid_remove()
         if self._open_on_done_var.get() and last_zip is not None:
             dest = Path(self._dest_var.get()) if self._dest_var.get() else last_zip.parent
-            subprocess.Popen(["explorer", str(dest)])
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", str(dest)])
         if self._close_on_done_var.get():
             self.after(500, self.destroy)
             return
@@ -770,7 +779,15 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     f"圧縮中: {pct:.0%} ({cur}/{total_}) - {name}"
                 ))
 
-            create_archive(sources, output, on_progress=on_progress)
+            compression_level = self._settings.get("compression_level", 1)
+            if not isinstance(compression_level, int) or not 0 <= compression_level <= 9:
+                compression_level = 1
+            create_archive(
+                sources,
+                output,
+                on_progress=on_progress,
+                compression_level=compression_level,
+            )
             self.after(0, self._on_compress_done)
         except Exception as exc:
             msg = str(exc)
@@ -778,23 +795,44 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _on_compress_done(self) -> None:
         self._compressing = False
-        self._set_ui_enabled(True)
         self._status_var.set("圧縮完了")
         self._progress.set(1)
         self._progress.grid_remove()
         self._compress_sources = []
         if self._compress_no_dialog:
             self.after(500, self.destroy)
+        else:
+            self._set_ui_enabled(True)
 
     def _on_compress_error(self, msg: str) -> None:
         self._compressing = False
-        self._set_ui_enabled(True)
         self._status_var.set(f"エラー: {msg}")
         self._progress.set(0)
         self._progress.grid_remove()
         if self._compress_no_dialog:
             self._compress_no_dialog = False
             self.after(2000, self.destroy)
+        else:
+            self._set_ui_enabled(True)
+
+
+def _decode_text(data: bytes, max_chars: int = _MAX_PREVIEW_CHARS) -> str:
+    """バイトデータをテキストにデコードする（UTF-8優先→システムエンコーディング）
+
+    日本語WindowsのCP932など、UTF-8以外のエンコーディングで書かれた
+    テキストファイルにも対応するため2段階フォールバックする。
+    """
+    try:
+        return data.decode("utf-8")[:max_chars]
+    except UnicodeDecodeError:
+        pass
+    # システムエンコーディング（日本語ならCP932）で再試行
+    try:
+        return data.decode(locale.getencoding())[:max_chars]
+    except (UnicodeDecodeError, LookupError):
+        pass
+    # 最終手段: 非ASCIIを置換
+    return data.decode("utf-8", errors="replace")[:max_chars]
 
 
 def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
@@ -807,8 +845,12 @@ def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | No
     ext = p.suffix.lower()
     if ext == ".zip":
         import zipfile
-        with zipfile.ZipFile(p, "r") as zf:
+        from kaito.unzip import try_zip_with_encodings
+
+        def _read_entry(zf: zipfile.ZipFile) -> bytes:
             return zf.read(name)
+
+        return try_zip_with_encodings(p, _read_entry)
     elif ext in {".rar", ".7z"}:
         tmpdir: tempfile.TemporaryDirectory | None = None
         try:
@@ -935,6 +977,28 @@ def _format_size(size: int) -> str:
         return f"{size / 1024 ** 2:.1f} MB"
     else:
         return f"{size / 1024 ** 3:.1f} GB"
+
+
+def _resolve_extract_dest(dest: Path, archive_path: Path, entries: list[ZipEntry]) -> Path:
+    """アーカイブの構成に応じて展開先を決定し、二重ネストを防ぐ
+
+    全エントリが1つのトップレベルディレクトリを共有している場合
+    （例: myproject/file1.js, myproject/file2.js）、そのディレクトリ自体が
+    コンテナの役割を果たすため dest 直下に展開する。
+    共通ルートがない／ルート直下にファイルがある場合は dest/archive_stem/ を作成する。
+    """
+    roots: set[str] = set()
+    has_root_file = False
+    for e in entries:
+        if "/" in e.name:
+            root = e.name.split("/")[0]
+            roots.add(root)
+        elif e.name:
+            has_root_file = True
+
+    if len(roots) == 1 and not has_root_file:
+        return dest
+    return dest / archive_path.stem
 
 
 def main() -> None:

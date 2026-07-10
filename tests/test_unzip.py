@@ -296,6 +296,17 @@ class TestCreateArchive:
         assert len(calls) == 2
         assert calls[-1] == (2, 2, "b.txt")
 
+    def test_create_zip_accepts_compression_level(self, tmp_dir: Path) -> None:
+        """ZIP圧縮レベルを呼び出し側から指定できる。"""
+        src = tmp_dir / "a.txt"
+        src.write_text("A")
+        output = tmp_dir / "out.zip"
+
+        with patch("kaito.unzip.zipfile.ZipFile") as mock_zip:
+            create_archive([src], output, compression_level=9)
+
+        assert mock_zip.call_args.kwargs["compresslevel"] == 9
+
     def test_create_unsupported_raises(self, tmp_dir: Path) -> None:
         src = tmp_dir / "a.txt"
         src.write_text("A")
