@@ -105,7 +105,6 @@ class SevenZipBackend:
         if meipass:
             return Path(meipass) / "bundled"
         try:
-            # repo/src/kaito/archive/sevenzip_backend.py -> repo/bundled
             return Path(__file__).resolve().parents[3] / "bundled"
         except (IndexError, NameError, OSError):
             return None
@@ -148,7 +147,6 @@ class SevenZipBackend:
             self._tool_source = "bundled"
             return bundled
 
-        # 配布EXEはシステム版へ黙ってフォールバックしない。
         if self._is_frozen():
             raise ExternalToolNotFoundError(
                 "7z",
@@ -166,7 +164,6 @@ class SevenZipBackend:
                 "7z", f"KAITO_7Z_PATHのファイルが見つかりません: {candidate}"
             )
 
-        # システム版は開発・診断用途で明示許可された場合だけ使用する。
         if os.environ.get("KAITO_ALLOW_SYSTEM_7Z") == "1":
             for candidate in self._COMMON_PATHS:
                 if candidate.is_file():
@@ -263,7 +260,6 @@ class SevenZipBackend:
         self._check_cancelled()
         command = [str(self._find_tool()), *args, "-y", "-sccUTF-8"]
         if password is not None:
-            # 7-Zip CLIの制約でプロセス引数へ渡る。返却値・ログ・例外では伏せる。
             command.append(f"-p{password}")
 
         creation_flags = (
@@ -316,13 +312,15 @@ class SevenZipBackend:
 
     @staticmethod
     def _parse_slt_output(text: str) -> list[dict[str, str]]:
-        """`7z l -slt`のKey = Valueブロックを解析する。"""
+        """`7z l -slt`のKey = Valueブロックを安全側で解析する。"""
         entries: list[dict[str, str]] = []
         current: dict[str, str] = {}
         in_entries = False
+        separator_found = False
         for line in text.splitlines():
             stripped = line.strip()
             if stripped.startswith("---") and stripped.endswith("---"):
+                separator_found = True
                 in_entries = True
                 current = {}
                 continue
@@ -336,6 +334,10 @@ class SevenZipBackend:
             if "=" in line:
                 key, _, value = line.partition("=")
                 current[key.strip()] = value.strip()
+        if not separator_found:
+            raise ExtractionFailedError(
+                "7-Zip一覧出力にエントリ区切りがありません。出力形式が変更された可能性があります"
+            )
         if current:
             entries.append(current)
         return entries
