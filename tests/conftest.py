@@ -94,7 +94,7 @@ def encrypted_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
     src.mkdir()
     (src / "secret.txt").write_text("Secret Data")
     path = tmp_dir / "encrypted.7z"
-    _run_7z(["a", f"-psecret123", str(path), str(src / "*")])
+    _run_7z(["a", "-psecret123", str(path), str(src / "*")])
     return path
 
 
@@ -138,7 +138,7 @@ def encrypted_rar(tmp_dir: Path, sevenz_available: bool) -> Path:
     secret.write_text("Secret RAR")
     path = tmp_dir / "encrypted.rar"
     r = subprocess.run(
-        [str(_SEVENZ), "a", "-trar", f"-psecret123", str(path), str(secret), "-y"],
+        [str(_SEVENZ), "a", "-trar", "-psecret123", str(path), str(secret), "-y"],
         capture_output=True,
         text=True,
         timeout=30,

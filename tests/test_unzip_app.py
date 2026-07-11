@@ -3,7 +3,6 @@ tests/test_unzip_app.py
 unzip_app.py のテスト（GUIコンポーネントは全てmock）
 """
 
-from contextlib import ExitStack
 from datetime import datetime
 import zipfile
 from pathlib import Path

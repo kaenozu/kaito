@@ -5,19 +5,17 @@ tests/test_integration.py
 """
 
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
 from kaito.archive.service import ArchiveService
-from kaito.archive.sevenzip_backend import SEVENZIP_VERSION
 from kaito.domain.errors import (
     ExtractionFailedError,
     InvalidPasswordError,
     PasswordRequiredError,
     UnsupportedFormatError,
 )
-from kaito.domain.models import ArchiveEntry, ExtractionOptions
+from kaito.domain.models import ExtractionOptions
 
 
 # =========================================================

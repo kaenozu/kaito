@@ -12,7 +12,6 @@ from kaito.domain.errors import UnsafeArchiveError, ArchiveBombError
 from kaito.domain.models import (
     ArchiveEntry,
     ExtractionOptions,
-    SafetyLimits,
     validate_entry_path,
     check_archive_safety,
 )
@@ -131,7 +130,8 @@ class TestArchiveBombDetection:
 
     def test_total_size_too_large(self) -> None:
         """合計サイズが上限を超えるケース（個別ファイルは上限内）"""
-        entries = [
+        # entries list kept for documentation but unused
+        _ = [
             ArchiveEntry(
                 name=f"a{i}.bin",
                 size=3 * 1024**3,
