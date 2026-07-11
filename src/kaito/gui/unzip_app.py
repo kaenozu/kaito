@@ -15,7 +15,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
@@ -31,6 +31,7 @@ from kaito.domain.errors import (
     CancelledError,
     ExternalToolNotFoundError,
     InvalidPasswordError,
+    PasswordRequiredError,
     UnsafeArchiveError,
 )
 from kaito.domain.models import (
@@ -87,6 +88,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._entries: list[ArchiveEntry] = []
         self._is_encrypted = False
         self._is_busy = False
+        self._closing = False
+        self._worker_thread: Optional[Thread] = None
 
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._current_image: Optional[ctk.CTkImage] = None
@@ -603,50 +606,64 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _load_archive(self, path: Path) -> None:
         """アーカイブを読み込んで内容一覧を表示"""
-        try:
-            info = self._archive_service.list_archive(path)
-            self._entries = info.entries
-            self._is_encrypted = info.is_encrypted
-        except ArchiveError as e:
-            self._entries = []
-            self._is_encrypted = False
-            self._status_var.set(f"エラー: {e.user_message()}")
-            self._refresh_tree()
-            self._show_drop_zone()
-            self._extract_btn.configure(state="disabled")
-            return
-        except Exception as e:
-            self._entries = []
-            self._is_encrypted = False
-            self._status_var.set(f"エラー: ファイルを開けませんでした ({e})")
-            self._refresh_tree()
-            self._show_drop_zone()
-            self._extract_btn.configure(state="disabled")
+        password = self._get_password_for(path)
+        info = None
+        for attempt in range(3):
+            try:
+                info = self._archive_service.list_archive(path, password=password)
+                break
+            except (PasswordRequiredError, InvalidPasswordError):
+                self._mark_password_failed(path)
+                password = (
+                    self._show_password_error(path.name)
+                    if attempt > 0
+                    else self._ask_password(path.name)
+                )
+                if password is None:
+                    self._status_var.set("アーカイブの読み込みをキャンセルしました")
+                    return
+                self._set_password_for(path, password)
+            except ArchiveError as exc:
+                self._entries = []
+                self._is_encrypted = False
+                self._status_var.set(f"エラー: {exc.user_message()}")
+                self._refresh_tree()
+                self._show_drop_zone()
+                self._extract_btn.configure(state="disabled")
+                return
+            except Exception as exc:
+                self._entries = []
+                self._is_encrypted = False
+                self._status_var.set(f"エラー: ファイルを開けませんでした ({exc})")
+                self._refresh_tree()
+                self._show_drop_zone()
+                self._extract_btn.configure(state="disabled")
+                return
+
+        if info is None:
+            self._show_error(
+                "パスワードが正しくありません",
+                f"{path.name}: パスワードを複数回試行しましたが開けませんでした",
+            )
             return
 
-        # 前の一時展開をクリーンアップ
+        self._entries = info.entries
+        self._is_encrypted = info.is_encrypted
         self._cleanup_temp_dir()
-
         self._current_archive_path = path
-        # キューに追加 (重複防止)
         if path not in self._archive_queue:
             self._archive_queue.append(path)
         else:
-            # 先頭に移動
             self._archive_queue.remove(path)
             self._archive_queue.insert(0, path)
 
         self._search_var.set("")
-
-        # プレビュー事前展開は行わない (7z CLI で都度読み込む)
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
         self._refresh_recent_menu()
-
-        # 展開先のデフォルト
         self._update_dest_display()
 
-        total_size = sum(e.size for e in self._entries)
+        total_size = sum(entry.size for entry in self._entries)
         self._refresh_tree()
         self._show_file_list()
         self._compress_btn.grid_remove()
@@ -659,15 +676,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._update_queue_status()
 
     def _update_dest_display(self) -> None:
-        """現在の状態に合わせて展開先表示を更新"""
+        """展開先の基準ディレクトリを表示する。"""
         if self._current_archive_path is None:
             return
-        parent = self._current_archive_path.parent
-        entries = self._entries
-        dest = ArchiveService.resolve_extract_dest(
-            parent, self._current_archive_path, entries
-        )
-        self._dest_var.set(str(dest))
+        self._dest_var.set(str(self._current_archive_path.parent))
 
     def _refresh_tree(self) -> None:
         for row in self._tree.get_children():
@@ -847,6 +859,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return result
         return None
 
+    def _request_password_from_worker(
+        self, archive_name: str, *, retry: bool = False
+    ) -> Optional[str]:
+        """メインスレッドのダイアログ結果をキャンセル可能に待機する。"""
+        completed = Event()
+        result: list[Optional[str]] = [None]
+
+        def ask() -> None:
+            try:
+                result[0] = (
+                    self._show_password_error(archive_name)
+                    if retry
+                    else self._ask_password(archive_name)
+                )
+            finally:
+                completed.set()
+
+        self.after(0, ask)
+        while not completed.wait(0.1):
+            if self._archive_service.is_cancelled():
+                return None
+        return result[0]
+
     # ---- 展開処理 ----
 
     def _on_extract(self) -> None:
@@ -860,157 +895,163 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.set(0)
         self._progress.grid()
 
-        # キューをコピー
         paths_copy = list(self._archive_queue)
+        destination_text = self._dest_var.get().strip()
+        base_destination = (
+            Path(destination_text) if destination_text else paths_copy[0].parent
+        )
         self._status_var.set(f"解凍開始: {len(paths_copy)}個のアーカイブ")
 
-        Thread(
+        self._worker_thread = Thread(
             target=self._do_batch_extract,
-            args=(paths_copy,),
+            args=(paths_copy, base_destination),
             daemon=False,
-        ).start()
+        )
+        self._worker_thread.start()
 
-    def _do_batch_extract(self, paths: list[Path]) -> None:
-        """バックグラウンドでバッチ展開を実行"""
+    def _do_batch_extract(self, paths: list[Path], base_destination: Path) -> None:
+        """バックグラウンドでバッチ展開を実行する。"""
         success_count = 0
         fail_count = 0
         total_archives = len(paths)
 
-        for idx, archive_path in enumerate(paths):
-            if self._archive_service._cancel_event.is_set():
-                self.after(0, lambda: self._on_extract_cancelled(success_count))
+        for index, archive_path in enumerate(paths):
+            if self._archive_service.is_cancelled():
+                self.after(
+                    0, lambda count=success_count: self._on_extract_cancelled(count)
+                )
                 return
 
-            entry_archive_name = archive_path.name
+            archive_name = archive_path.name
             try:
-                # ステータス更新
                 self.after(
                     0,
-                    lambda i=idx + 1, t=total_archives, n=entry_archive_name: (
-                        self._status_var.set(f"[{i}/{t}] {n} を解凍中...")
+                    lambda i=index + 1, total=total_archives, name=archive_name: (
+                        self._status_var.set(f"[{i}/{total}] {name} を解凍中...")
                     ),
                 )
 
-                # 一覧取得 → 展開先計算
-                info = self._archive_service.list_archive(archive_path)
-                dest = (
-                    Path(self._dest_var.get())
-                    if self._dest_var.get()
-                    else archive_path.parent
-                )
-                archive_dest = ArchiveService.resolve_extract_dest(
-                    dest, archive_path, info.entries
-                )
-                archive_dest.mkdir(parents=True, exist_ok=True)
-
-                # パスワード管理
                 password = self._get_password_for(archive_path)
-                if password is None and info.is_encrypted:
-                    self.after(0, lambda: None)  # 同期ポイント
-                    pwd_result: list[str | None] = [None]
+                info = None
+                for attempt in range(3):
+                    try:
+                        info = self._archive_service.list_archive(
+                            archive_path, password=password
+                        )
+                        break
+                    except (PasswordRequiredError, InvalidPasswordError):
+                        self._mark_password_failed(archive_path)
+                        password = self._request_password_from_worker(
+                            archive_name, retry=attempt > 0
+                        )
+                        if password is None:
+                            break
+                        self._set_password_for(archive_path, password)
 
-                    def ask():
-                        result = self._ask_password(entry_archive_name)
-                        pwd_result[0] = result
-
-                    self.after(0, ask)
-                    # ダイアロル完了待機 (応答性はやや低下)
-                    while (
-                        pwd_result[0] is None
-                        and not self._archive_service._cancel_event.is_set()
-                    ):
-                        time.sleep(0.1)
-                    if self._archive_service._cancel_event.is_set():
-                        self.after(0, lambda: self._on_extract_cancelled(success_count))
+                if info is None:
+                    if self._archive_service.is_cancelled():
+                        self.after(
+                            0,
+                            lambda count=success_count: self._on_extract_cancelled(
+                                count
+                            ),
+                        )
                         return
-                    password = pwd_result[0]
+                    fail_count += 1
+                    continue
+
+                archive_destination = ArchiveService.resolve_extract_dest(
+                    base_destination, archive_path, info.entries
+                )
+
+                if password is None and info.is_encrypted:
+                    password = self._request_password_from_worker(archive_name)
                     if password is None:
-                        continue  # パスワード未入力 → スキップ
+                        fail_count += 1
+                        continue
                     self._set_password_for(archive_path, password)
 
-                # 進捗コールバック
-                def make_progress(i=idx, a=entry_archive_name, t=total_archives):
+                def make_progress(
+                    archive_index: int = index,
+                    current_archive: str = archive_name,
+                    archive_total: int = total_archives,
+                ):
                     last_poll = [0.0]
 
                     def on_progress(current: int, total: int, name: str = "") -> None:
+                        if self._archive_service.is_cancelled():
+                            raise CancelledError(str(archive_path))
                         now = time.monotonic()
                         if now - last_poll[0] < 0.1 and current < total:
                             return
                         last_poll[0] = now
-                        pct = current / total
-                        self.after(0, lambda p=pct: self._progress.set(p))
+                        percentage = current / max(total, 1)
+                        self.after(
+                            0, lambda value=percentage: self._progress.set(value)
+                        )
                         name_part = f" - {name}" if name else ""
                         self.after(
                             0,
                             lambda: self._status_var.set(
-                                f"[{i + 1}/{t}] {a}: {pct:.0%} ({current}/{total}){name_part}"
+                                f"[{archive_index + 1}/{archive_total}] "
+                                f"{current_archive}: {percentage:.0%} "
+                                f"({current}/{total}){name_part}"
                             ),
                         )
 
                     return on_progress
 
-                # パスワード再試行ループ
-                max_retries = 3
-                for retry in range(max_retries):
+                for attempt in range(3):
                     try:
-                        options = ExtractionOptions(
-                            dest_dir=archive_dest,
-                            password=password,
-                            on_progress=make_progress(
-                                idx, entry_archive_name, total_archives
+                        self._archive_service.extract(
+                            archive_path,
+                            ExtractionOptions(
+                                dest_dir=archive_destination,
+                                password=password,
+                                on_progress=make_progress(),
                             ),
                         )
-                        self._archive_service.extract(archive_path, options)
                         success_count += 1
                         break
-                    except InvalidPasswordError:
+                    except (PasswordRequiredError, InvalidPasswordError):
                         self._mark_password_failed(archive_path)
-                        if retry < max_retries - 1:
-                            # パスワード再入力
-                            pwd_result = [None]
-
-                            def ask_retry(name=entry_archive_name):
-                                pwd_result[0] = self._ask_password(name)
-
-                            self.after(0, ask_retry)
-                            while (
-                                pwd_result[0] is None
-                                and not self._archive_service._cancel_event.is_set()
-                            ):
-                                time.sleep(0.1)
-                            if self._archive_service._cancel_event.is_set():
-                                self.after(
-                                    0, lambda: self._on_extract_cancelled(success_count)
-                                )
-                                return
-                            password = pwd_result[0]
-                            if password is None:
-                                break
-                            self._set_password_for(archive_path, password)
-                        else:
+                        if attempt >= 2:
                             fail_count += 1
                             self.after(
                                 0,
-                                lambda a=entry_archive_name: self._show_error(
+                                lambda name=archive_name: self._show_error(
                                     "パスワードが正しくありません",
-                                    f"{a}: パスワードを複数回試行しましたが展開できませんでした",
+                                    f"{name}: パスワードを複数回試行しましたが展開できませんでした",
                                 ),
                             )
-                    except ArchiveBombError as e:
+                            break
+                        password = self._request_password_from_worker(
+                            archive_name, retry=True
+                        )
+                        if password is None:
+                            fail_count += 1
+                            break
+                        self._set_password_for(archive_path, password)
+                    except ArchiveBombError as exc:
                         fail_count += 1
                         self.after(
                             0,
-                            lambda a=entry_archive_name, m=str(e): self._show_error(
-                                "安全のため展開を中止しました", f"{a}: {m}"
+                            lambda name=archive_name, message=str(exc): (
+                                self._show_error(
+                                    "安全のため展開を中止しました", f"{name}: {message}"
+                                )
                             ),
                         )
-                        break  # 爆弾検知 → 次のアーカイブへ
-                    except UnsafeArchiveError as e:
+                        break
+                    except UnsafeArchiveError as exc:
                         fail_count += 1
                         self.after(
                             0,
-                            lambda a=entry_archive_name, m=str(e): self._show_error(
-                                "安全でないエントリを検出しました", f"{a}: {m}"
+                            lambda name=archive_name, message=str(exc): (
+                                self._show_error(
+                                    "安全でないエントリを検出しました",
+                                    f"{name}: {message}",
+                                )
                             ),
                         )
                         break
@@ -1020,32 +1061,47 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                             0,
                             lambda: self._show_error(
                                 "展開エンジンが見つかりません",
-                                "7-Zip をインストールしてください。https://7-zip.org/",
+                                "同梱7-Zipが利用できません。kaitoを再インストールしてください。",
                             ),
                         )
                         break
-                    except ArchiveError as e:
+                    except CancelledError:
+                        self.after(
+                            0,
+                            lambda count=success_count: self._on_extract_cancelled(
+                                count
+                            ),
+                        )
+                        return
+                    except ArchiveError as exc:
                         fail_count += 1
                         self.after(
                             0,
-                            lambda a=entry_archive_name, m=str(e.user_message()): (
-                                self._show_error("展開に失敗しました", f"{a}: {m}")
+                            lambda name=archive_name, message=exc.user_message(): (
+                                self._show_error(
+                                    "展開に失敗しました", f"{name}: {message}"
+                                )
                             ),
                         )
                         break
-
-            except Exception as e:
+            except CancelledError:
+                self.after(
+                    0, lambda count=success_count: self._on_extract_cancelled(count)
+                )
+                return
+            except Exception as exc:
                 fail_count += 1
                 self.after(
                     0,
-                    lambda a=entry_archive_name, em=str(e): self._show_error(
-                        "展開に失敗しました", f"{a}: {em}"
+                    lambda name=archive_name, message=str(exc): self._show_error(
+                        "展開に失敗しました", f"{name}: {message}"
                     ),
                 )
 
         self.after(0, lambda: self._on_extract_done(success_count, fail_count))
 
     def _on_extract_done(self, success: int, fail: int) -> None:
+        self._worker_thread = None
         self._is_busy = False
         self._show_cancel_button(False)
         self._set_ui_enabled(True)
@@ -1077,6 +1133,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(500, self.destroy)
 
     def _on_extract_cancelled(self, success: int) -> None:
+        self._worker_thread = None
         self._is_busy = False
         self._show_cancel_button(False)
         self._set_ui_enabled(True)
@@ -1121,6 +1178,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
     # ---- 終了処理 ----
 
     def _on_close(self) -> None:
+        if self._closing:
+            return
         if self._is_busy:
             result = messagebox.askyesno(
                 title="確認",
@@ -1128,9 +1187,19 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             )
             if not result:
                 return
-            self._archive_service._cancel_event.set()
-            self._cleanup_temp_dir()
-            self.destroy()
+            self._closing = True
+            self._archive_service.cancel()
+            self._status_var.set("処理を中断して終了しています...")
+            self._wait_for_worker_then_destroy()
+            return
+        self._closing = True
+        self._cleanup_temp_dir()
+        self.destroy()
+
+    def _wait_for_worker_then_destroy(self) -> None:
+        worker = self._worker_thread
+        if worker is not None and worker.is_alive():
+            self.after(100, self._wait_for_worker_then_destroy)
             return
         self._cleanup_temp_dir()
         self.destroy()
@@ -1153,7 +1222,6 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         if self._compress_no_dialog:
-            self._compress_no_dialog = False
             first = self._compress_sources[0]
             output = first.parent / (first.stem + ".zip")
             self._start_compress(output)
@@ -1208,11 +1276,12 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.set(0)
         self._progress.grid()
 
-        Thread(
+        self._worker_thread = Thread(
             target=self._do_compress,
             args=(list(self._compress_sources), output),
             daemon=False,
-        ).start()
+        )
+        self._worker_thread.start()
 
     def _do_compress(self, sources: list[Path], output: Path) -> None:
         """バックグラウンド圧縮"""
@@ -1225,7 +1294,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             temp_output = Path(temp_dir) / output.name
 
             def on_progress(cur: int, total_: int, name: str = "") -> None:
-                if self._archive_service._cancel_event.is_set():
+                if self._archive_service.is_cancelled():
                     raise CancelledError(str(output))
                 pct = cur / total_
                 self.after(0, lambda p=pct: self._progress.set(p))
@@ -1252,7 +1321,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
             self._archive_service.create(opts)
 
-            if self._archive_service._cancel_event.is_set():
+            if self._archive_service.is_cancelled():
                 self._cleanup_temp(temp_output)
                 self.after(0, lambda: self._on_compress_cancelled())
                 return
@@ -1285,27 +1354,33 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
 
     def _on_compress_done(self) -> None:
+        self._worker_thread = None
         self._is_busy = False
         self._show_cancel_button(False)
         self._status_var.set("圧縮完了")
         self._progress.set(1)
         self._progress.grid_remove()
         self._compress_sources = []
-        if self._compress_no_dialog:
+        close_after = self._compress_no_dialog
+        self._compress_no_dialog = False
+        if close_after:
             self.after(500, self.destroy)
         else:
             self._set_ui_enabled(True)
 
     def _on_compress_cancelled(self) -> None:
+        self._worker_thread = None
         self._is_busy = False
         self._show_cancel_button(False)
         self._status_var.set("圧縮をキャンセルしました")
         self._progress.set(0)
         self._progress.grid_remove()
         self._compress_sources = []
+        self._compress_no_dialog = False
         self._set_ui_enabled(True)
 
     def _on_compress_error(self, msg: str) -> None:
+        self._worker_thread = None
         self._is_busy = False
         self._show_cancel_button(False)
         # ユーザー向けメッセージ
