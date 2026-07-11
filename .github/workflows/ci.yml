@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master, feature/*]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+
+    steps:
+      # actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 -- v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      # astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72 -- v5.3.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff check)
+        run: uv run ruff check src/
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check src/
+
+      - name: Type check (pyright)
+        run: uv run pyright src/
+
+      - name: Test (unit + security)
+        run: uv run pytest tests/test_unzip.py tests/test_security.py tests/test_settings.py -v
+
+      - name: Test (integration)
+        run: uv run pytest tests/test_integration.py -v
+
+      - name: Test (GUI mock)
+        run: uv run pytest tests/test_unzip_app.py -v
+
+      - name: Build EXE
+        run: uv run pyinstaller --clean --noconfirm build.spec
+
+      - name: Smoke test EXE
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/kaito.exe")) {
+            Write-Error "kaito.exe not found"
+            exit 1
+          }
+          $size = (Get-Item "dist/kaito.exe").Length
+          Write-Output "kaito.exe: $size bytes"
+          if ($size -lt 5000000) {
+            Write-Error "kaito.exe too small (< 5MB)"
+            exit 1
+          }
+          # --version smoke test
+          $v = & "dist/kaito.exe" --version
+          Write-Output "Version: $v"
+          if (-not ($v -match "kaito")) {
+            Write-Error "version check failed"
+            exit 1
+          }
+          # --self-test
+          $st = & "dist/kaito.exe" --self-test 2>&1
+          Write-Output "Self-test: OK"
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b720449be5f6b2d10e2c0b8e3 # v4.6.3
+        with:
+          name: kaito-exe
+          path: dist/kaito.exe

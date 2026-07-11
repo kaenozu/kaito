@@ -2,7 +2,7 @@
 ; Build: ISCC.exe installer\kaito.iss
 
 #define MyAppName "kaito"
-#define MyAppVersion "0.9.1"
+#define MyAppVersion "0.10.0"
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
 #define MyAppExeName "kaito.exe"
@@ -21,7 +21,7 @@ OutputBaseFilename=kaito-installer-{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 ChangesEnvironment=no
 CloseApplications=yes
 
@@ -31,6 +31,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\dist\kaito.exe"; DestDir: "{app}"; Flags: ignoreversion
+; ライセンス文書（あれば同梱）
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion; Check: FileExists(ExpandConstant('..\LICENSE'))
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -46,18 +48,9 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.rar\shell\kaito_ex
 ; kaitoで解凍 (7z)
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_extract"; ValueType: string; ValueName: ""; ValueData: "kaitoで解凍"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_extract\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" ""%1"""; Flags: uninsdeletekey
-; kaitoで解凍 フォールバック (全ファイル – カスタムProgID対策)
-Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_extract"; ValueType: string; ValueName: ""; ValueData: "kaitoで解凍"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_extract\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" ""%1"""; Flags: uninsdeletekey
 ; kaitoで圧縮 (ファイル)
 Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_compress"; ValueType: string; ValueName: ""; ValueData: "kaitoで圧縮"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_compress\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --compress ""%1"""; Flags: uninsdeletekey
 ; kaitoで圧縮 (フォルダ)
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\kaito_compress"; ValueType: string; ValueName: ""; ValueData: "kaitoで圧縮"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\kaito_compress\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --compress ""%1"""; Flags: uninsdeletekey
-
-[Run]
-Filename: "{app}\kaito.exe"; Parameters: "--install-context-menu"; Flags: runhidden
-
-[UninstallRun]
-Filename: "{app}\kaito.exe"; Parameters: "--uninstall-context-menu"; Flags: runhidden

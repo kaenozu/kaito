@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for kaito
+PyInstaller spec file for kaito (v0.9.1.dev0)
 Build: pyinstaller build.spec
+CI also uses: pyinstaller build.spec
 """
 
 import sys
@@ -11,8 +12,6 @@ sys.setrecursionlimit(5000)
 
 block_cipher = None
 
-# Some embedded/managed Python distributions contain Tkinter but PyInstaller's
-# Tcl/Tk probe cannot locate it. Bundle the runtime pieces explicitly.
 _python_root = Path(sys.base_prefix)
 _tk_binaries = [
     (str(_python_root / 'DLLs' / name), '.')
@@ -26,20 +25,39 @@ _tk_datas = [
 ]
 _tkinter_package = (_python_root / 'Lib' / 'tkinter')
 
+# ライセンスファイルを含める
+_license_datas = []
+for lic in ('LICENSE', 'bundled/7-ZIP-LICENSE.txt', 'LICENSE.txt', 'LICENSE.rst',):
+    p = Path(lic)
+    if p.exists():
+        _license_datas.append((str(p), '.'))
+
+# 同梱7-Zip (7z.exeと7z.dllをbinaryとして扱う)
+_bundled_binaries = []
+_bundled_datas = []
+for p in Path('bundled').iterdir():
+    if not p.is_file():
+        continue
+    if p.suffix.lower() in ('.exe', '.dll'):
+        _bundled_binaries.append((str(p), 'bundled'))
+    else:
+        _bundled_datas.append((str(p), 'bundled'))
+
 a = Analysis(
     ['src/kaito/__main__.py'],
     pathex=[],
-    binaries=_tk_binaries,
+    binaries=_tk_binaries + _bundled_binaries,
     datas=[
         ('src/kaito', 'kaito'),
         *_tk_datas,
         (str(_tkinter_package), 'tkinter'),
+        *_license_datas,
+        *_bundled_datas,
     ],
     hiddenimports=[
         'PIL._tkinter_finder',
         'tkinterdnd2',
         'customtkinter',
-        'patoolib',
         'tkinter',
         'tkinter.filedialog',
         'tkinter.ttk',
@@ -48,7 +66,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'patoolib',
+        'patool',
+    ],
     noarchive=False,
     optimize=0,
 )
