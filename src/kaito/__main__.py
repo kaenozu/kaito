@@ -81,7 +81,9 @@ def _backend_info(as_json: bool) -> int:
         info = SevenZipBackend().backend_info()
     except Exception as exc:
         if as_json:
-            print(json.dumps({"available": False, "error": str(exc)}, ensure_ascii=False))
+            print(
+                json.dumps({"available": False, "error": str(exc)}, ensure_ascii=False)
+            )
         else:
             print(f"Available: False\nError: {exc}")
         return 1
