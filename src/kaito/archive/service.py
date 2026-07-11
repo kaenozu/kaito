@@ -210,9 +210,7 @@ class ArchiveService:
         return planned
 
     @classmethod
-    def find_duplicate_names(
-        cls, sources: list[Path]
-    ) -> list[tuple[str, list[Path]]]:
+    def find_duplicate_names(cls, sources: list[Path]) -> list[tuple[str, list[Path]]]:
         """Windowsへの展開時に同じ名前となるエントリを検出する。"""
         by_normalized_name: dict[str, tuple[str, list[Path]]] = {}
         for source in sources:
