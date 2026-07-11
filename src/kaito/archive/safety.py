@@ -66,7 +66,6 @@ def validate_staging_tree(staging: Path, options: ExtractionOptions) -> None:
 def merge_staging_tree(staging: Path, destination: Path) -> None:
     """検査済みステージングツリーを既存ファイルを壊さず移動する。"""
     ensure_no_reparse_ancestors(destination)
-    destination.mkdir(parents=True, exist_ok=True)
 
     directories = sorted(
         (item for item in staging.rglob("*") if item.is_dir()),
@@ -74,13 +73,17 @@ def merge_staging_tree(staging: Path, destination: Path) -> None:
     )
     files = sorted(item for item in staging.rglob("*") if item.is_file())
 
+    directory_targets: list[tuple[Path, Path]] = []
+    file_targets: list[tuple[Path, Path]] = []
+
+    # 何も変更する前に、全パス・親リンク・衝突を検証する。
     for directory in directories:
         relative = directory.relative_to(staging).as_posix()
         target = validate_entry_path(relative, destination)
         ensure_no_reparse_ancestors(target.parent)
         if target.exists() and not target.is_dir():
             raise ExtractionFailedError(f"展開先に同名ファイルがあります: {relative}")
-        target.mkdir(parents=True, exist_ok=True)
+        directory_targets.append((directory, target))
 
     for source in files:
         relative = source.relative_to(staging).as_posix()
@@ -88,6 +91,12 @@ def merge_staging_tree(staging: Path, destination: Path) -> None:
         ensure_no_reparse_ancestors(target.parent)
         if target.exists():
             raise ExtractionFailedError(f"展開先に同名項目があります: {relative}")
+        file_targets.append((source, target))
+
+    destination.mkdir(parents=True, exist_ok=True)
+    for _, target in directory_targets:
+        target.mkdir(parents=True, exist_ok=True)
+    for source, target in file_targets:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(source), str(target))
 
