@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from copy import deepcopy
@@ -158,21 +159,25 @@ class SettingsManager:
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path: Path | None = None
+        descriptor: int | None = None
         try:
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=".settings.", suffix=".tmp", dir=self._path.parent
             )
-            Path(temporary_name).unlink(missing_ok=True)
             temporary_path = Path(temporary_name)
-            with open(descriptor, "w", encoding="utf-8", closefd=True) as stream:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                descriptor = None
                 json.dump(self._data, stream, indent=2, ensure_ascii=False)
                 stream.flush()
+                os.fsync(stream.fileno())
             temporary_path.replace(self._path)
             temporary_path = None
             self._dirty = False
         except (PermissionError, OSError) as exc:
             raise RuntimeError(f"設定の保存に失敗しました: {exc}") from exc
         finally:
+            if descriptor is not None:
+                os.close(descriptor)
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
