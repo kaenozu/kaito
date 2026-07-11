@@ -1,76 +1,72 @@
-"""
-src/kaito/__main__.py
-python -m kaito で起動するためのエントリポイント
---version, --self-test CLIオプションを提供
-関連: gui/unzip_app.py (GUIエントリ), archive/sevenzip_backend.py (7-Zip依存)
-"""
+"""python -m kaito / kaito.exe のエントリポイント。"""
 
+from __future__ import annotations
+
+import json
 import sys
 import tempfile
 from pathlib import Path
 
 
-def _self_test() -> int:
-    """システムの健全性チェック"""
-    print("kaito self-test")
-    print("=" * 40)
-
-    # バージョン
+def _version() -> str:
     from kaito.gui.unzip_app import __version__
 
-    print(f"Version: {__version__}")
+    return __version__
 
-    # 設定ディレクトリ
+
+def _self_test() -> int:
+    """配布物と実行環境の最低限の健全性を確認する。"""
+    print("kaito self-test")
+    print("=" * 40)
+    print(f"Version: {_version()}")
+
     from kaito.settings import SettingsManager
 
     try:
-        sm = SettingsManager()
-        print(f"Config dir: {sm._get_path().parent}")
-    except Exception as e:
-        print(f"Config dir: FAILED ({e})")
+        manager = SettingsManager()
+        print(f"Config dir: {manager._get_path().parent}")
+    except Exception as exc:
+        print(f"Config dir: FAILED ({exc})")
         return 1
 
-    # 7-Zip
     from kaito.archive.sevenzip_backend import SevenZipBackend
 
-    backend = SevenZipBackend()
-    available, msg = backend.check_tool_availability()
-    if available:
-        print("7-Zip: OK (bundled or system)")
-        # バージョン確認
-        import subprocess
+    try:
+        info = SevenZipBackend().backend_info()
+    except Exception as exc:
+        print(f"7-Zip: FAILED ({exc})")
+        return 1
 
-        try:
-            r = subprocess.run(
-                [str(backend._find_tool())], capture_output=True, text=True, timeout=5
-            )
-            first_line = r.stdout.splitlines()[0] if r.stdout else "(no output)"
-            print(f"7-Zip version: {first_line}")
-        except Exception as e:
-            print(f"7-Zip version check: {e}")
-    else:
-        print(f"7-Zip: NOT FOUND - {msg}")
+    print(f"7-Zip: OK ({info['source']})")
+    print(f"7-Zip version: {info['version']}")
+    print(f"7-Zip integrity: {info['integrity']}")
+    if info["integrity"] != "ok":
+        return 1
+    if bool(getattr(sys, "frozen", False)) and info["source"] != "bundled":
+        print("7-Zip source: FAILED (frozen app must use bundled backend)")
+        return 1
 
-    # 対応形式
     from kaito.archive.service import ArchiveService
 
-    svc = ArchiveService()
-    exts = sorted(svc.SUPPORTED_EXTENSIONS)
-    print(f"Supported formats: {', '.join(exts)}")
-    for ext in exts:
+    service = ArchiveService()
+    extensions = sorted(service.SUPPORTED_EXTENSIONS)
+    print(f"Supported formats: {', '.join(extensions)}")
+    for extension in extensions:
         print(
-            f"  {ext}: list={svc.is_supported(Path(f'test{ext}'))}, create={svc.is_creation_supported(Path(f'test{ext}'))}"
+            f"  {extension}: list={service.is_supported(Path(f'test{extension}'))}, "
+            f"create={service.is_creation_supported(Path(f'test{extension}'))}"
         )
 
-    # テンポラリディレクトリ
     try:
-        td = tempfile.mkdtemp(prefix="kaito_selftest_")
-        p = Path(td)
-        print(f"Temp dir: {p} (created)")
-        p.rmdir()
-        print("Temp dir: OK (deleted)")
-    except Exception as e:
-        print(f"Temp dir: FAILED ({e})")
+        with tempfile.TemporaryDirectory(prefix="kaito_selftest_") as temp_dir:
+            path = Path(temp_dir)
+            probe = path / "probe.txt"
+            probe.write_text("ok", encoding="utf-8")
+            if probe.read_text(encoding="utf-8") != "ok":
+                raise OSError("temporary file round-trip failed")
+        print("Temp dir: OK")
+    except Exception as exc:
+        print(f"Temp dir: FAILED ({exc})")
         return 1
 
     print("=" * 40)
@@ -78,38 +74,41 @@ def _self_test() -> int:
     return 0
 
 
+def _backend_info(as_json: bool) -> int:
+    from kaito.archive.sevenzip_backend import SevenZipBackend
+
+    try:
+        info = SevenZipBackend().backend_info()
+    except Exception as exc:
+        if as_json:
+            print(json.dumps({"available": False, "error": str(exc)}, ensure_ascii=False))
+        else:
+            print(f"Available: False\nError: {exc}")
+        return 1
+
+    if as_json:
+        print(json.dumps(info, ensure_ascii=False, sort_keys=True))
+    else:
+        print(f"Available: {info['available']}")
+        print(f"Source: {info['source']}")
+        print(f"Path: {info['path']}")
+        print(f"Version: {info['version']}")
+        print(f"SHA-256: {info['sha256']}")
+        print(f"Expected SHA-256: {info['expected_sha256']}")
+        print(f"Integrity: {info['integrity']}")
+    return 0
+
+
 def main() -> None:
     args = sys.argv[1:]
-
     if args and args[0] == "--version":
-        from kaito.gui.unzip_app import __version__
-
-        print(f"kaito {__version__}")
+        print(f"kaito {_version()}")
         return
-
     if args and args[0] == "--self-test":
-        rc = _self_test()
-        sys.exit(rc)
-
+        raise SystemExit(_self_test())
     if args and args[0] == "--backend-info":
-        from kaito.archive.sevenzip_backend import SevenZipBackend, SEVENZIP_VERSION
+        raise SystemExit(_backend_info("--json" in args[1:]))
 
-        print(f"Backend: 7-Zip {SEVENZIP_VERSION}")
-        print(f"Bundled version requirement: {SEVENZIP_VERSION}")
-        print("License: See bundled/7-ZIP-LICENSE.txt")
-        backend = SevenZipBackend()
-        available, msg = backend.check_tool_availability()
-        print(f"Available: {available}")
-        if available:
-            tool = backend._find_tool()
-            print(f"Path: {tool}")
-            import hashlib
-
-            sha = hashlib.sha256(tool.read_bytes()).hexdigest()
-            print(f"SHA-256: {sha}")
-        return
-
-    # GUI起動
     from kaito.gui.unzip_app import main as gui_main
 
     gui_main()
