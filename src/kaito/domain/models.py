@@ -89,6 +89,7 @@ class ExtractionOptions:
     max_file_size: int = 2 * 1024 * 1024 * 1024
     max_entries: int = 100000
     max_compression_ratio: float = 1000.0
+    max_path_length: int = 260
 
 
 @dataclass
@@ -211,7 +212,22 @@ def check_archive_safety(
         )
 
     total_size = 0
+    seen_paths: dict[str, str] = {}
     for entry in entries:
+        parts = _normalized_archive_parts(entry.name)
+        normalized_name = "/".join(parts)
+        if len(normalized_name) > options.max_path_length:
+            raise UnsafeArchiveError(
+                f"アーカイブ内パスが長すぎます ({len(normalized_name)} > {options.max_path_length}): {entry.name}"
+            )
+        collision_key = normalized_name.casefold()
+        previous = seen_paths.get(collision_key)
+        if previous is not None:
+            raise UnsafeArchiveError(
+                f"重複またはWindows上で衝突するパスがあります: {previous} / {entry.name}"
+            )
+        seen_paths[collision_key] = entry.name
+
         validate_entry_path(entry.name, options.dest_dir)
         if entry.is_link:
             target = f" -> {entry.link_target}" if entry.link_target else ""
