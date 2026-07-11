@@ -1,154 +1,137 @@
 # kaito
 
-ZIP / RAR / 7z アーカイブ解凍・圧縮GUIツール（Windows向け）
+Windows 10/11向けのZIP・RAR・7zアーカイブ閲覧／展開／作成GUIです。
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## 特徴
+## 主な機能
 
-- ZIP / RAR / 7z 形式の解凍に対応
-- ZIP / 7z 形式の作成に対応
-- ドラッグ＆ドロップ対応（複数ファイル同時ドロップ）
-- パスワード保護アーカイブ対応（ZIP / 7z / RAR）
-- バッチ解凍（キューに追加して一括実行）
-- ファイル内容プレビュー（テキスト・画像）
-- ダークモード切替（System / Light / Dark）
-- 設定永続化
-- アーカイブ爆弾対策（サイズ・エントリ数・圧縮率の上限チェック）
-- パストラバーサル対策
+- ZIP・RAR・7zの一覧表示と展開
+- ZIP・7zの作成（RAR作成は非対応）
+- 複数アーカイブのドラッグ＆ドロップとキュー処理
+- パスワード保護されたZIP・RAR・7zの展開
+- テキスト／画像プレビュー
+- アーカイブごとのパスワード管理（メモリ内のみ）
+- パストラバーサル、リンク、reparse pointの拒否
+- エントリ数、単一ファイルサイズ、合計展開サイズ、圧縮率の制限
+- 一時ステージングへの展開と、検証後の安全な移動
+- 原子的なZIP／7z作成
+- 処理中のキャンセルと7-Zip子プロセスの終了
+- 7-Zip 26.02の同梱とSHA-256整合性検証
 
 ## 対応形式
 
-| 形式 | 一覧表示 | 展開 | 作成 | 暗号化展開 |
-|------|---------|------|------|-----------|
-| ZIP  | ✅      | ✅   | ✅   | ✅        |
-| RAR  | ✅      | ✅   | ❌\* | ✅        |
-| 7z   | ✅      | ✅   | ✅   | ✅        |
+| 形式 | 一覧 | 展開 | 作成 | 暗号化展開 | 暗号化作成 |
+|---|---:|---:|---:|---:|---:|
+| ZIP | ✅ | ✅ | ✅ | ✅ | ❌ |
+| RAR | ✅ | ✅ | ❌ | ✅ | ❌ |
+| 7z | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-\* RAR作成はライセンス上の制約により対応していません。
+RARは展開専用です。`.rar`を出力先として指定しても、ZIPへ自動変換せず明示的に拒否します。
 
-## 要件
+## 動作要件
 
-- **OS**: Windows 10 / 11（64bit）
-- RAR / 7z形式の解凍には **7-Zip** のインストールが必要です
-  - [https://7-zip.org/](https://7-zip.org/) からダウンロードできます
-  - ZIP形式のみの場合は不要です
+- Windows 10 / 11（64-bit）
+- 別途7-Zipをインストールする必要はありません
+
+配布EXEは同梱した固定バージョンの7-Zipだけを使用します。同梱ファイルが欠落または改変されている場合、システムに別の7-Zipがあっても処理を続行しません。
 
 ## インストール
 
-### インストーラー版（推奨）
+1. GitHub Releasesから`kaito-installer-*.exe`を取得します。
+2. インストーラーを実行します。
+3. `.zip`、`.rar`、`.7z`の右クリックメニューから「kaitoで解凍」を使用できます。
 
-1. [Releases](https://github.com/kaenozu/kaito/releases) から最新のインストーラーをダウンロード
-2. インストーラーを実行
-3. インストール後、ファイルの右クリックメニューから「kaitoで解凍」が使用可能になります
+インストーラーは現在のユーザーだけにインストールし、管理者権限を必須としません。
 
-### 手動ビルド
+## 開発環境
 
-```bash
+```powershell
+# 取得と依存関係の同期
 git clone https://github.com/kaenozu/kaito.git
 cd kaito
-uv sync
-uv run kaito
-```
+uv sync --frozen
 
-## 使い方
-
-```bash
-# GUIを起動
+# GUI起動
 uv run kaito
 
-# ファイルを指定して起動
-uv run kaito path/to/archive.zip
+# 品質ゲート
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv run pytest -ra
 
-# コンテキストメニュー登録（インストーラー利用時は不要）
-uv run kaito --install-context-menu
+# EXE
+uv run pyinstaller --clean --noconfirm build.spec
+.\dist\kaito.exe --self-test
+.\dist\kaito.exe --backend-info --json
 
-# コンテキストメニュー削除
-uv run kaito --uninstall-context-menu
+# Inno Setup 6インストーラー
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\kaito.iss
 ```
 
-### GUI操作
+## 診断CLI
 
-1. アーカイブファイルをドラッグ＆ドロップ、または「開く」ボタンで選択
-2. 展開先を指定（デフォルトはアーカイブ名のサブフォルダ）
-3. 「解凍する」で解凍開始
-4. 複数アーカイブは順次キューに追加され、一括解凍できます
-
-## 開発
-
-```bash
-# 依存関係をインストール
-uv sync
-
-# テストを実行
-uv run pytest
-
-# リンターを実行
-uv run ruff check src/
-
-# 型チェックを実行
-uv run pyright src/
-
-# Windows EXEビルド
-uv run pyinstaller build.spec
-
-# インストーラービルド（Inno Setup が必要）
-ISCC.exe installer\kaito.iss
+```powershell
+kaito.exe --version
+kaito.exe --self-test
+kaito.exe --backend-info
+kaito.exe --backend-info --json
 ```
+
+`--backend-info --json`は、バックエンドの取得元、実行パス、バージョン、SHA-256、整合性判定を機械可読形式で出力します。
 
 ## アーキテクチャ
 
-```
+```text
 src/kaito/
-  __main__.py        # CLIエントリポイント
-  unzip.py           # 後方互換用ラッパー
-  settings.py        # 設定管理（JSON保存 + スキーマ検証）
+  __main__.py
+  unzip.py
+  settings.py
   domain/
-    models.py        # ドメインモデル（ArchiveEntry, ArchiveInfo）
-    errors.py        # 例外定義（ArchiveError, UnsafeArchiveError 等）
+    models.py
+    errors.py
   archive/
-    service.py       # アーカイブ操作サービス（統一インターフェース）
-    zip_backend.py   # ZIPバックエンド（標準zipfile利用）
-    sevenzip_backend.py  # 7z/RARバックエンド（7-Zip CLI利用）
+    service.py
+    safety.py
+    zip_backend.py
+    sevenzip_backend.py
   gui/
-    unzip_app.py     # メインGUI（CustomTkinter）
-    settings_dialog.py  # 設定ダイアログ
+    unzip_app.py
+    settings_dialog.py
 ```
+
+GUIは`ArchiveService`を通じてバックエンドを利用します。ZIPとRAR/7zはどちらも一時ディレクトリへ展開され、展開後の実ファイルツリーを検証してから最終出力先へ移動されます。
 
 ## セキュリティ
 
-kaitoは以下のセキュリティ機構を実装しています：
+詳細は[`SECURITY.md`](SECURITY.md)を参照してください。
 
-- **パストラバーサル対策**: アーカイブ内の全エントリのパスを展開前に検証
-- **アーカイブ爆弾対策**: エントリ数・展開サイズ・圧縮率の上限チェック
-- **パスワード漏洩防止**: パスワードはメモリのみ保持、設定ファイルに保存しません
-- **外部ツール**: 7-Zip CLIを利用（パスワードはコマンドライン引数で安全に渡す）
+重要な残存リスクとして、7-Zip CLIの仕様上、暗号化アーカイブのパスワードは処理中のプロセス引数へ渡されます。kaitoはログ、例外、診断出力からパスワードを伏せ、永続保存もしませんが、同一Windowsユーザー権限の別プロセスから引数を参照される可能性までは排除できません。
 
-## 依存関係
+## 同梱コンポーネント
 
-| パッケージ | バージョン | ライセンス | 用途 |
-|-----------|-----------|-----------|------|
-| customtkinter | >=5.2.2 | MIT | GUI |
-| pillow | >=12.2.0 | MIT-CMU | 画像プレビュー |
-| platformdirs | >=4.10.0 | MIT | 設定ディレクトリ |
-| tkinterdnd2 | >=0.4.4.1 | MIT | ドラッグ＆ドロップ |
+kaitoは7-Zip 26.02の`7z.exe`と`7z.dll`を同梱します。
 
-### 外部ツール（同梱せず、ユーザーインストール）
+- ハッシュ: `bundled/SHA256SUMS`
+- 完全なライセンス通知: `bundled/7-ZIP-LICENSE.txt`
+- 第三者コンポーネント一覧: `THIRD_PARTY_NOTICES.md`
 
-| ツール | バージョン | ライセンス | 用途 |
-|-------|-----------|-----------|------|
-| 7-Zip | 25.00+ | LGPL | RAR/7zの一覧・展開・作成 |
+7z.dllにはGNU LGPL、BSD 2-Clause、BSD 3-Clause、およびunRAR制限の対象コードが含まれます。RAR圧縮アルゴリズムの再実装には使用しません。
+
+## テストデータ
+
+RAR E2Eテストには、固定コミットのlibarchive公式テストfixtureを使用しています。出典、ライセンス、uuencode入力とデコード後RARのSHA-256は`tests/fixtures/rar/`に記録されています。fixtureはリリース成果物には含まれません。
 
 ## 既知の制限
 
-- RAR形式の作成はサポートしていません
-- RAR/7zの処理には7-Zipのインストールが必要です
-- ZIP暗号化はZipCrypto/AESに対応（展開のみ）
-- 巨大なアーカイブ（10GB超）は展開前に警告されます
+- RAR作成には対応しません
+- 暗号化ZIPの作成には対応しません
+- 既存の同名ファイルを無確認で上書きしません
+- 既定の安全上限を超えるアーカイブは展開しません
+- 暗号化処理中の7-Zipプロセス引数露出リスクがあります
 
 ## ライセンス
 
-MIT License
-
-Copyright (c) 2026 kaenozu
+kaito本体はMIT Licenseです。第三者コンポーネントにはそれぞれのライセンスが適用されます。
