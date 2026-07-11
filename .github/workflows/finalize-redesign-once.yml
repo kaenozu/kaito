@@ -1,0 +1,50 @@
+name: Finalize archive redesign once
+
+on:
+  push:
+    branches: [feature/archive-redesign]
+    paths: [tools/finalize-redesign.trigger]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: feature/archive-redesign
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: uv python install 3.12
+      - name: Apply consistency updates
+        shell: pwsh
+        run: |
+          uv run python tools/finalize_redesign.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv sync --frozen
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run ruff format .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run ruff check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run ruff format --check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run pyright
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run pytest -ra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit finalized state
+        shell: pwsh
+        run: |
+          git rm tools/finalize_redesign.py tools/finalize-redesign.trigger .github/workflows/finalize-redesign-once.yml .github/workflows/source-package-diagnostic.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m 'chore: finalize archive redesign release candidate'
+          git push origin HEAD:feature/archive-redesign
