@@ -12,7 +12,7 @@ from typing import Callable
 
 
 def _version() -> str:
-    from kaito.gui.unzip_app import __version__
+    from kaito.version import __version__
 
     return __version__
 
