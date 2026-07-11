@@ -11,14 +11,14 @@ permissions:
 jobs:
   verify-build-release:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72 # v5.3.0
 
       - name: Set up Python 3.12
         run: uv python install 3.12
@@ -37,6 +37,11 @@ jobs:
           if ($projectVersion -match '(dev|a|b|rc)') {
             throw "Prerelease version cannot be published by the stable release workflow: $projectVersion"
           }
+          "KAITO_VERSION=$projectVersion" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Prepare artifacts directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 
       - name: Verify bundled 7-Zip checksums
         shell: pwsh
@@ -46,9 +51,10 @@ jobs:
               $expected = $Matches[1]
               $name = $Matches[2].Trim()
               $path = Join-Path bundled $name
-              if (-not (Test-Path $path)) { throw "Missing bundled file: $path" }
+              if (-not (Test-Path $path -PathType Leaf)) { throw "Missing bundled file: $path" }
               $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
               if ($actual -ne $expected) { throw "Hash mismatch for $path: $actual" }
+              "$actual  $name" | Add-Content artifacts/bundled-sha256.txt -Encoding ascii
             }
           }
 
@@ -61,7 +67,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run pyright
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run pytest -ra
+          uv run pytest -ra --junitxml=artifacts/test-results.xml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build executable
@@ -71,100 +77,51 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path 'dist/kaito.exe').Path
-          $versionFile = Join-Path $env:RUNNER_TEMP 'release-version.txt'
-          $selfTestFile = Join-Path $env:RUNNER_TEMP 'release-self-test.txt'
-          $backendFile = Join-Path $env:RUNNER_TEMP 'release-backend.json'
+          $versionFile = (Resolve-Path artifacts).Path + '\release-version.txt'
+          $selfTestFile = (Resolve-Path artifacts).Path + '\release-self-test.txt'
+          $backendFile = (Resolve-Path artifacts).Path + '\release-backend.json'
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Version process failed: $($process.ExitCode)" }
           $version = Get-Content $versionFile -Raw
-          if ($version -notmatch '^kaito ') { throw "Version output failed: $version" }
+          if ($version.Trim() -ne "kaito $env:KAITO_VERSION") { throw "Version output failed: $version" }
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', '--output', $selfTestFile) -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Self-test process failed: $($process.ExitCode)" }
-          $selfTest = Get-Content $selfTestFile -Raw
-          if ($selfTest -notmatch 'All checks passed') { throw "Self-test failed: $selfTest" }
+          if ((Get-Content $selfTestFile -Raw) -notmatch 'All checks passed') { throw 'Self-test failed' }
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--backend-info', '--json', '--output', $backendFile) -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Backend-info process failed: $($process.ExitCode)" }
-          $info = (Get-Content $backendFile -Raw) | ConvertFrom-Json
+          $info = Get-Content $backendFile -Raw | ConvertFrom-Json
           if ($info.source -ne 'bundled' -or $info.version -ne '26.02' -or $info.integrity -ne 'ok' -or $info.sha256 -ne $info.expected_sha256) {
             throw "Backend verification failed: $($info | ConvertTo-Json -Compress)"
           }
 
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --yes --no-progress
-
-      - name: Build and smoke-test installer
-        shell: pwsh
         run: |
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed: $LASTEXITCODE" }
+          }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
-          & $iscc 'installer/kaito.iss'
+          "ISCC_PATH=$iscc" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & $env:ISCC_PATH "/DMyAppVersion=$env:KAITO_VERSION" 'installer/kaito.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+          $installer = Get-ChildItem 'dist/kaito-installer-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $installer) { throw 'Installer output not found' }
+          "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
 
-          $installer = (Get-ChildItem 'dist/kaito-installer-*.exe' | Select-Object -First 1).FullName
-          if (-not $installer) { throw 'Installer output not found' }
-          $installDir = Join-Path $env:RUNNER_TEMP 'kaito release 検証'
-          $installLog = Join-Path $env:RUNNER_TEMP 'kaito-release-install.log'
-          $uninstallLog = Join-Path $env:RUNNER_TEMP 'kaito-release-uninstall.log'
-          $installedSelfTestFile = Join-Path $env:RUNNER_TEMP 'installed-self-test.txt'
-          $installedBackendFile = Join-Path $env:RUNNER_TEMP 'installed-backend.json'
+      - name: Test install, registry integration, and uninstall
+        shell: pwsh
+        run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
 
-          $installArgs = @(
-            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER',
-            "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
-          )
-          $install = Start-Process $installer -ArgumentList $installArgs -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
-
-          $installedExe = Join-Path $installDir 'kaito.exe'
-          foreach ($required in @(
-            $installedExe,
-            (Join-Path $installDir 'LICENSE'),
-            (Join-Path $installDir 'SECURITY.md'),
-            (Join-Path $installDir 'THIRD_PARTY_NOTICES.md'),
-            (Join-Path $installDir 'licenses/7-ZIP-LICENSE.txt'),
-            (Join-Path $installDir 'licenses/SHA256SUMS')
-          )) {
-            if (-not (Test-Path $required)) { throw "Installed file missing: $required" }
-          }
-
-          $process = Start-Process -FilePath $installedExe -ArgumentList @('--self-test', '--output', $installedSelfTestFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Installed self-test process failed: $($process.ExitCode)" }
-          if ((Get-Content $installedSelfTestFile -Raw) -notmatch 'All checks passed') { throw 'Installed self-test failed' }
-
-          $process = Start-Process -FilePath $installedExe -ArgumentList @('--backend-info', '--json', '--output', $installedBackendFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Installed backend-info process failed: $($process.ExitCode)" }
-          $info = (Get-Content $installedBackendFile -Raw) | ConvertFrom-Json
-          if ($info.source -ne 'bundled' -or $info.integrity -ne 'ok') { throw 'Installed backend verification failed' }
-
-          $extractKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
-            "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract"
-          }
-          foreach ($key in $extractKeys) {
-            if (-not (Test-Path $key)) { throw "Context-menu key missing: $key" }
-          }
-          if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_extract') {
-            throw 'Extract action must not be registered for .txt'
-          }
-
-          $uninstaller = Join-Path $installDir 'unins000.exe'
-          $uninstallArgs = @(
-            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
-            "/LOG=`"$uninstallLog`""
-          )
-          $uninstall = Start-Process $uninstaller -ArgumentList $uninstallArgs -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed: $($uninstall.ExitCode)" }
-          Start-Sleep -Seconds 2
-          foreach ($key in $extractKeys) {
-            if (Test-Path $key) { throw "Context-menu key remained after uninstall: $key" }
-          }
-
-          "KAITO_INSTALLER=$installer" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Generate checksums
+      - name: Generate release checksums
         shell: pwsh
         run: |
           $files = @('dist/kaito.exe', $env:KAITO_INSTALLER)
@@ -174,8 +131,18 @@ jobs:
           }
           $lines | Set-Content 'dist/SHA256SUMS' -Encoding ascii
 
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b720449be5f6b2d10e2c0b8e3 # v4.6.2
+        with:
+          name: kaito-release-verification
+          path: |
+            artifacts/
+            dist/kaito.exe
+            dist/kaito-installer-*.exe
+            dist/SHA256SUMS
+
       - name: Publish GitHub release assets
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@a929a66e1e0e1b1e56bf3fd6b0b1bdbdffb6b021 # v2.1.0
         with:
           files: |
             dist/kaito.exe
