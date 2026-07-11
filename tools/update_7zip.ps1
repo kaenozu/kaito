@@ -18,7 +18,7 @@ $ExistingExtractor = Join-Path $BundledDir '7z.exe'
 if (-not (Test-Path $ExistingExtractor)) {
     throw "Existing bundled extractor is required to unpack the official installer: $ExistingExtractor"
 }
-if ($ExpectedPackageSha256 -eq '__SET_BY_VERIFIED_WORKFLOW__') {
+if ($ExpectedPackageSha256.StartsWith('__SET_')) {
     throw 'The source package SHA-256 has not been fixed yet'
 }
 
