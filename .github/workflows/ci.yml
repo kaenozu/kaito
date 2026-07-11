@@ -77,18 +77,30 @@ jobs:
       - name: Smoke-test executable and bundled backend
         shell: pwsh
         run: |
-          $exe = Resolve-Path 'dist/kaito.exe'
-          $version = & $exe --version
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^kaito ') { throw "Version check failed: $version" }
-          $selfTest = & $exe --self-test 2>&1
-          if ($LASTEXITCODE -ne 0 -or $selfTest -notmatch 'All checks passed') { throw "Self-test failed: $selfTest" }
-          $json = (& $exe --backend-info --json) -join "`n"
-          if ($LASTEXITCODE -ne 0) { throw "backend-info failed: $json" }
-          $info = $json | ConvertFrom-Json
+          $exe = (Resolve-Path 'dist/kaito.exe').Path
+          $versionFile = Join-Path $env:RUNNER_TEMP 'kaito-version.txt'
+          $selfTestFile = Join-Path $env:RUNNER_TEMP 'kaito-self-test.txt'
+          $backendFile = Join-Path $env:RUNNER_TEMP 'kaito-backend.json'
+
+          $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $versionFile)) { throw "Version command failed: $($process.ExitCode)" }
+          $version = Get-Content $versionFile -Raw
+          if ($version -notmatch '^kaito ') { throw "Version check failed: $version" }
+
+          $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', '--output', $selfTestFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $selfTestFile)) { throw "Self-test process failed: $($process.ExitCode)" }
+          $selfTest = Get-Content $selfTestFile -Raw
+          if ($selfTest -notmatch 'All checks passed') { throw "Self-test failed: $selfTest" }
+
+          $process = Start-Process -FilePath $exe -ArgumentList @('--backend-info', '--json', '--output', $backendFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $backendFile)) { throw "backend-info process failed: $($process.ExitCode)" }
+          $info = (Get-Content $backendFile -Raw) | ConvertFrom-Json
           if (-not $info.available) { throw 'Bundled backend unavailable' }
           if ($info.source -ne 'bundled') { throw "Unexpected backend source: $($info.source)" }
           if ($info.version -ne '26.02') { throw "Unexpected 7-Zip version: $($info.version)" }
           if ($info.integrity -ne 'ok' -or $info.sha256 -ne $info.expected_sha256) { throw 'Bundled backend integrity failed' }
+
+          @($version, $selfTest, ($info | ConvertTo-Json -Compress)) | Set-Content smoke-output.txt -Encoding utf8
 
       - name: Install Inno Setup
         shell: pwsh
@@ -120,9 +132,16 @@ jobs:
           foreach ($required in @($installedExe, (Join-Path $installDir 'SECURITY.md'), (Join-Path $installDir 'THIRD_PARTY_NOTICES.md'), (Join-Path $installDir 'licenses/7-ZIP-LICENSE.txt'), (Join-Path $installDir 'licenses/SHA256SUMS'))) {
             if (-not (Test-Path $required)) { throw "Installed file missing: $required" }
           }
-          $selfTest = & $installedExe --self-test 2>&1
-          if ($LASTEXITCODE -ne 0 -or $selfTest -notmatch 'All checks passed') { throw "Installed self-test failed: $selfTest" }
-          $info = ((& $installedExe --backend-info --json) -join "`n") | ConvertFrom-Json
+
+          $installedSelfTestFile = Join-Path $env:RUNNER_TEMP 'kaito-installed-self-test.txt'
+          $installedBackendFile = Join-Path $env:RUNNER_TEMP 'kaito-installed-backend.json'
+          $process = Start-Process -FilePath $installedExe -ArgumentList @('--self-test', '--output', $installedSelfTestFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installed self-test process failed: $($process.ExitCode)" }
+          $selfTest = Get-Content $installedSelfTestFile -Raw
+          if ($selfTest -notmatch 'All checks passed') { throw "Installed self-test failed: $selfTest" }
+          $process = Start-Process -FilePath $installedExe -ArgumentList @('--backend-info', '--json', '--output', $installedBackendFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installed backend-info process failed: $($process.ExitCode)" }
+          $info = (Get-Content $installedBackendFile -Raw) | ConvertFrom-Json
           if ($info.source -ne 'bundled' -or $info.integrity -ne 'ok') { throw 'Installed backend validation failed' }
 
           $extractKeys = @('.zip', '.rar', '.7z') | ForEach-Object { "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract" }
@@ -158,6 +177,7 @@ jobs:
             ruff-format.diff
             pytest-output.txt
             test-results.xml
+            smoke-output.txt
             dist/kaito.exe
             dist/kaito-installer-*.exe
             ${{ env.KAITO_INSTALL_LOG }}
