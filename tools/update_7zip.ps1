@@ -7,6 +7,7 @@ Set-StrictMode -Version Latest
 $Version = '26.02'
 $PackageUrl = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
 $LicenseUrl = 'https://raw.githubusercontent.com/ip7z/7zip/26.02/DOC/License.txt'
+$ExpectedPackageSha256 = '__SET_BY_VERIFIED_WORKFLOW__'
 $ExpectedExeSha256 = '83967f1b02b43c4efeda302795722c809e0e81b8307de73558d10484d5676a7d'
 $ExpectedDllSha256 = '69fd4df057985c40e510e2fac182881c7f85e90aa13ec703f763a8fdb2ce61f8'
 
@@ -16,6 +17,9 @@ $ExistingExtractor = Join-Path $BundledDir '7z.exe'
 
 if (-not (Test-Path $ExistingExtractor)) {
     throw "Existing bundled extractor is required to unpack the official installer: $ExistingExtractor"
+}
+if ($ExpectedPackageSha256 -eq '__SET_BY_VERIFIED_WORKFLOW__') {
+    throw 'The source package SHA-256 has not been fixed yet'
 }
 
 $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("kaito-7zip-update-" + [guid]::NewGuid())
@@ -37,6 +41,9 @@ try {
     Write-Host "Signer: $($Signature.SignerCertificate.Subject)"
 
     $PackageHash = (Get-FileHash $PackagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($PackageHash -ne $ExpectedPackageSha256) {
+        throw "Source package hash mismatch: $PackageHash"
+    }
     Write-Host "Source package SHA-256: $PackageHash"
 
     & $ExistingExtractor x $PackagePath "-o$ExtractDir" -y | Out-Host
@@ -92,7 +99,7 @@ try {
     }
 
     Write-Host "Updated bundled 7-Zip $Version successfully."
-    Write-Host "Package SHA-256 (record this when reviewing the update): $PackageHash"
+    Write-Host "Source package SHA-256: $PackageHash"
     Write-Host "7z.exe SHA-256: $ExeHash"
     Write-Host "7z.dll SHA-256: $DllHash"
 }
