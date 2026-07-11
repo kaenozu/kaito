@@ -40,23 +40,23 @@ class ArchiveInfo:
     path: Path
     entries: list[ArchiveEntry]
     is_encrypted: bool
-    format_name: str  # "zip", "7z", "rar"
+    format_name: str
 
     @property
     def total_size(self) -> int:
-        return sum(e.size for e in self.entries)
+        return sum(entry.size for entry in self.entries)
 
     @property
     def total_compressed_size(self) -> int:
-        return sum(e.compressed_size for e in self.entries)
+        return sum(entry.compressed_size for entry in self.entries)
 
     @property
     def file_count(self) -> int:
-        return sum(1 for e in self.entries if e.is_file)
+        return sum(1 for entry in self.entries if entry.is_file)
 
     @property
     def dir_count(self) -> int:
-        return sum(1 for e in self.entries if e.is_dir)
+        return sum(1 for entry in self.entries if entry.is_dir)
 
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -67,13 +67,13 @@ ProgressCallback = Callable[[int, int, str], None]
 class SafetyLimits:
     """安全性制限の設定"""
 
-    max_total_size: int = 10 * 1024 * 1024 * 1024  # 10GB
-    max_single_file_size: int = 2 * 1024 * 1024 * 1024  # 2GB
+    max_total_size: int = 10 * 1024 * 1024 * 1024
+    max_single_file_size: int = 2 * 1024 * 1024 * 1024
     max_entries: int = 100000
     max_compression_ratio: float = 1000.0
     max_path_length: int = 260
-    preview_max_size: int = 10 * 1024 * 1024  # 10MB
-    preview_max_image_pixels: int = 4000 * 3000  # 12MP
+    preview_max_size: int = 10 * 1024 * 1024
+    preview_max_image_pixels: int = 4000 * 3000
     extraction_timeout_seconds: float = 300.0
 
 
@@ -83,11 +83,10 @@ class ExtractionOptions:
 
     dest_dir: Path
     password: Optional[str] = None
-    members: Optional[list[str]] = None  # None = 全展開
+    members: Optional[list[str]] = None
     on_progress: Optional[ProgressCallback] = None
-    # 安全性チェック用
-    max_total_size: int = 10 * 1024 * 1024 * 1024  # 10GB
-    max_file_size: int = 2 * 1024 * 1024 * 1024  # 2GB
+    max_total_size: int = 10 * 1024 * 1024 * 1024
+    max_file_size: int = 2 * 1024 * 1024 * 1024
     max_entries: int = 100000
     max_compression_ratio: float = 1000.0
 
@@ -98,38 +97,30 @@ class CompressionOptions:
 
     sources: list[Path]
     output_path: Path
-    compression_level: int = 1  # 0=無圧縮, 1=最速, 9=最高圧縮
+    compression_level: int = 1
     password: Optional[str] = None
     on_progress: Optional[ProgressCallback] = None
 
 
 class ArchiveBackend:
-    """アーカイブバックエンドのプロトコル (インターフェース)"""
+    """アーカイブバックエンドのインターフェース。"""
 
     def list_archive(self, path: Path, password: Optional[str] = None) -> ArchiveInfo:
-        """アーカイブ内容を取得"""
         raise NotImplementedError
 
     def extract(self, path: Path, options: ExtractionOptions) -> None:
-        """アーカイブを展開"""
         raise NotImplementedError
 
     def create(self, options: CompressionOptions) -> None:
-        """アーカイブを作成 (ZIP, 7zのみ対応)"""
         raise NotImplementedError
 
     def check_tool_availability(self) -> tuple[bool, Optional[str]]:
-        """必要な外部ツールが利用可能か確認
-        Returns: (available, tool_name_if_unavailable)
-        """
         raise NotImplementedError
 
     def supports_format(self, extension: str) -> bool:
-        """このバックエンドが対応する拡張子か"""
         raise NotImplementedError
 
     def supports_creation(self, extension: str) -> bool:
-        """この拡張子の作成をサポートしているか"""
         raise NotImplementedError
 
 
@@ -145,8 +136,10 @@ _WINDOWS_RESERVED_NAMES = {
 
 def _normalized_archive_parts(name: str) -> tuple[str, ...]:
     """アーカイブ内部パスをOS非依存の相対パス部品へ正規化する。"""
-    if not name or "\x00" in name:
-        raise UnsafeArchiveError("空またはNULを含むエントリ名は許可されません")
+    if not name:
+        raise UnsafeArchiveError("空のエントリ名は許可されません")
+    if "\x00" in name:
+        raise UnsafeArchiveError("NULを含むエントリ名は許可されません")
 
     normalized = name.replace("\\", "/")
     if normalized.startswith("/") or normalized.startswith("//"):
@@ -167,7 +160,6 @@ def _normalized_archive_parts(name: str) -> tuple[str, ...]:
             raise UnsafeArchiveError(
                 f"代替データストリームを含むパスは許可されません: {name}"
             )
-        # Windowsでは末尾の空白・ピリオドが正規化され、別名衝突の原因になる。
         if part != part.rstrip(" ."):
             raise UnsafeArchiveError(
                 f"末尾に空白またはピリオドを含む名前は許可されません: {name}"
@@ -178,17 +170,17 @@ def _normalized_archive_parts(name: str) -> tuple[str, ...]:
         parts.append(part)
 
     if not parts:
-        raise UnsafeArchiveError("有効なパス要素を含まないエントリ名です")
+        raise UnsafeArchiveError("空のエントリ名は許可されません")
     return tuple(parts)
 
 
 def validate_entry_path(name: str, dest_dir: Path) -> Path:
     """安全なアーカイブ内部パスだけを展開先配下へ解決する。"""
     parts = _normalized_archive_parts(name)
-    dest_resolved = dest_dir.resolve(strict=False)
-    target = dest_resolved.joinpath(*parts).resolve(strict=False)
+    destination = dest_dir.resolve(strict=False)
+    target = destination.joinpath(*parts).resolve(strict=False)
     try:
-        target.relative_to(dest_resolved)
+        target.relative_to(destination)
     except ValueError as exc:
         raise UnsafeArchiveError(f"安全でないパスが含まれています: {name}") from exc
     return target
@@ -199,11 +191,11 @@ def is_reparse_or_link(path: Path) -> bool:
     if path.is_symlink():
         return True
     try:
-        attrs = path.lstat().st_file_attributes  # type: ignore[attr-defined]
+        attributes = path.lstat().st_file_attributes  # type: ignore[attr-defined]
     except (AttributeError, FileNotFoundError, OSError):
         return False
     reparse_flag = getattr(os.stat_result, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-    return bool(attrs & reparse_flag)
+    return bool(attributes & reparse_flag)
 
 
 def check_archive_safety(
@@ -245,7 +237,9 @@ def check_archive_safety(
             actual_value=total_size,
         )
 
-    total_compressed = sum(e.compressed_size for e in entries if e.compressed_size > 0)
+    total_compressed = sum(
+        entry.compressed_size for entry in entries if entry.compressed_size > 0
+    )
     if total_compressed > 0:
         ratio = total_size / total_compressed
         if ratio > options.max_compression_ratio:
