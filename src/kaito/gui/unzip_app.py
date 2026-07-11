@@ -5,8 +5,6 @@ CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 関連: archive/service.py, settings.py, settings_dialog.py
 """
 
-__version__ = "0.9.1.dev0"
-
 import io
 import locale
 import re
@@ -38,8 +36,10 @@ from kaito.domain.models import (
     ArchiveEntry,
     CompressionOptions,
     ExtractionOptions,
+    SafetyLimits,
 )
 from kaito.settings import SettingsManager
+from kaito.version import __version__
 from kaito.gui.settings_dialog import SettingsDialog
 
 _DROP_BORDER_COLOR = "#3a7ebf"
@@ -99,16 +99,29 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._tree_poll_id: Optional[str] = None
         self._recent_display_to_path: dict[str, str] = {}
 
-        # サービス層
-        self._archive_service = ArchiveService()
+        # 設定とサービス層
+        self._settings = SettingsManager()
+        self._archive_service = ArchiveService(
+            safety_limits=SafetyLimits(
+                max_entries=int(self._settings.get("safety_max_entries")),
+                max_total_size=int(self._settings.get("safety_max_total_size")),
+                max_single_file_size=int(
+                    self._settings.get("safety_max_file_size")
+                ),
+                max_compression_ratio=float(
+                    self._settings.get("safety_max_compression_ratio")
+                ),
+                max_path_length=int(
+                    self._settings.get("safety_max_path_length")
+                ),
+            )
+        )
 
         # パスワード管理 (アーカイブ単位、メモリ保持のみ)
         self._passwords: dict[str, str] = {}
         self._failed_passwords: set[str] = set()
 
         self._build_ui()
-
-        self._settings = SettingsManager()
 
         self._apply_tree_style()
         self._start_theme_poll()
