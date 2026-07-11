@@ -1,0 +1,66 @@
+name: Finish archive redesign cleanup
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: archive-redesign-finalization
+  cancel-in-progress: false
+
+jobs:
+  finish:
+    if: github.head_ref == 'feature/archive-redesign'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: feature/archive-redesign
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: uv python install 3.12
+      - name: Complete finalization when still pending
+        shell: pwsh
+        run: |
+          if (Test-Path 'tools/finalize_redesign.py') {
+            uv run python tools/finalize_redesign.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv lock
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv sync --frozen
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv run ruff format .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv run ruff check .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv run ruff format --check .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv run pyright
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            uv run pytest -ra
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Remove temporary automation and diagnostics
+        shell: pwsh
+        run: |
+          git rm -r --ignore-unmatch diagnostics
+          git rm --ignore-unmatch `
+            tools/finalize_redesign.py `
+            tools/finalize-redesign.trigger `
+            tools/finish-cleanup.trigger `
+            .github/workflows/finalize-redesign-once.yml `
+            .github/workflows/finalizer-diagnostic.yml `
+            .github/workflows/source-package-diagnostic.yml `
+            .github/workflows/finish-cleanup-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          git commit -m 'chore: finalize and clean archive redesign branch'
+          git push origin HEAD:feature/archive-redesign
