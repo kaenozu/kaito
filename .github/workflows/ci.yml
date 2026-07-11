@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, "feature/**"]
+    branches: [main, "feature/**"]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 permissions:
   contents: read
@@ -24,8 +24,32 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Regenerate lockfile for review
+        shell: pwsh
+        run: |
+          uv lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item uv.lock uv.lock.generated
+
       - name: Install locked dependencies
         run: uv sync --frozen
+
+      - name: Capture signed 7-Zip source package identity
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
+          $package = Join-Path $env:RUNNER_TEMP '7z2602-x64.exe'
+          Invoke-WebRequest -Uri $url -OutFile $package -UseBasicParsing
+          $signature = Get-AuthenticodeSignature $package
+          if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature: $($signature.Status)" }
+          if ($signature.SignerCertificate.Subject -notmatch 'Igor Pavlov') { throw "Unexpected signer: $($signature.SignerCertificate.Subject)" }
+          $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "Source: $url"
+            "Signer: $($signature.SignerCertificate.Subject)"
+            "SHA-256: $hash"
+          ) | Set-Content '7zip-source-package.txt' -Encoding utf8
+          Get-Content '7zip-source-package.txt'
 
       - name: Verify bundled 7-Zip checksums
         shell: pwsh
@@ -129,7 +153,7 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
 
           $installedExe = Join-Path $installDir 'kaito.exe'
-          foreach ($required in @($installedExe, (Join-Path $installDir 'SECURITY.md'), (Join-Path $installDir 'THIRD_PARTY_NOTICES.md'), (Join-Path $installDir 'licenses/7-ZIP-LICENSE.txt'), (Join-Path $installDir 'licenses/SHA256SUMS'))) {
+          foreach ($required in @($installedExe, (Join-Path $installDir 'LICENSE'), (Join-Path $installDir 'SECURITY.md'), (Join-Path $installDir 'THIRD_PARTY_NOTICES.md'), (Join-Path $installDir 'licenses/7-ZIP-LICENSE.txt'), (Join-Path $installDir 'licenses/SHA256SUMS'))) {
             if (-not (Test-Path $required)) { throw "Installed file missing: $required" }
           }
 
@@ -173,6 +197,8 @@ jobs:
           name: kaito-windows-verification
           if-no-files-found: warn
           path: |
+            uv.lock.generated
+            7zip-source-package.txt
             bundled-actual-sha256.txt
             ruff-format.diff
             pytest-output.txt
