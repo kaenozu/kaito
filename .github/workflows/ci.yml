@@ -75,7 +75,12 @@ jobs:
         run: uv run ruff check .
 
       - name: Format check
-        run: uv run ruff format --check .
+        shell: pwsh
+        run: |
+          $output = & uv run ruff format --check --diff . 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/ruff-format.diff
+          exit $code
 
       - name: Type check
         run: uv run pyright
