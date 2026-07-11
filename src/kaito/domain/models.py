@@ -6,9 +6,10 @@ src/kaito/domain/models.py
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
 from kaito.domain.errors import ArchiveBombError, UnsafeArchiveError
@@ -24,10 +25,12 @@ class ArchiveEntry:
     modified: datetime
     is_dir: bool
     is_encrypted: bool = False
+    is_link: bool = False
+    link_target: Optional[str] = None
 
     @property
     def is_file(self) -> bool:
-        return not self.is_dir
+        return not self.is_dir and not self.is_link
 
 
 @dataclass(frozen=True)
@@ -130,97 +133,83 @@ class ArchiveBackend:
         raise NotImplementedError
 
 
-def validate_entry_path(name: str, dest_dir: Path) -> Path:
-    """アーカイブエントリ名のパストラバーサルをチェックし、安全な出力先パスを返す
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
-    拒否対象:
-    - 絶対パス (/ や \\\\ で始まる)
-    - Windowsドライブパス (C:\\ 等)
-    - UNCパス (\\\\server\\share)
-    - 親ディレクトリ参照 (..)
-    - 空パス
-    - 正規化後に展開先外へ出るパス
-    - Windows予約デバイス名 (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    """
-    if not name:
-        raise UnsafeArchiveError("空のエントリ名は許可されません")
 
-    # Windows ドライブパス (C:\ など) を拒否
-    if len(name) >= 2 and name[1] == ":":
+def _normalized_archive_parts(name: str) -> tuple[str, ...]:
+    """アーカイブ内部パスをOS非依存の相対パス部品へ正規化する。"""
+    if not name or "\x00" in name:
+        raise UnsafeArchiveError("空またはNULを含むエントリ名は許可されません")
+
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or normalized.startswith("//"):
+        raise UnsafeArchiveError(f"絶対パスまたはUNCパスは許可されません: {name}")
+    if len(normalized) >= 2 and normalized[1] == ":":
         raise UnsafeArchiveError(f"Windowsドライブパスは許可されません: {name}")
 
-    # 絶対パス (/ や \ で始まる) を拒否
-    if name.startswith("/") or name.startswith("\\"):
-        raise UnsafeArchiveError(f"絶対パスは許可されません: {name}")
-
-    # UNCパス (\\server\share) を拒否
-    if name.startswith("\\\\"):
-        raise UnsafeArchiveError(f"UNCパスは許可されません: {name}")
-
-    # parent directory traversal (..) を拒否
-    # 正規化して各パーツをチェック
-    normalized = Path(name).as_posix()
-    for part in normalized.split("/"):
+    pure = PurePosixPath(normalized)
+    parts: list[str] = []
+    for part in pure.parts:
+        if part in {"", "."}:
+            continue
         if part == "..":
             raise UnsafeArchiveError(
                 f"親ディレクトリ参照を含むパスは許可されません: {name}"
             )
-        # 代替データストリーム (ADS) チェック
         if ":" in part:
             raise UnsafeArchiveError(
                 f"代替データストリームを含むパスは許可されません: {name}"
             )
-        # Windows予約デバイス名チェック (拡張子除去後)
-        base_part = part.split(".")[0].upper() if part else ""
-        if base_part in {
-            "CON",
-            "PRN",
-            "AUX",
-            "NUL",
-            "COM1",
-            "COM2",
-            "COM3",
-            "COM4",
-            "COM5",
-            "COM6",
-            "COM7",
-            "COM8",
-            "COM9",
-            "LPT1",
-            "LPT2",
-            "LPT3",
-            "LPT4",
-            "LPT5",
-            "LPT6",
-            "LPT7",
-            "LPT8",
-            "LPT9",
-        }:
+        # Windowsでは末尾の空白・ピリオドが正規化され、別名衝突の原因になる。
+        if part != part.rstrip(" ."):
+            raise UnsafeArchiveError(
+                f"末尾に空白またはピリオドを含む名前は許可されません: {name}"
+            )
+        base_part = part.split(".", 1)[0].upper()
+        if base_part in _WINDOWS_RESERVED_NAMES:
             raise UnsafeArchiveError(f"Windows予約デバイス名は許可されません: {name}")
+        parts.append(part)
 
-    # シンボリックリンクエントリを拒否
-    # (7zの-slt出力で確認、リンクは後続のresolveで保護される)
+    if not parts:
+        raise UnsafeArchiveError("有効なパス要素を含まないエントリ名です")
+    return tuple(parts)
 
-    # 展開先を解決して安全確認
-    target = (dest_dir / name).resolve()
-    dest_resolved = dest_dir.resolve()
-    if not str(target).startswith(str(dest_resolved)):
-        raise UnsafeArchiveError(f"安全でないパスが含まれています: {name}")
 
+def validate_entry_path(name: str, dest_dir: Path) -> Path:
+    """安全なアーカイブ内部パスだけを展開先配下へ解決する。"""
+    parts = _normalized_archive_parts(name)
+    dest_resolved = dest_dir.resolve(strict=False)
+    target = dest_resolved.joinpath(*parts).resolve(strict=False)
+    try:
+        target.relative_to(dest_resolved)
+    except ValueError as exc:
+        raise UnsafeArchiveError(f"安全でないパスが含まれています: {name}") from exc
     return target
+
+
+def is_reparse_or_link(path: Path) -> bool:
+    """既存パスがシンボリックリンクまたはWindows reparse pointか判定する。"""
+    if path.is_symlink():
+        return True
+    try:
+        attrs = path.lstat().st_file_attributes  # type: ignore[attr-defined]
+    except (AttributeError, FileNotFoundError, OSError):
+        return False
+    reparse_flag = getattr(os.stat_result, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attrs & reparse_flag)
 
 
 def check_archive_safety(
     entries: list[ArchiveEntry], options: ExtractionOptions
 ) -> None:
-    """アーカイブ全体の安全性を評価 (アーカイブ爆弾対策)
-
-    チェック項目:
-    - エントリ数上限
-    - 単一ファイルサイズ上限
-    - 合計展開サイズ上限
-    - 圧縮率 (圧縮後サイズ > 0 の場合)
-    """
+    """アーカイブ全体の安全性を評価する。"""
     if len(entries) > options.max_entries:
         raise ArchiveBombError(
             f"エントリ数が上限を超えています ({len(entries)} > {options.max_entries})",
@@ -231,6 +220,14 @@ def check_archive_safety(
 
     total_size = 0
     for entry in entries:
+        validate_entry_path(entry.name, options.dest_dir)
+        if entry.is_link:
+            target = f" -> {entry.link_target}" if entry.link_target else ""
+            raise UnsafeArchiveError(
+                f"リンクエントリは展開できません: {entry.name}{target}"
+            )
+        if entry.size < 0 or entry.compressed_size < 0:
+            raise UnsafeArchiveError(f"不正なサイズ情報です: {entry.name}")
         if entry.size > options.max_file_size:
             raise ArchiveBombError(
                 f"単一ファイルサイズが上限を超えています: {entry.name} ({entry.size} > {options.max_file_size})",
@@ -248,7 +245,6 @@ def check_archive_safety(
             actual_value=total_size,
         )
 
-    # 圧縮率チェック (圧縮後サイズが取得できている場合)
     total_compressed = sum(e.compressed_size for e in entries if e.compressed_size > 0)
     if total_compressed > 0:
         ratio = total_size / total_compressed
