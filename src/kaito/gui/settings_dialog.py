@@ -39,12 +39,16 @@ class SettingsDialog(ctk.CTkToplevel):
         self.grid_rowconfigure(3, weight=1)
 
         ctk.CTkLabel(
-            self, text="kaito の設定", font=ctk.CTkFont(size=20, weight="bold"),
+            self,
+            text="kaito の設定",
+            font=ctk.CTkFont(size=20, weight="bold"),
             anchor="w",
         ).grid(row=0, column=0, padx=24, pady=(22, 2), sticky="w")
         ctk.CTkLabel(
-            self, text="使い方に合わせて外観と圧縮速度を調整できます",
-            text_color=("#667085", "#a9b4c2"), anchor="w",
+            self,
+            text="使い方に合わせて外観と圧縮速度を調整できます",
+            text_color=("#667085", "#a9b4c2"),
+            anchor="w",
         ).grid(row=1, column=0, padx=24, pady=(0, 14), sticky="w")
 
         # --- テーマ ---
@@ -55,12 +59,12 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkLabel(theme_frame, text="テーマ:").grid(
             row=0, column=0, padx=(8, 4), pady=8, sticky="w"
         )
-        self._theme_var = ctk.StringVar(
-            value=self._settings.get("theme", "system")
-        )
+        self._theme_var = ctk.StringVar(value=self._settings.get("theme", "system"))
         self._theme_menu = ctk.CTkOptionMenu(
-            theme_frame, values=["system", "light", "dark"],
-            variable=self._theme_var, width=100,
+            theme_frame,
+            values=["system", "light", "dark"],
+            variable=self._theme_var,
+            width=100,
         )
         self._theme_menu.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="w")
 
@@ -72,12 +76,12 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkLabel(lang_frame, text="言語 / Language:").grid(
             row=0, column=0, padx=(8, 4), pady=8, sticky="w"
         )
-        self._lang_var = ctk.StringVar(
-            value=self._settings.get("language", "日本語")
-        )
+        self._lang_var = ctk.StringVar(value=self._settings.get("language", "日本語"))
         self._lang_menu = ctk.CTkOptionMenu(
-            lang_frame, values=["日本語", "English"],
-            variable=self._lang_var, width=100,
+            lang_frame,
+            values=["日本語", "English"],
+            variable=self._lang_var,
+            width=100,
         )
         self._lang_menu.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="w")
 
@@ -94,11 +98,14 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkOptionMenu(
             compression_frame,
             values=["最速（サイズ大）", "標準", "高圧縮（時間長）"],
-            variable=self._compression_var, width=170,
+            variable=self._compression_var,
+            width=170,
         ).grid(row=0, column=1, padx=(4, 12), pady=(10, 0), sticky="e")
         ctk.CTkLabel(
-            compression_frame, text="最速を選ぶと圧縮処理が軽くなります",
-            text_color=("#667085", "#a9b4c2"), anchor="w",
+            compression_frame,
+            text="最速を選ぶと圧縮処理が軽くなります",
+            text_color=("#667085", "#a9b4c2"),
+            anchor="w",
         ).grid(row=1, column=0, columnspan=2, padx=12, pady=(2, 10), sticky="w")
 
         # --- ボタン ---
@@ -107,10 +114,14 @@ class SettingsDialog(ctk.CTkToplevel):
         btn_frame.grid_columnconfigure((0, 1), weight=0)
 
         ctk.CTkButton(btn_frame, text="キャンセル", command=self.destroy).grid(
-            row=0, column=0, padx=(0, 4),
+            row=0,
+            column=0,
+            padx=(0, 4),
         )
         ctk.CTkButton(btn_frame, text="保存", command=self._on_save).grid(
-            row=0, column=1, padx=(4, 0),
+            row=0,
+            column=1,
+            padx=(4, 0),
         )
 
     def _on_save(self) -> None:
@@ -126,8 +137,12 @@ class SettingsDialog(ctk.CTkToplevel):
         self.destroy()
 
     def _compression_label(self, level: object) -> str:
+        try:
+            i = int(str(level))
+        except (ValueError, TypeError):
+            i = 1
         return {1: "最速（サイズ大）", 6: "標準", 9: "高圧縮（時間長）"}.get(
-            int(level) if str(level).isdigit() else 1, "最速（サイズ大）"
+            i, "最速（サイズ大）"
         )
 
     def _compression_level(self) -> int:

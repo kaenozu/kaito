@@ -2,10 +2,10 @@
 src/kaito/gui/unzip_app.py
 CustomTkinterを使用したZIP/RAR/7z解凍・圧縮GUIアプリ
 ドラッグ&ドロップ対応 (tkinterdnd2)
-関連: unzip.py (解凍/圧縮コアロジック), settings_dialog.py
+関連: archive/service.py, settings.py, settings_dialog.py
 """
 
-__version__ = "0.9.3"
+__version__ = "0.9.1.dev0"
 
 import io
 import locale
@@ -13,57 +13,66 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 from threading import Thread
-from tkinter import filedialog, ttk
-from zipfile import BadZipFile
-try:
-    from winreg import (  # type: ignore[attr-defined]
-        CreateKeyEx,
-        DeleteKey,
-        EnumKey,
-        HKEY_CURRENT_USER,
-        KEY_SET_VALUE,
-        OpenKey,
-        QueryInfoKey,
-        REG_SZ,
-        SetValueEx,
-    )
-except ImportError:  # pragma: no cover
-    # Non-Windows: registry functions not available
-    pass
+from tkinter import filedialog, messagebox, ttk
+from typing import Optional
 
 from PIL import Image
 
 import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
 
-from kaito.settings import SettingsManager
-from kaito.unzip import (
-    ZipEntry,
-    create_archive,
-    extract_archive,
-    is_supported,
-    list_archive,
+from kaito.archive.service import ArchiveService
+from kaito.domain.errors import (
+    ArchiveError,
+    ArchiveBombError,
+    CancelledError,
+    ExternalToolNotFoundError,
+    InvalidPasswordError,
+    UnsafeArchiveError,
 )
-
+from kaito.domain.models import (
+    ArchiveEntry,
+    CompressionOptions,
+    ExtractionOptions,
+)
+from kaito.settings import SettingsManager
 from kaito.gui.settings_dialog import SettingsDialog
 
 _DROP_BORDER_COLOR = "#3a7ebf"
 _DROP_HIGHLIGHT_COLOR = "#1a6ebf"
 
-_TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json", ".xml", ".yml", ".yaml", ".ini", ".cfg", ".log", ".csv", ".toml"}
+_TEXT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".json",
+    ".xml",
+    ".yml",
+    ".yaml",
+    ".ini",
+    ".cfg",
+    ".log",
+    ".csv",
+    ".toml",
+}
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
 _MAX_PREVIEW_CHARS = 2000
-_MAX_IMAGE_DIMENSION = (400, 250)
+_MAX_PREVIEW_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
-    """ZIP解凍GUIメインウィンドウ"""
+    """アーカイブGUIメインウィンドウ"""
 
-    def __init__(self, cli_path: Path | None = None, cli_compress_path: Path | None = None) -> None:
+    def __init__(
+        self, cli_path: Optional[Path] = None, cli_compress_path: Optional[Path] = None
+    ) -> None:
         super().__init__()
 
         self.TkdndVersion = TkinterDnD._require(self)
@@ -72,23 +81,32 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.geometry("900x600")
         self.minsize(680, 460)
 
-        self._zip_path: Path | None = None
-        self._archive_paths: list[Path] = []
-        self._entries: list[ZipEntry] = []
+        # 状態管理
+        self._current_archive_path: Optional[Path] = None
+        self._archive_queue: list[Path] = []
+        self._entries: list[ArchiveEntry] = []
         self._is_encrypted = False
-        self._extracting = False
-        self._temp_dir: tempfile.TemporaryDirectory | None = None
-        self._current_image: ctk.CTkImage | None = None
+        self._is_busy = False
+
+        self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
+        self._current_image: Optional[ctk.CTkImage] = None
+        self._prev_preview_token = 0  # プレビュー選択変更検出
         self._compress_sources: list[Path] = []
-        self._compressing = False
         self._compress_no_dialog = False
-        self._extract_lock = threading.Lock()  # スレッドセーフティ用
+        self._tree_poll_id: Optional[str] = None
+        self._recent_display_to_path: dict[str, str] = {}
+
+        # サービス層
+        self._archive_service = ArchiveService()
+
+        # パスワード管理 (アーカイブ単位、メモリ保持のみ)
+        self._passwords: dict[str, str] = {}
+        self._failed_passwords: set[str] = set()
 
         self._build_ui()
 
         self._settings = SettingsManager()
 
-        self._tree_poll_id: str | None = None
         self._apply_tree_style()
         self._start_theme_poll()
 
@@ -97,39 +115,45 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._refresh_recent_menu()
 
-        # ウィンドウ全体をドロップターゲットに設定
+        # ドラッグ&ドロップ設定
         self.drop_target_register("*")
         self.dnd_bind("<<Drop>>", self._on_drop)
         self.dnd_bind("<<DragEnter>>", self._on_drag_enter)
         self.dnd_bind("<<DragLeave>>", self._on_drag_leave)
 
-        # 起動時にファイルが渡されたら読み込む
+        # 終了確認
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # CLI引数
         if cli_path is not None:
             self._load_archive(cli_path)
 
-        # 起動時に圧縮対象が渡されたら圧縮フロー開始
         if cli_compress_path is not None:
             self._compress_sources = [cli_compress_path]
             self._compress_no_dialog = True
             self.after_idle(self._start_compress_flow)
 
-    def _build_ui(self) -> None:  # pragma: no cover
+    def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        # --- ZIPファイル選択 ---
+        # --- アーカイブ選択 ---
         file_frame = ctk.CTkFrame(self, corner_radius=12)
         file_frame.grid(row=0, column=0, padx=20, pady=(18, 6), sticky="ew")
         file_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            file_frame, text="アーカイブ", font=ctk.CTkFont(size=13, weight="bold"),
-        ).grid(
-            row=0, column=0, padx=(16, 8), pady=12, sticky="w"
-        )
+            file_frame,
+            text="アーカイブ",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).grid(row=0, column=0, padx=(16, 8), pady=12, sticky="w")
+
         self._path_var = ctk.StringVar()
         self._path_entry = ctk.CTkEntry(
-            file_frame, textvariable=self._path_var, state="readonly", height=36,
+            file_frame,
+            textvariable=self._path_var,
+            state="readonly",
+            height=36,
         )
         self._path_entry.grid(row=0, column=1, padx=4, pady=12, sticky="ew")
         self._browse_btn = ctk.CTkButton(
@@ -138,19 +162,25 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._browse_btn.grid(row=0, column=2, padx=(4, 8), pady=12)
 
         self._settings_btn = ctk.CTkButton(
-            file_frame, text="⚙ 設定", width=90, height=36, command=self._on_open_settings,
+            file_frame,
+            text="設定",
+            width=90,
+            height=36,
+            command=self._on_open_settings,
         )
         self._settings_btn.grid(row=0, column=3, padx=(0, 4), pady=12)
 
         self._recent_var = ctk.StringVar(value="最近のファイル")
         self._recent_menu = ctk.CTkOptionMenu(
-            file_frame, values=["最近のファイル"],
-            variable=self._recent_var, width=120,
+            file_frame,
+            values=["最近のファイル"],
+            variable=self._recent_var,
+            width=120,
             command=self._on_recent_selected,
         )
         self._recent_menu.grid(row=0, column=4, padx=(0, 16), pady=12)
 
-        # --- ドロップゾーン (ZIP未選択時) ---
+        # --- ドロップゾーン (未選択時) ---
         self._drop_frame = ctk.CTkFrame(
             self, border_width=1, border_color=_DROP_BORDER_COLOR, corner_radius=12
         )
@@ -160,16 +190,15 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._drop_label = ctk.CTkLabel(
             self._drop_frame,
-            text="ZIP/RAR/7zファイルをここにドラッグ&ドロップ\nまたは「参照」ボタンで選択",
+            text="アーカイブファイルをここにドラッグ&ドロップ\nまたは「開く」ボタンで選択",
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color="gray",
         )
         self._drop_label.grid(row=0, column=0, sticky="nsew")
 
-        # --- ファイル一覧 (ZIP読込後) ---
+        # --- ファイル一覧 (読込後) ---
         self._list_frame = ctk.CTkFrame(self, corner_radius=12)
         self._list_frame.grid_rowconfigure(1, weight=1)
-        self._list_frame.grid_columnconfigure(0, weight=0)
         self._list_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self._list_frame, text="内容:").grid(
@@ -178,8 +207,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._search_var = ctk.StringVar()
         self._search_entry = ctk.CTkEntry(
-            self._list_frame, textvariable=self._search_var,
-            placeholder_text="絞り込み...", height=24,
+            self._list_frame,
+            textvariable=self._search_var,
+            placeholder_text="絞り込み...",
+            height=24,
         )
         self._search_entry.grid(row=0, column=1, padx=(2, 8), pady=(6, 0), sticky="ew")
         self._search_entry.bind("<KeyRelease>", self._on_search_keyrelease)
@@ -214,7 +245,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # --- プレビュー ---
         self._preview_frame = ctk.CTkFrame(self._list_frame)
         self._preview_label = ctk.CTkLabel(
-            self._preview_frame, text="", anchor="w", justify="left",
+            self._preview_frame,
+            text="",
+            anchor="w",
+            justify="left",
             font=ctk.CTkFont(size=12),
         )
         self._preview_label.pack(fill="both", expand=True, padx=8, pady=4)
@@ -237,108 +271,152 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._dest_btn.grid(row=0, column=2, padx=(4, 8), pady=8)
 
+        # --- キュー情報 ---
+        self._queue_label = ctk.CTkLabel(
+            dest_frame,
+            text="",
+            anchor="w",
+        )
+        self._queue_label.grid(
+            row=1, column=0, columnspan=3, padx=8, pady=(0, 4), sticky="w"
+        )
+
         # --- プログレスバー＆ボタン ---
         bottom_frame = ctk.CTkFrame(self, corner_radius=12)
         bottom_frame.grid(row=3, column=0, padx=20, pady=(6, 18), sticky="ew")
         bottom_frame.grid_columnconfigure(2, weight=1)
 
         self._progress = ctk.CTkProgressBar(bottom_frame, mode="determinate")
-        self._progress.grid(row=0, column=0, columnspan=4, padx=8, pady=(8, 4), sticky="ew")
+        self._progress.grid(
+            row=0, column=0, columnspan=5, padx=8, pady=(8, 4), sticky="ew"
+        )
         self._progress.set(0)
         self._progress.grid_remove()
 
         self._open_on_done_var = ctk.BooleanVar(value=True)
         self._open_check = ctk.CTkCheckBox(
-            bottom_frame, text="完了後にフォルダを開く",
-            variable=self._open_on_done_var, onvalue=True, offvalue=False,
+            bottom_frame,
+            text="完了後にフォルダを開く",
+            variable=self._open_on_done_var,
+            onvalue=True,
+            offvalue=False,
         )
         self._open_check.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
 
         self._close_on_done_var = ctk.BooleanVar(value=False)
         self._close_check = ctk.CTkCheckBox(
-            bottom_frame, text="解凍後に閉じる",
-            variable=self._close_on_done_var, onvalue=True, offvalue=False,
+            bottom_frame,
+            text="完了後に閉じる",
+            variable=self._close_on_done_var,
+            onvalue=True,
+            offvalue=False,
         )
         self._close_check.grid(row=1, column=1, padx=(0, 8), pady=(0, 8), sticky="w")
+
+        self._cancel_btn = ctk.CTkButton(
+            bottom_frame,
+            text="キャンセル",
+            width=80,
+            height=36,
+            command=self._on_cancel,
+        )
+        self._cancel_btn.grid(row=2, column=0, padx=(8, 4), pady=(0, 8), sticky="w")
+        self._cancel_btn.grid_remove()
 
         self._status_var = ctk.StringVar(value="ファイルを選択してください")
         self._status_label = ctk.CTkLabel(
             bottom_frame, textvariable=self._status_var, anchor="w"
         )
-        self._status_label.grid(row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="w")
+        self._status_label.grid(
+            row=2, column=1, columnspan=2, padx=4, pady=(0, 8), sticky="w"
+        )
 
         self._compress_btn = ctk.CTkButton(
-            bottom_frame, text="圧縮する", width=100, height=36, command=self._on_compress
+            bottom_frame,
+            text="圧縮する",
+            width=100,
+            height=36,
+            command=self._on_compress,
         )
-        self._compress_btn.grid(row=2, column=2, padx=(4, 4), pady=(0, 8), sticky="e")
+        self._compress_btn.grid(row=2, column=3, padx=(4, 4), pady=(0, 8), sticky="e")
 
         self._extract_btn = ctk.CTkButton(
-            bottom_frame, text="解凍する", width=100, height=36, command=self._on_extract, state="disabled"
+            bottom_frame,
+            text="解凍する",
+            width=100,
+            height=36,
+            command=self._on_extract,
+            state="disabled",
         )
-        self._extract_btn.grid(row=2, column=3, padx=(4, 8), pady=(0, 8), sticky="e")
+        self._extract_btn.grid(row=2, column=4, padx=(4, 8), pady=(0, 8), sticky="e")
 
-        # 初期状態: 圧縮表示、解凍非表示
         self._extract_btn.grid_remove()
 
     @staticmethod
     def _resolve_mode() -> bool:
-        """現在の実際の外観モードがdarkかどうかを返す（systemを解決）"""
         mode = ctk.get_appearance_mode().lower()
         if mode == "system":
             try:
                 import darkdetect
+
                 return bool(darkdetect.isDark())
-            except ImportError:  # pragma: no cover
+            except ImportError:
                 return False
         return mode == "dark"
 
     def _apply_tree_style(self) -> None:
-        """外観モードに合わせてファイル一覧(Treeview)の色を設定"""
         is_dark = self._resolve_mode()
         style = ttk.Style()
         if is_dark:
             style.theme_use("clam")
-            style.configure("Treeview",
+            style.configure(
+                "Treeview",
                 background="#2b2b2b",
                 foreground="#dce4ee",
                 fieldbackground="#2b2b2b",
                 borderwidth=0,
             )
-            style.configure("Treeview.Heading",
+            style.configure(
+                "Treeview.Heading",
                 background="#333333",
                 foreground="#dce4ee",
                 relief="flat",
             )
-            style.map("Treeview",
+            style.map(
+                "Treeview",
                 background=[("selected", "#1f538d")],
                 foreground=[("selected", "#ffffff")],
             )
-            style.map("Treeview.Heading",
+            style.map(
+                "Treeview.Heading",
                 background=[("active", "#404040")],
             )
         else:
             style.theme_use("clam")
-            style.configure("Treeview",
+            style.configure(
+                "Treeview",
                 background="#ffffff",
                 foreground="#000000",
                 fieldbackground="#ffffff",
                 borderwidth=0,
             )
-            style.configure("Treeview.Heading",
+            style.configure(
+                "Treeview.Heading",
                 background="#f0f0f0",
                 foreground="#000000",
                 relief="flat",
             )
-            style.map("Treeview",
+            style.map(
+                "Treeview",
                 background=[("selected", "#e5f3ff")],
                 foreground=[("selected", "#000000")],
             )
-            style.map("Treeview.Heading",
+            style.map(
+                "Treeview.Heading",
                 background=[("active", "#e0e0e0")],
             )
 
     def _start_theme_poll(self) -> None:
-        """systemモード時にOSテーマ変更を検出してスタイルを更新"""
         self._stop_theme_poll()
         if ctk.get_appearance_mode().lower() != "system":
             return
@@ -366,26 +444,53 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._settings.set("theme", mode)
 
     def _on_open_settings(self) -> None:
-        """設定ダイアログを開く"""
         SettingsDialog(
             parent=self,
             settings=self._settings,
             on_theme_changed=self._on_theme_changed,
         )
 
-    def _on_recent_selected(self, name: str) -> None:
-        if name == "最近のファイル":
+    def _on_recent_selected(self, display_name: str) -> None:
+        if display_name == "最近のファイル":
             return
-        path = Path(name)
-        if path.exists():
-            self._load_archive(path)
+        real_path = self._recent_display_to_path.get(display_name)
+        if real_path is None:
+            return
+        path = Path(real_path)
+        if not path.exists():
+            # 存在しない履歴を除去
+            self._remove_missing_recent(real_path)
+            self._refresh_recent_menu()
+            self._show_error("ファイルが見つかりません", f"{real_path} は存在しません")
+            return
+        self._load_archive(path)
+
+    def _remove_missing_recent(self, path: str) -> None:
+        recent = self._settings.get("recent_files", [])
+        if path in recent:
+            recent.remove(path)
+            self._settings.set("recent_files", recent)
 
     def _refresh_recent_menu(self) -> None:
         files = self._settings.get("recent_files", [])
-        if files:
-            display_files = [_truncate_path(f) for f in files]
-            self._recent_menu.configure(values=display_files)
-            self._recent_var.set(display_files[0] if len(display_files) == 1 else "最近のファイル")
+        if not files:
+            self._recent_menu.configure(values=["最近のファイル"])
+            self._recent_var.set("最近のファイル")
+            return
+        self._recent_display_to_path.clear()
+        display_files = []
+        for f in files:
+            display = _truncate_path(f)
+            if display in self._recent_display_to_path:
+                display = f"{display} ({f})"
+            self._recent_display_to_path[display] = f
+            display_files.append(display)
+        # 「履歴を削除」を追加
+        display_files.append("履歴を削除")
+        self._recent_menu.configure(values=display_files)
+        self._recent_var.set(
+            display_files[0] if len(display_files) == 1 else "最近のファイル"
+        )
 
     def _on_drag_enter(self, _event: object = None) -> None:
         self._highlight_drop(True)
@@ -401,35 +506,78 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
 
     def _on_drop(self, event: object) -> None:
-        """ドラッグ&ドロップでファイルを受け取る（複数ファイル対応）
-        
-        アーカイブは読み込み、それ以外は圧縮候補として追加
-        """
+        """ドラッグ&ドロップでファイルを受け取る"""
         raw = getattr(event, "data", "")
         if not raw:
             return
-        paths = [p.strip("{}") for p in re.findall(r'\{[^}]+\}|\S+', raw)]
-        loaded = False
+        paths = [p.strip("{}") for p in re.findall(r"\{[^}]+\}|\S+", raw)]
+
+        archive_paths: list[Path] = []
         compress_candidates: list[Path] = []
+        unsupported_count = 0
+        nonexistent_count = 0
+        duplicate_count = 0
+
+        seen = set()
         for p in paths:
             path = Path(p)
             if not path.exists():
+                nonexistent_count += 1
                 continue
-            if is_supported(path) and self._zip_path is None:
-                if loaded:
-                    self._add_to_queue(path)
-                else:
-                    self._load_archive(path)
-                    loaded = True
-            elif not is_supported(path):
-                # 非アーカイブ → 圧縮候補
+            resolved = path.resolve()
+            if resolved in seen:
+                duplicate_count += 1
+                continue
+            seen.add(resolved)
+
+            if self._archive_service.is_supported(path):
+                archive_paths.append(path)
+            else:
                 compress_candidates.append(path)
-        if compress_candidates and self._zip_path is None:
+                unsupported_count += 1
+
+        # 結果表示
+        messages = []
+        if nonexistent_count > 0:
+            messages.append(f"{nonexistent_count}個のファイルが存在しません")
+        if duplicate_count > 0:
+            messages.append(f"{duplicate_count}個の重複を除外")
+        if unsupported_count > 0:
+            messages.append(
+                f"{unsupported_count}個の非対応ファイルは圧縮候補になります"
+            )
+        if archive_paths:
+            messages.append(f"{len(archive_paths)}個のアーカイブをキューに追加")
+
+        if not archive_paths and not compress_candidates:
+            self._show_error(
+                "ファイルを追加できません",
+                "; ".join(messages) if messages else "すべてのファイルが無効です",
+            )
+            return
+
+        # アーカイブが1つも読み込まれていない場合、最初の1つを読み込む
+        if self._current_archive_path is None and archive_paths:
+            self._load_archive(archive_paths.pop(0))
+
+        # 残りのアーカイブをキューに追加
+        for arch in archive_paths:
+            if arch not in self._archive_queue:
+                self._archive_queue.append(arch)
+
+        # キュー状態更新
+        self._update_queue_status()
+
+        # 非アーカイブ → 圧縮候補
+        if compress_candidates and self._current_archive_path is None:
             self._compress_sources = compress_candidates
-            self._status_var.set(f"{len(compress_candidates)}個のファイルを圧縮できます")
+            self._status_var.set(
+                f"{len(compress_candidates)}個のファイルを圧縮できます"
+            )
             self._start_compress_flow()
-        if loaded:
-            self._update_queue_status()
+
+        if messages:
+            self._show_info("ドロップ結果", "\n".join(messages))
 
     def _on_browse(self) -> None:
         path = filedialog.askopenfilename(
@@ -446,49 +594,57 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         self._load_archive(Path(path))
 
-    def _add_to_queue(self, path: Path) -> None:
-        self._archive_paths.append(path)
-
     def _update_queue_status(self) -> None:
-        q = len(self._archive_paths)
+        q = len(self._archive_queue)
         if q > 0:
-            current = self._status_var.get()
-            self._status_var.set(f"[{q}ファイル] {current}")
+            self._queue_label.configure(text=f"キュー: {q}個のアーカイブ待機")
+        else:
+            self._queue_label.configure(text="")
 
     def _load_archive(self, path: Path) -> None:
+        """アーカイブを読み込んで内容一覧を表示"""
         try:
-            self._entries, self._is_encrypted = list_archive(path)
-        except (BadZipFile, OSError, RuntimeError) as e:
-            self._status_var.set(f"エラー: ファイルを開けません ({e})")
+            info = self._archive_service.list_archive(path)
+            self._entries = info.entries
+            self._is_encrypted = info.is_encrypted
+        except ArchiveError as e:
             self._entries = []
+            self._is_encrypted = False
+            self._status_var.set(f"エラー: {e.user_message()}")
+            self._refresh_tree()
+            self._show_drop_zone()
+            self._extract_btn.configure(state="disabled")
+            return
+        except Exception as e:
+            self._entries = []
+            self._is_encrypted = False
+            self._status_var.set(f"エラー: ファイルを開けませんでした ({e})")
             self._refresh_tree()
             self._show_drop_zone()
             self._extract_btn.configure(state="disabled")
             return
 
-        # 新しいアーカイブを開くとき、前の一時展開をクリーンアップ
-        if self._temp_dir is not None:
-            self._temp_dir.cleanup()
-            self._temp_dir = None
+        # 前の一時展開をクリーンアップ
+        self._cleanup_temp_dir()
 
-        self._zip_path = path
-        self._archive_paths = [path]
+        self._current_archive_path = path
+        # キューに追加 (重複防止)
+        if path not in self._archive_queue:
+            self._archive_queue.append(path)
+        else:
+            # 先頭に移動
+            self._archive_queue.remove(path)
+            self._archive_queue.insert(0, path)
+
         self._search_var.set("")
 
-        # RAR/7zはプレビュー用に全展開しておく
-        if path.suffix.lower() in {".rar", ".7z"}:
-            self._temp_dir = tempfile.TemporaryDirectory()
-            try:
-                import patoolib
-                patoolib.extract_archive(str(path), outdir=self._temp_dir.name)
-            except (RuntimeError, OSError) as e:
-                self._status_var.set(f"警告: RAR/7zのプレビューを展開できません ({e})")
+        # プレビュー事前展開は行わない (7z CLI で都度読み込む)
         self._path_var.set(str(path))
         self._settings.add_recent_file(str(path))
         self._refresh_recent_menu()
 
-        # 展開先のデフォルト: アーカイブと同じディレクトリ/ファイル名
-        self._dest_var.set(str(path.parent / path.stem))
+        # 展開先のデフォルト
+        self._update_dest_display()
 
         total_size = sum(e.size for e in self._entries)
         self._refresh_tree()
@@ -500,25 +656,43 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             f"{len(self._entries)} 個のエントリ ({_format_size(total_size)})"
             + (" (パスワード保護)" if self._is_encrypted else "")
         )
+        self._update_queue_status()
+
+    def _update_dest_display(self) -> None:
+        """現在の状態に合わせて展開先表示を更新"""
+        if self._current_archive_path is None:
+            return
+        parent = self._current_archive_path.parent
+        entries = self._entries
+        dest = ArchiveService.resolve_extract_dest(
+            parent, self._current_archive_path, entries
+        )
+        self._dest_var.set(str(dest))
 
     def _refresh_tree(self) -> None:
         for row in self._tree.get_children():
             self._tree.delete(row)
         query = self._search_var.get().strip().lower()
-        filtered = [
-            e for e in self._entries
-            if not query or query in e.name.lower()
-        ] if query else self._entries
+        filtered = (
+            [e for e in self._entries if not query or query in e.name.lower()]
+            if query
+            else self._entries
+        )
         rows = [
-            (i, e.name, _format_size(e.size), _format_size(e.compressed_size),
-             e.modified.strftime("%Y-%m-%d %H:%M"))
+            (
+                i,
+                e.name,
+                _format_size(e.size),
+                _format_size(e.compressed_size),
+                e.modified.strftime("%Y-%m-%d %H:%M"),
+            )
             for i, e in enumerate(filtered, start=1)
         ]
         for values in rows:
             self._tree.insert("", "end", values=values)
 
     def _on_tree_select(self, _event: object = None) -> None:
-        if self._zip_path is None:
+        if self._current_archive_path is None:
             return
         sel = self._tree.selection()
         if not sel:
@@ -530,7 +704,6 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._show_preview(entry_name)
 
     def _on_search_keyrelease(self, _event: object = None) -> None:
-        """検索ボックスに入力があるたびにツリービューを絞り込む"""
         self._refresh_tree()
 
     def _show_preview(self, name: str) -> None:
@@ -538,41 +711,77 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._preview_label.configure(text="")
         self._current_image = None
 
+        # サイズ上限チェック
+        entry = None
+        for e in self._entries:
+            if e.name == name:
+                entry = e
+                break
+        if entry is not None and entry.size > _MAX_PREVIEW_FILE_SIZE:
+            self._preview_label.configure(
+                text=f"ファイルが大きすぎてプレビューできません ({_format_size(entry.size)})"
+            )
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+
         ext = Path(name).suffix.lower()
         if ext in _TEXT_EXTENSIONS:
             self._preview_text(name)
         elif ext in _IMAGE_EXTENSIONS:
             self._preview_image(name)
         else:
-            self._preview_label.configure(text=f"プレビュー不可 ({ext})")
+            self._preview_label.configure(text="プレビュー不可")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
     def _preview_text(self, name: str) -> None:
-        assert self._zip_path is not None
-        cache = self._temp_dir.name if self._temp_dir else None
+        assert self._current_archive_path is not None
         try:
-            content = _read_archive_entry(self._zip_path, name, cache_dir=cache)
-        except (IOError, OSError, KeyError, BadZipFile) as e:
-            self._preview_label.configure(text=f"プレビューを読み込めませんでした ({e})")
+            data = self._archive_service.read_entry(
+                self._current_archive_path,
+                name,
+                password=self._get_password_for(self._current_archive_path),
+            )
+        except Exception:
+            self._preview_label.configure(text="プレビューを読み込めませんでした")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
-        # UTF-8優先、失敗時はシステムエンコーディング（日本語CP932など）で再試行
-        text = _decode_text(content)
+
+        if data is None:
+            self._preview_label.configure(text="プレビューを読み込めませんでした")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+
+        text = _decode_text(data)
         self._preview_label.configure(text=text)
         self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
     def _preview_image(self, name: str) -> None:
-        assert self._zip_path is not None
-        cache = self._temp_dir.name if self._temp_dir else None
+        assert self._current_archive_path is not None
         try:
-            data = _read_archive_entry(self._zip_path, name, cache_dir=cache)
+            data = self._archive_service.read_entry(
+                self._current_archive_path,
+                name,
+                password=self._get_password_for(self._current_archive_path),
+            )
+        except Exception:
+            self._preview_label.configure(text="画像をプレビューできません")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+
+        if data is None:
+            self._preview_label.configure(text="画像をプレビューできません")
+            self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+            return
+
+        try:
             img = Image.open(io.BytesIO(data))
-            img.thumbnail(_MAX_IMAGE_DIMENSION)
+            max_size = (400, 250)
+            img.thumbnail(max_size)
             ctk_img = ctk.CTkImage(img, size=img.size)
             self._preview_label.configure(image=ctk_img, text="")
             self._current_image = ctk_img
-        except (IOError, OSError, KeyError, BadZipFile) as e:
-            self._preview_label.configure(text=f"画像をプレビューできません ({e})")
+        except Exception:
+            self._preview_label.configure(text="画像をプレビューできません")
             self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
             return
         self._preview_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
@@ -595,110 +804,296 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._dest_var.set(path)
             self._settings.set("last_dest", path)
 
+    def _cleanup_temp_dir(self) -> None:
+        if self._temp_dir is not None:
+            try:
+                self._temp_dir.cleanup()
+            except (PermissionError, OSError):
+                pass
+            self._temp_dir = None
+
+    # ---- パスワード管理 ----
+
+    def _get_password_for(self, path: Path) -> Optional[str]:
+        return self._passwords.get(str(path))
+
+    def _set_password_for(self, path: Path, password: str) -> None:
+        self._passwords[str(path)] = password
+        self._failed_passwords.discard(str(path))
+
+    def _mark_password_failed(self, path: Path) -> None:
+        self._failed_passwords.add(str(path))
+        self._passwords.pop(str(path), None)
+
+    def _clear_passwords(self) -> None:
+        self._passwords.clear()
+        self._failed_passwords.clear()
+
+    def _ask_password(self, archive_name: str) -> Optional[str]:
+        dialog = ctk.CTkInputDialog(
+            title="パスワード",
+            text=f"「{archive_name}」はパスワードで保護されています\nパスワードを入力してください:",
+        )
+        result = dialog.get_input()
+        return result if result else None
+
+    def _show_password_error(self, archive_name: str) -> Optional[str]:
+        dialog = ctk.CTkInputDialog(
+            title="パスワードが正しくありません",
+            text=f"「{archive_name}」のパスワードが正しくありません\n再入力してください:",
+        )
+        result = dialog.get_input()
+        if result:
+            return result
+        return None
+
+    # ---- 展開処理 ----
+
     def _on_extract(self) -> None:
-        if self._extracting or not self._archive_paths:
+        if self._is_busy or not self._archive_queue:
             return
 
-        dest = Path(self._dest_var.get()) if self._dest_var.get() else Path.cwd()
-
-        # メインスレッドでパスワード取得（アクティブアーカイブのみ）
-        active_password: str | None = None
-        with self._extract_lock:
-            current_zip_path = self._zip_path
-        if self._is_encrypted and current_zip_path is not None:
-            active_password = self._settings.get_password(str(current_zip_path))
-            if active_password is None:
-                active_password = self._ask_password()
-                if active_password is None:
-                    return
-                self._settings.set_password(str(current_zip_path), active_password)
-
-        self._extracting = True
+        self._is_busy = True
+        self._archive_service.reset_cancel()
         self._set_ui_enabled(False)
+        self._show_cancel_button(True)
         self._progress.set(0)
+        self._progress.grid()
 
-        # 共有状態のアーカイブパスをコピーしてスレッドに渡す
-        with self._extract_lock:
-            paths_copy = list(self._archive_paths)
-            zip_path_copy = self._zip_path
+        # キューをコピー
+        paths_copy = list(self._archive_queue)
+        self._status_var.set(f"解凍開始: {len(paths_copy)}個のアーカイブ")
 
         Thread(
             target=self._do_batch_extract,
-            args=(paths_copy, dest, active_password, zip_path_copy),
-            daemon=True,
+            args=(paths_copy,),
+            daemon=False,
         ).start()
 
-    def _do_batch_extract(
-        self, paths: list[Path], dest: Path, active_password: str | None,
-        zip_path: Path | None
-    ) -> None:
-        self.after(0, self._progress.grid)
-        self.after(0, lambda: self._progress.set(0))
+    def _do_batch_extract(self, paths: list[Path]) -> None:
+        """バックグラウンドでバッチ展開を実行"""
+        success_count = 0
+        fail_count = 0
         total_archives = len(paths)
 
         for idx, archive_path in enumerate(paths):
-            password = active_password if archive_path == zip_path else None
-            entry_archive_name = archive_path.name
-            try:
-                entries, _ = list_archive(archive_path)
-                archive_dest = _resolve_extract_dest(dest, archive_path, entries)
-            except Exception:
-                archive_dest = dest / archive_path.stem
-            archive_dest.mkdir(parents=True, exist_ok=True)
-
-            try:
-                _last_progress = [0.0]
-                def on_progress(
-                    current: int, total: int,
-                    current_name: str = "", _a=entry_archive_name,
-                ) -> None:
-                    now = time.monotonic()
-                    if now - _last_progress[0] < 0.1 and current < total:  # pragma: no cover
-                        return
-                    _last_progress[0] = now
-                    pct = current / total
-                    self.after(0, lambda p=pct: self._progress.set(p))
-                    name_part = f" - {current_name}" if current_name else ""
-                    self.after(0, lambda: self._status_var.set(
-                        f"[{idx+1}/{total_archives}] {_a}: {pct:.0%} ({current}/{total}){name_part}"
-                    ))
-
-                extract_archive(archive_path, archive_dest, password=password, on_progress=on_progress)
-            except (RuntimeError, OSError, PermissionError) as exc:
-                self.after(0, lambda e=exc, a=entry_archive_name: self._on_extract_error(f"{a}: {e}"))
+            if self._archive_service._cancel_event.is_set():
+                self.after(0, lambda: self._on_extract_cancelled(success_count))
                 return
 
-        self.after(0, self._on_extract_done)
+            entry_archive_name = archive_path.name
+            try:
+                # ステータス更新
+                self.after(
+                    0,
+                    lambda i=idx + 1, t=total_archives, n=entry_archive_name: (
+                        self._status_var.set(f"[{i}/{t}] {n} を解凍中...")
+                    ),
+                )
 
-    def _on_extract_done(self) -> None:
-        self._extracting = False
+                # 一覧取得 → 展開先計算
+                info = self._archive_service.list_archive(archive_path)
+                dest = (
+                    Path(self._dest_var.get())
+                    if self._dest_var.get()
+                    else archive_path.parent
+                )
+                archive_dest = ArchiveService.resolve_extract_dest(
+                    dest, archive_path, info.entries
+                )
+                archive_dest.mkdir(parents=True, exist_ok=True)
+
+                # パスワード管理
+                password = self._get_password_for(archive_path)
+                if password is None and info.is_encrypted:
+                    self.after(0, lambda: None)  # 同期ポイント
+                    pwd_result: list[str | None] = [None]
+
+                    def ask():
+                        result = self._ask_password(entry_archive_name)
+                        pwd_result[0] = result
+
+                    self.after(0, ask)
+                    # ダイアロル完了待機 (応答性はやや低下)
+                    while (
+                        pwd_result[0] is None
+                        and not self._archive_service._cancel_event.is_set()
+                    ):
+                        time.sleep(0.1)
+                    if self._archive_service._cancel_event.is_set():
+                        self.after(0, lambda: self._on_extract_cancelled(success_count))
+                        return
+                    password = pwd_result[0]
+                    if password is None:
+                        continue  # パスワード未入力 → スキップ
+                    self._set_password_for(archive_path, password)
+
+                # 進捗コールバック
+                def make_progress(i=idx, a=entry_archive_name, t=total_archives):
+                    last_poll = [0.0]
+
+                    def on_progress(current: int, total: int, name: str = "") -> None:
+                        now = time.monotonic()
+                        if now - last_poll[0] < 0.1 and current < total:
+                            return
+                        last_poll[0] = now
+                        pct = current / total
+                        self.after(0, lambda p=pct: self._progress.set(p))
+                        name_part = f" - {name}" if name else ""
+                        self.after(
+                            0,
+                            lambda: self._status_var.set(
+                                f"[{i + 1}/{t}] {a}: {pct:.0%} ({current}/{total}){name_part}"
+                            ),
+                        )
+
+                    return on_progress
+
+                # パスワード再試行ループ
+                max_retries = 3
+                for retry in range(max_retries):
+                    try:
+                        options = ExtractionOptions(
+                            dest_dir=archive_dest,
+                            password=password,
+                            on_progress=make_progress(
+                                idx, entry_archive_name, total_archives
+                            ),
+                        )
+                        self._archive_service.extract(archive_path, options)
+                        success_count += 1
+                        break
+                    except InvalidPasswordError:
+                        self._mark_password_failed(archive_path)
+                        if retry < max_retries - 1:
+                            # パスワード再入力
+                            pwd_result = [None]
+
+                            def ask_retry(name=entry_archive_name):
+                                pwd_result[0] = self._ask_password(name)
+
+                            self.after(0, ask_retry)
+                            while (
+                                pwd_result[0] is None
+                                and not self._archive_service._cancel_event.is_set()
+                            ):
+                                time.sleep(0.1)
+                            if self._archive_service._cancel_event.is_set():
+                                self.after(
+                                    0, lambda: self._on_extract_cancelled(success_count)
+                                )
+                                return
+                            password = pwd_result[0]
+                            if password is None:
+                                break
+                            self._set_password_for(archive_path, password)
+                        else:
+                            fail_count += 1
+                            self.after(
+                                0,
+                                lambda a=entry_archive_name: self._show_error(
+                                    "パスワードが正しくありません",
+                                    f"{a}: パスワードを複数回試行しましたが展開できませんでした",
+                                ),
+                            )
+                    except ArchiveBombError as e:
+                        fail_count += 1
+                        self.after(
+                            0,
+                            lambda a=entry_archive_name, m=str(e): self._show_error(
+                                "安全のため展開を中止しました", f"{a}: {m}"
+                            ),
+                        )
+                        break  # 爆弾検知 → 次のアーカイブへ
+                    except UnsafeArchiveError as e:
+                        fail_count += 1
+                        self.after(
+                            0,
+                            lambda a=entry_archive_name, m=str(e): self._show_error(
+                                "安全でないエントリを検出しました", f"{a}: {m}"
+                            ),
+                        )
+                        break
+                    except ExternalToolNotFoundError:
+                        fail_count += 1
+                        self.after(
+                            0,
+                            lambda: self._show_error(
+                                "展開エンジンが見つかりません",
+                                "7-Zip をインストールしてください。https://7-zip.org/",
+                            ),
+                        )
+                        break
+                    except ArchiveError as e:
+                        fail_count += 1
+                        self.after(
+                            0,
+                            lambda a=entry_archive_name, m=str(e.user_message()): (
+                                self._show_error("展開に失敗しました", f"{a}: {m}")
+                            ),
+                        )
+                        break
+
+            except Exception as e:
+                fail_count += 1
+                self.after(
+                    0,
+                    lambda a=entry_archive_name, em=str(e): self._show_error(
+                        "展開に失敗しました", f"{a}: {em}"
+                    ),
+                )
+
+        self.after(0, lambda: self._on_extract_done(success_count, fail_count))
+
+    def _on_extract_done(self, success: int, fail: int) -> None:
+        self._is_busy = False
+        self._show_cancel_button(False)
         self._set_ui_enabled(True)
-        n = len(self._archive_paths)
-        self._status_var.set(f"解凍完了 ({n}ファイル)")
-        last_zip = self._zip_path
-        self._zip_path = None
-        self._archive_paths = []
+        self._progress.grid_remove()
+
+        if fail > 0:
+            self._status_var.set(f"解凍: {success}成功, {fail}失敗")
+        else:
+            self._status_var.set(f"解凍完了 ({success}ファイル)")
+
+        dest = Path(self._dest_var.get()) if self._dest_var.get() else Path.cwd()
+
+        # 設定保存
         self._settings.set("open_on_done", self._open_on_done_var.get())
         self._settings.set("close_on_done", self._close_on_done_var.get())
-        self._settings.set("last_dest", self._dest_var.get())
-        self._settings.clear_passwords()
-        self._progress.set(1)
-        self._progress.grid_remove()
-        if self._open_on_done_var.get() and last_zip is not None:
-            dest = Path(self._dest_var.get()) if self._dest_var.get() else last_zip.parent
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", str(dest)])
-        if self._close_on_done_var.get():
-            self.after(500, self.destroy)
-            return
+        self._settings.set("last_dest", str(dest))
+
+        if self._open_on_done_var.get() and success > 0:
+            self._open_folder(dest)
+
+        self._archive_queue.clear()
+        self._current_archive_path = None
+        self._entries = []
+        self._clear_passwords()
+        self._update_queue_status()
         self._show_drop_zone()
 
-    def _on_extract_error(self, msg: str) -> None:
-        self._extracting = False
+        if self._close_on_done_var.get() and fail == 0:
+            self.after(500, self.destroy)
+
+    def _on_extract_cancelled(self, success: int) -> None:
+        self._is_busy = False
+        self._show_cancel_button(False)
         self._set_ui_enabled(True)
-        self._status_var.set(f"エラー: {msg}")
         self._progress.set(0)
         self._progress.grid_remove()
+        self._status_var.set(f"解凍をキャンセルしました ({success}ファイル完了)")
+        self._show_drop_zone()
+
+    def _on_cancel(self) -> None:
+        self._archive_service.cancel()
+        self._status_var.set("キャンセル中...")
+
+    def _show_cancel_button(self, show: bool) -> None:
+        if show:
+            self._cancel_btn.grid()
+        else:
+            self._cancel_btn.grid_remove()
 
     def _set_ui_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -706,28 +1101,54 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._dest_btn.configure(state=state)
         self._extract_btn.configure(state=state)
         self._compress_btn.configure(state=state)
+        self._recent_menu.configure(state=state)
 
-    def _ask_password(self) -> str | None:
-        """パスワード入力ダイアログを表示"""
-        dialog = ctk.CTkInputDialog(
-            title="パスワード",
-            text="このアーカイブはパスワードで保護されています\nパスワードを入力してください:",
-        )
-        result = dialog.get_input()
-        return result if result else None
+    def _open_folder(self, path: Path) -> None:
+        if sys.platform == "win32":
+            try:
+                subprocess.Popen(["explorer", str(path)])
+            except OSError:
+                pass
+
+    def _show_error(self, title: str, message: str) -> None:
+        """ユーザー向けエラーダイアログ"""
+        messagebox.showerror(title=title, message=message)
+
+    def _show_info(self, title: str, message: str) -> None:
+        """情報ダイアログ"""
+        messagebox.showinfo(title=title, message=message)
+
+    # ---- 終了処理 ----
+
+    def _on_close(self) -> None:
+        if self._is_busy:
+            result = messagebox.askyesno(
+                title="確認",
+                message="処理中です。中断して終了しますか？",
+            )
+            if not result:
+                return
+            self._archive_service._cancel_event.set()
+            self._cleanup_temp_dir()
+            self.destroy()
+            return
+        self._cleanup_temp_dir()
+        self.destroy()
 
     # ---- 圧縮機能 ----
 
     def _on_compress(self) -> None:
-        """ファイル/フォルダを圧縮"""
         paths = filedialog.askopenfilenames(title="圧縮するファイルを選択")
-        if not paths:
+        if paths:
+            self._compress_sources = [Path(p) for p in paths]
+            self._start_compress_flow()
             return
-        self._compress_sources = [Path(p) for p in paths]
-        self._start_compress_flow()
+        folder = filedialog.askdirectory(title="圧縮するフォルダを選択")
+        if folder:
+            self._compress_sources = [Path(folder)]
+            self._start_compress_flow()
 
     def _start_compress_flow(self) -> None:
-        """圧縮ファイル保存ダイアログ＋実行"""
         if not self._compress_sources:
             return
 
@@ -748,53 +1169,124 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             initialfile=default_name,
             filetypes=[
                 ("ZIP", "*.zip"),
-                ("RAR", "*.rar"),
                 ("7z", "*.7z"),
             ],
         )
         if not output:
             return
 
-        self._start_compress(Path(output))
+        output_path = Path(output)
+        if output_path.suffix.lower() == ".rar":
+            self._show_error(
+                "非対応の形式",
+                "RAR形式の作成はライセンス上の制約により対応していません。\n"
+                "ZIP形式または7z形式を選択してください。",
+            )
+            return
+
+        self._start_compress(output_path)
 
     def _start_compress(self, output: Path) -> None:
-        """圧縮を開始（共通）"""
-        self._compressing = True
+        """圧縮開始（共通エントリ）"""
+        ext = output.suffix.lower()
+        if not self._archive_service.is_creation_supported(output):
+            self._show_error(
+                "未対応の形式", f"{ext} 形式の作成はサポートされていません"
+            )
+            return
+
+        # 自己包含チェック
+        error = ArchiveService.check_self_contained(self._compress_sources, output)
+        if error:
+            self._show_error("圧縮対象にエラー", error)
+            return
+
+        self._is_busy = True
+        self._archive_service.reset_cancel()
         self._set_ui_enabled(False)
+        self._show_cancel_button(True)
         self._progress.set(0)
         self._progress.grid()
 
         Thread(
             target=self._do_compress,
             args=(list(self._compress_sources), output),
-            daemon=True,
+            daemon=False,
         ).start()
 
     def _do_compress(self, sources: list[Path], output: Path) -> None:
+        """バックグラウンド圧縮"""
+        temp_dir: Optional[str] = None
+        temp_output: Optional[Path] = None
         try:
+            import os as os_mod
+
+            temp_dir = tempfile.mkdtemp(prefix="kaito_zip_", dir=output.parent)
+            temp_output = Path(temp_dir) / output.name
+
             def on_progress(cur: int, total_: int, name: str = "") -> None:
+                if self._archive_service._cancel_event.is_set():
+                    raise CancelledError(str(output))
                 pct = cur / total_
                 self.after(0, lambda p=pct: self._progress.set(p))
-                self.after(0, lambda: self._status_var.set(
-                    f"圧縮中: {pct:.0%} ({cur}/{total_}) - {name}"
-                ))
+                self.after(
+                    0,
+                    lambda: self._status_var.set(
+                        f"圧縮中: {pct:.0%} ({cur}/{total_}) - {name}"
+                    ),
+                )
 
             compression_level = self._settings.get("compression_level", 1)
-            if not isinstance(compression_level, int) or not 0 <= compression_level <= 9:
+            if (
+                not isinstance(compression_level, int)
+                or not 0 <= compression_level <= 9
+            ):
                 compression_level = 1
-            create_archive(
-                sources,
-                output,
-                on_progress=on_progress,
+
+            opts = CompressionOptions(
+                sources=sources,
+                output_path=temp_output,
                 compression_level=compression_level,
+                on_progress=on_progress,
             )
+
+            self._archive_service.create(opts)
+
+            if self._archive_service._cancel_event.is_set():
+                self._cleanup_temp(temp_output)
+                self.after(0, lambda: self._on_compress_cancelled())
+                return
+
+            # 検証してリネーム (原子的な置換)
+            temp_output.replace(output)
             self.after(0, self._on_compress_done)
+
+        except CancelledError:
+            if temp_output:
+                self._cleanup_temp(temp_output)
+            self.after(0, lambda: self._on_compress_cancelled())
         except Exception as exc:
+            if temp_output:
+                self._cleanup_temp(temp_output)
             msg = str(exc)
             self.after(0, lambda: self._on_compress_error(msg))
+        finally:
+            if temp_dir:
+                try:
+                    os_mod.rmdir(temp_dir)
+                except (OSError, NameError):
+                    pass
+
+    def _cleanup_temp(self, path: Path) -> None:
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
 
     def _on_compress_done(self) -> None:
-        self._compressing = False
+        self._is_busy = False
+        self._show_cancel_button(False)
         self._status_var.set("圧縮完了")
         self._progress.set(1)
         self._progress.grid_remove()
@@ -804,9 +1296,23 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self._set_ui_enabled(True)
 
+    def _on_compress_cancelled(self) -> None:
+        self._is_busy = False
+        self._show_cancel_button(False)
+        self._status_var.set("圧縮をキャンセルしました")
+        self._progress.set(0)
+        self._progress.grid_remove()
+        self._compress_sources = []
+        self._set_ui_enabled(True)
+
     def _on_compress_error(self, msg: str) -> None:
-        self._compressing = False
-        self._status_var.set(f"エラー: {msg}")
+        self._is_busy = False
+        self._show_cancel_button(False)
+        # ユーザー向けメッセージ
+        user_msg = msg
+        if "ライセンス" in msg:
+            user_msg = "RAR形式の作成はライセンス上の制約により対応していません。ZIP形式をご利用ください。"
+        self._status_var.set(f"エラー: {user_msg}")
         self._progress.set(0)
         self._progress.grid_remove()
         if self._compress_no_dialog:
@@ -817,64 +1323,27 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
 
 def _decode_text(data: bytes, max_chars: int = _MAX_PREVIEW_CHARS) -> str:
-    """バイトデータをテキストにデコードする（UTF-8優先→システムエンコーディング）
-
-    日本語WindowsのCP932など、UTF-8以外のエンコーディングで書かれた
-    テキストファイルにも対応するため2段階フォールバックする。
-    """
+    """バイトデータをテキストにデコード (UTF-8優先)"""
     try:
         return data.decode("utf-8")[:max_chars]
     except UnicodeDecodeError:
         pass
-    # システムエンコーディング（日本語ならCP932）で再試行
     try:
         return data.decode(locale.getencoding())[:max_chars]
     except (UnicodeDecodeError, LookupError):
         pass
-    # 最終手段: 非ASCIIを置換
     return data.decode("utf-8", errors="replace")[:max_chars]
 
 
-def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
-    """アーカイブ内の1エントリを読み込む。
-
-    ZIPはzipfileで直接読み込み。
-    RAR/7zはcache_dir（事前展開済みディレクトリ）があればそこから読み込み、なければ一時展開。
-    """
-    p = Path(archive_path)
-    ext = p.suffix.lower()
-    if ext == ".zip":
-        import zipfile
-        from kaito.unzip import try_zip_with_encodings
-
-        def _read_entry(zf: zipfile.ZipFile) -> bytes:
-            return zf.read(name)
-
-        return try_zip_with_encodings(p, _read_entry)
-    elif ext in {".rar", ".7z"}:
-        tmpdir: tempfile.TemporaryDirectory | None = None
-        try:
-            if cache_dir is not None:
-                root = cache_dir
-            else:
-                tmpdir = tempfile.TemporaryDirectory()
-                import patoolib
-                try:
-                    patoolib.extract_archive(str(p), outdir=tmpdir.name)
-                except (RuntimeError, OSError):
-                    # プレビューできない場合は空を返す
-                    return b""
-                root = tmpdir.name
-            extracted = Path(root) / name
-            if extracted.exists():
-                return extracted.read_bytes()
-            for f in Path(root).rglob("*"):
-                if f.is_file() and f.name == Path(name).name:
-                    return f.read_bytes()
-        finally:
-            if tmpdir is not None:
-                tmpdir.cleanup()
-    return b""
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024**2:
+        return f"{size / 1024:.1f} KB"
+    elif size < 1024**3:
+        return f"{size / 1024**2:.1f} MB"
+    else:
+        return f"{size / 1024**3:.1f} GB"
 
 
 def _truncate_path(path: str, max_len: int = 60) -> str:
@@ -895,9 +1364,8 @@ _CONTEXT_EXTENSIONS = [".zip", ".rar", ".7z"]
 
 def _get_exe_path() -> Path:
     """kaito実行ファイルのパスを返す"""
-    if getattr(sys, "frozen", False):  # PyInstallerビルド
+    if getattr(sys, "frozen", False):
         return Path(sys.executable)
-    # 開発環境: dist/kaito.exe を返す
     dev_exe = Path(sys.executable).parent.parent / "dist" / "kaito.exe"
     if dev_exe.exists():
         return dev_exe
@@ -906,21 +1374,24 @@ def _get_exe_path() -> Path:
 
 def install_context_menu() -> None:
     """Windowsコンテキストメニューにkaitoを登録"""
+    try:
+        from winreg import (  # type: ignore[attr-defined]
+            CreateKeyEx,
+            HKEY_CURRENT_USER,
+            KEY_SET_VALUE,
+            REG_SZ,
+            SetValueEx,
+        )
+    except ImportError:
+        return
+
     exe = _get_exe_path()
     exe_str = f'"{exe}"'
     base = r"Software\Classes"
 
-    # 解凍: SystemFileAssociations (標準状態で有効) + * (カスタムProgID対策)
+    # 解凍: 対応拡張子のみ
     for ext in _CONTEXT_EXTENSIONS:
         key_path = f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract"
-        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
-        cmd_path = f"{key_path}\\command"
-        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')
-    # 全ファイルにも登録（例: CubeICE などが ProgID を乗っ取っている場合の救済）
-    for shell_root in [f"{base}\\*"]:
-        key_path = f"{shell_root}\\shell\\kaito_extract"
         with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
             SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
         cmd_path = f"{key_path}\\command"
@@ -939,28 +1410,42 @@ def install_context_menu() -> None:
     print("コンテキストメニューを登録しました")
 
 
-def _delete_key_recursive(root_key: object, sub_key: str) -> None:  # type: ignore[type-arg]
+def _delete_key_recursive(root_key, sub_key: str) -> None:
     """レジストリキーをサブキーごと削除する"""
     try:
-        with OpenKey(root_key, sub_key, 0, KEY_SET_VALUE) as key:  # type: ignore[arg-type]
+        from winreg import (  # type: ignore[attr-defined]
+            DeleteKey,
+            EnumKey,
+            KEY_SET_VALUE,
+            OpenKey,
+            QueryInfoKey,
+        )
+    except ImportError:
+        return
+    try:
+        with OpenKey(root_key, sub_key, 0, KEY_SET_VALUE) as key:
             info = QueryInfoKey(key)
             for _ in range(info[0]):
                 child = EnumKey(key, 0)
                 _delete_key_recursive(key, child)
-        DeleteKey(root_key, sub_key)  # type: ignore[arg-type]
-    except FileNotFoundError:
-        pass
-    except OSError:
+        DeleteKey(root_key, sub_key)
+    except (FileNotFoundError, OSError):
         pass
 
 
 def uninstall_context_menu() -> None:
     """Windowsコンテキストメニューからkaitoを削除"""
+    try:
+        from winreg import HKEY_CURRENT_USER
+    except ImportError:
+        return
     base = r"Software\Classes"
 
     for ext in _CONTEXT_EXTENSIONS:
-        _delete_key_recursive(HKEY_CURRENT_USER, f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract")
-    _delete_key_recursive(HKEY_CURRENT_USER, f"{base}\\*\\shell\\kaito_extract")
+        _delete_key_recursive(
+            HKEY_CURRENT_USER,
+            f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract",
+        )
 
     for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
         _delete_key_recursive(HKEY_CURRENT_USER, f"{shell_root}\\shell\\kaito_compress")
@@ -968,37 +1453,20 @@ def uninstall_context_menu() -> None:
     print("コンテキストメニューを削除しました")
 
 
-def _format_size(size: int) -> str:
-    if size < 1024:
-        return f"{size} B"
-    elif size < 1024 ** 2:
-        return f"{size / 1024:.1f} KB"
-    elif size < 1024 ** 3:
-        return f"{size / 1024 ** 2:.1f} MB"
-    else:
-        return f"{size / 1024 ** 3:.1f} GB"
+def _resolve_extract_dest(
+    dest: Path, archive_path: Path, entries: list[ArchiveEntry]
+) -> Path:
+    """展開先を決定 (ArchiveServiceに委譲)"""
+    return ArchiveService.resolve_extract_dest(dest, archive_path, entries)
 
 
-def _resolve_extract_dest(dest: Path, archive_path: Path, entries: list[ZipEntry]) -> Path:
-    """アーカイブの構成に応じて展開先を決定し、二重ネストを防ぐ
-
-    全エントリが1つのトップレベルディレクトリを共有している場合
-    （例: myproject/file1.js, myproject/file2.js）、そのディレクトリ自体が
-    コンテナの役割を果たすため dest 直下に展開する。
-    共通ルートがない／ルート直下にファイルがある場合は dest/archive_stem/ を作成する。
-    """
-    roots: set[str] = set()
-    has_root_file = False
-    for e in entries:
-        if "/" in e.name:
-            root = e.name.split("/")[0]
-            roots.add(root)
-        elif e.name:
-            has_root_file = True
-
-    if len(roots) == 1 and not has_root_file:
-        return dest
-    return dest / archive_path.stem
+def _read_archive_entry(
+    archive_path: Path | str, name: str, cache_dir: str | None = None
+) -> bytes:
+    """アーカイブ内の1エントリを読み込む (互換性)"""
+    _service = ArchiveService()
+    result = _service.read_entry(archive_path, name)
+    return result if result is not None else b""
 
 
 def main() -> None:
@@ -1015,8 +1483,10 @@ def main() -> None:
     ctk.set_appearance_mode(settings.get("theme", "system"))
     ctk.set_default_color_theme("blue")
 
-    cli_path: Path | None = None
-    cli_compress_path: Path | None = None
+    cli_path: Optional[Path] = None
+    cli_compress_path: Optional[Path] = None
+
+    service = ArchiveService()
 
     if args and args[0] == "--compress" and len(args) > 1:
         p = Path(args[1])
@@ -1024,12 +1494,12 @@ def main() -> None:
             cli_compress_path = p
     elif args:
         p = Path(args[0])
-        if is_supported(p) and p.exists():
+        if service.is_supported(p) and p.exists():
             cli_path = p
 
     app = UnzipApp(cli_path=cli_path, cli_compress_path=cli_compress_path)
-    app.mainloop()  # pragma: no cover
+    app.mainloop()
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
