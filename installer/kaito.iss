@@ -4,7 +4,7 @@
 
 #define MyAppName "kaito"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.9.1.dev0"
+  #define MyAppVersion "0.10.0.dev0"
 #endif
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
