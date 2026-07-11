@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, feature/*]
+    branches: [master, "feature/**"]
   pull_request:
     branches: [master]
 
@@ -10,70 +10,162 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  verify-windows:
     runs-on: windows-latest
+    timeout-minutes: 35
 
     steps:
-      # actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 -- v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72 -- v5.3.0
       - name: Install uv
-        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72
+        uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4e3e728b72 # v5.3.0
 
-      - name: Set up Python
-        run: uv python install
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: uv sync --frozen
 
-      - name: Lint (ruff check)
-        run: uv run ruff check src/
-
-      - name: Format check (ruff format)
-        run: uv run ruff format --check src/
-
-      - name: Type check (pyright)
-        run: uv run pyright src/
-
-      - name: Test (unit + security)
-        run: uv run pytest tests/test_unzip.py tests/test_security.py tests/test_settings.py -v
-
-      - name: Test (integration)
-        run: uv run pytest tests/test_integration.py -v
-
-      - name: Test (GUI mock)
-        run: uv run pytest tests/test_unzip_app.py -v
-
-      - name: Build EXE
-        run: uv run pyinstaller --clean --noconfirm build.spec
-
-      - name: Smoke test EXE
+      - name: Verify bundled 7-Zip checksums
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist/kaito.exe")) {
-            Write-Error "kaito.exe not found"
-            exit 1
+          Get-Content bundled/SHA256SUMS | ForEach-Object {
+            if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
+              $expected = $Matches[1]
+              $path = Join-Path bundled $Matches[2]
+              if (-not (Test-Path $path)) { throw "Missing bundled file: $path" }
+              $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actual -ne $expected) { throw "Hash mismatch for $path: $actual" }
+            }
           }
-          $size = (Get-Item "dist/kaito.exe").Length
-          Write-Output "kaito.exe: $size bytes"
-          if ($size -lt 5000000) {
-            Write-Error "kaito.exe too small (< 5MB)"
-            exit 1
-          }
-          # --version smoke test
-          $v = & "dist/kaito.exe" --version
-          Write-Output "Version: $v"
-          if (-not ($v -match "kaito")) {
-            Write-Error "version check failed"
-            exit 1
-          }
-          # --self-test
-          $st = & "dist/kaito.exe" --self-test 2>&1
-          Write-Output "Self-test: OK"
 
-      - name: Upload EXE artifact
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run pyright
+
+      - name: Test
+        run: uv run pytest -ra --junitxml=test-results.xml
+
+      - name: Build executable
+        run: uv run pyinstaller --clean --noconfirm build.spec
+
+      - name: Smoke-test executable and bundled backend
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path 'dist/kaito.exe'
+          $version = & $exe --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^kaito ') {
+            throw "Version check failed: $version"
+          }
+          $selfTest = & $exe --self-test 2>&1
+          if ($LASTEXITCODE -ne 0 -or $selfTest -notmatch 'All checks passed') {
+            throw "Self-test failed: $selfTest"
+          }
+          $json = (& $exe --backend-info --json) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw "backend-info failed: $json" }
+          $info = $json | ConvertFrom-Json
+          if (-not $info.available) { throw 'Bundled backend unavailable' }
+          if ($info.source -ne 'bundled') { throw "Unexpected backend source: $($info.source)" }
+          if ($info.version -ne '26.02') { throw "Unexpected 7-Zip version: $($info.version)" }
+          if ($info.integrity -ne 'ok') { throw "Bundled backend integrity failed" }
+          if ($info.sha256 -ne $info.expected_sha256) { throw 'Bundled backend hash mismatch' }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
+          & $iscc 'installer/kaito.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+          $installer = Get-ChildItem 'dist/kaito-installer-*.exe' | Select-Object -First 1
+          if ($null -eq $installer) { throw 'Installer output not found' }
+          "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Test install, registry integration, and uninstall
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'kaito 検証 installed'
+          $installLog = Join-Path $env:RUNNER_TEMP 'kaito-install.log'
+          $uninstallLog = Join-Path $env:RUNNER_TEMP 'kaito-uninstall.log'
+          Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+
+          $installArgs = @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER',
+            "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
+          )
+          $install = Start-Process $env:KAITO_INSTALLER -ArgumentList $installArgs -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
+
+          $installedExe = Join-Path $installDir 'kaito.exe'
+          foreach ($required in @(
+            $installedExe,
+            (Join-Path $installDir 'SECURITY.md'),
+            (Join-Path $installDir 'THIRD_PARTY_NOTICES.md'),
+            (Join-Path $installDir 'licenses/7-ZIP-LICENSE.txt'),
+            (Join-Path $installDir 'licenses/SHA256SUMS')
+          )) {
+            if (-not (Test-Path $required)) { throw "Installed file missing: $required" }
+          }
+
+          $selfTest = & $installedExe --self-test 2>&1
+          if ($LASTEXITCODE -ne 0 -or $selfTest -notmatch 'All checks passed') {
+            throw "Installed self-test failed: $selfTest"
+          }
+          $info = ((& $installedExe --backend-info --json) -join "`n") | ConvertFrom-Json
+          if ($info.source -ne 'bundled' -or $info.integrity -ne 'ok') {
+            throw "Installed backend validation failed: $($info | ConvertTo-Json -Compress)"
+          }
+
+          $extractKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
+            "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract"
+          }
+          foreach ($key in $extractKeys) {
+            if (-not (Test-Path $key)) { throw "Context-menu key missing: $key" }
+          }
+          if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_extract') {
+            throw 'Extract action must not be registered for .txt'
+          }
+
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          if (-not (Test-Path $uninstaller)) { throw 'Uninstaller not found' }
+          $uninstallArgs = @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+            "/LOG=`"$uninstallLog`""
+          )
+          $uninstall = Start-Process $uninstaller -ArgumentList $uninstallArgs -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed: $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 2
+
+          foreach ($key in $extractKeys) {
+            if (Test-Path $key) { throw "Context-menu key remained after uninstall: $key" }
+          }
+          if (Test-Path $installDir) {
+            $remaining = Get-ChildItem $installDir -Force -ErrorAction SilentlyContinue
+            if ($remaining) { throw "Install directory not cleaned: $installDir" }
+          }
+
+          "KAITO_INSTALL_LOG=$installLog" | Out-File $env:GITHUB_ENV -Append
+          "KAITO_UNINSTALL_LOG=$uninstallLog" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Upload verification artifacts
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b720449be5f6b2d10e2c0b8e3 # v4.6.3
         with:
-          name: kaito-exe
-          path: dist/kaito.exe
+          name: kaito-windows-verification
+          if-no-files-found: warn
+          path: |
+            dist/kaito.exe
+            dist/kaito-installer-*.exe
+            test-results.xml
+            ${{ env.KAITO_INSTALL_LOG }}
+            ${{ env.KAITO_UNINSTALL_LOG }}
