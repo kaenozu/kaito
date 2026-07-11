@@ -19,7 +19,7 @@ _RAR_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "rar"
 
 def _run_7z(args: list[str]) -> None:
     result = subprocess.run(
-        [str(_SEVENZ), *args, "-y"],
+        [str(_SEVENZ), *args, "-y", "-sccUTF-8"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -88,13 +88,14 @@ def empty_zip(tmp_dir: Path) -> Path:
 
 @pytest.fixture
 def sevenz_available() -> bool:
-    return _SEVENZ.is_file()
+    if not _SEVENZ.is_file():
+        pytest.fail(f"required bundled 7-Zip is missing: {_SEVENZ}")
+    return True
 
 
 @pytest.fixture
 def normal_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("bundled 7-Zip not available")
+    assert sevenz_available
     source = tmp_dir / "7zsrc"
     source.mkdir()
     (source / "hello.txt").write_text("Hello World", encoding="utf-8")
@@ -108,8 +109,7 @@ def normal_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
 
 @pytest.fixture
 def encrypted_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("bundled 7-Zip not available")
+    assert sevenz_available
     source = tmp_dir / "encsrc"
     source.mkdir()
     (source / "secret.txt").write_text("Secret Data", encoding="utf-8")
@@ -147,8 +147,7 @@ def symlink_rar(tmp_dir: Path) -> Path:
 
 @pytest.fixture
 def japanese_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("bundled 7-Zip not available")
+    assert sevenz_available
     source = tmp_dir / "jp_src"
     source.mkdir()
     (source / "日本語.txt").write_text("Japanese filename test", encoding="utf-8")
@@ -166,8 +165,7 @@ def corrupt_zip(tmp_dir: Path) -> Path:
 
 @pytest.fixture
 def corrupt_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("bundled 7-Zip not available")
+    assert sevenz_available
     path = tmp_dir / "corrupt.7z"
     path.write_bytes(b"\x00" * 100)
     return path
@@ -175,8 +173,7 @@ def corrupt_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
 
 @pytest.fixture
 def corrupt_rar(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("bundled 7-Zip not available")
+    assert sevenz_available
     path = tmp_dir / "corrupt.rar"
     path.write_bytes(b"Rar!\x00" + b"\x00" * 100)
     return path
