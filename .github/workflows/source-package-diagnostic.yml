@@ -1,0 +1,36 @@
+name: Source package diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-source-package:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download and inspect official 7-Zip package
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
+          $package = Join-Path $env:RUNNER_TEMP '7z2602-x64.exe'
+          Invoke-WebRequest -Uri $url -OutFile $package -UseBasicParsing
+          $signature = Get-AuthenticodeSignature $package
+          $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          $signer = if ($null -ne $signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { '' }
+          @(
+            "Source: $url"
+            "Status: $($signature.Status)"
+            "StatusMessage: $($signature.StatusMessage)"
+            "Signer: $signer"
+            "SHA-256: $hash"
+          ) | Tee-Object -FilePath '7zip-source-package.txt'
+
+      - name: Upload diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: 7zip-source-package-diagnostic
+          path: 7zip-source-package.txt
