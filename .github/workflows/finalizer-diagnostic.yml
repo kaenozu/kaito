@@ -1,0 +1,36 @@
+name: Finalizer diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-finalizer:
+    if: github.head_ref == 'feature/archive-redesign'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: feature/archive-redesign
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: uv python install 3.12
+      - name: Run finalizer without committing
+        shell: pwsh
+        run: |
+          $output = & uv run python tools/finalize_redesign.py 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath finalizer-output.txt
+          "ExitCode: $code" | Add-Content finalizer-output.txt
+          git diff -- . | Out-File finalizer.diff -Encoding utf8
+          exit 0
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: finalizer-diagnostic
+          path: |
+            finalizer-output.txt
+            finalizer.diff
