@@ -62,15 +62,33 @@ write("installer/kaito.iss", installer)
 spec = read("build.spec")
 spec = replace_once(
     spec,
+    "from pathlib import Path\n",
+    "from pathlib import Path\n\nfrom PyInstaller.utils.hooks import copy_metadata\n",
+    "PyInstaller metadata import",
+)
+spec = replace_once(
+    spec,
     '"""PyInstaller build definition for kaito 0.9.1.dev0."""',
     '"""PyInstaller build definition for kaito 0.10.0.dev0."""',
     "build version",
 )
 spec = replace_once(
     spec,
+    "_document_datas = []\n",
+    '_package_metadata = copy_metadata("kaito")\n\n_document_datas = []\n',
+    "PyInstaller metadata collection",
+)
+spec = replace_once(
+    spec,
     '    "bundled/SHA256SUMS",\n',
     '    "bundled/SHA256SUMS",\n    "bundled/SOURCE-PACKAGE.txt",\n',
     "build source package notice",
+)
+spec = replace_once(
+    spec,
+    "        *_document_datas,\n",
+    "        *_document_datas,\n        *_package_metadata,\n",
+    "PyInstaller metadata datas",
 )
 write("build.spec", spec)
 
