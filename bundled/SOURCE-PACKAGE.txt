@@ -1,0 +1,6 @@
+Source: https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe
+Authenticode: NotSigned
+SHA-256: 6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0
+Verified on: GitHub Actions windows-latest, 2026-07-11
+
+The package is obtained from the official ip7z/7zip GitHub Release URL. Because this release asset is not Authenticode-signed, tools/update_7zip.ps1 verifies this fixed package digest before extracting any files. The extracted 7z.exe and 7z.dll are then verified against bundled/SHA256SUMS before replacement.
