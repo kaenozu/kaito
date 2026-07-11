@@ -13,7 +13,11 @@ from typing import Optional
 from kaito.archive.safety import ensure_no_reparse_ancestors
 from kaito.archive.sevenzip_backend import SevenZipBackend
 from kaito.archive.zip_backend import ZipBackend
-from kaito.domain.errors import ExternalToolNotFoundError, UnsupportedFormatError
+from kaito.domain.errors import (
+    CompressionFailedError,
+    ExternalToolNotFoundError,
+    UnsupportedFormatError,
+)
 from kaito.domain.models import (
     ArchiveEntry,
     ArchiveInfo,
@@ -98,6 +102,15 @@ class ArchiveService:
         backend.extract(Path(path), options)
 
     def create(self, options: CompressionOptions) -> None:
+        collisions = self.find_duplicate_names(options.sources)
+        if collisions:
+            names = ", ".join(name for name, _ in collisions[:5])
+            suffix = " ..." if len(collisions) > 5 else ""
+            raise CompressionFailedError(
+                f"アーカイブ内の名前が重複します: {names}{suffix}",
+                archive_path=str(options.output_path),
+            )
+
         extension = options.output_path.suffix.lower()
         if extension == ".zip":
             self._zip_backend.create(options)
@@ -166,13 +179,37 @@ class ArchiveService:
         return None
 
     @staticmethod
-    def find_duplicate_names(sources: list[Path]) -> list[tuple[str, list[Path]]]:
-        name_map: dict[str, list[Path]] = {}
+    def _planned_entry_paths(source: Path) -> list[tuple[str, Path]]:
+        """現在のバックエンドが作るアーカイブ内パスを列挙する。"""
+        if not source.is_dir():
+            return [(source.name, source)]
+
+        planned: list[tuple[str, Path]] = []
+        for item in source.rglob("*"):
+            archive_name = item.relative_to(source.parent).as_posix()
+            if item.is_dir():
+                archive_name = archive_name.rstrip("/") + "/"
+            planned.append((archive_name, item))
+        return planned
+
+    @classmethod
+    def find_duplicate_names(
+        cls, sources: list[Path]
+    ) -> list[tuple[str, list[Path]]]:
+        """Windowsへの展開時に同じ名前となるエントリを検出する。"""
+        by_normalized_name: dict[str, tuple[str, list[Path]]] = {}
         for source in sources:
-            if source.is_dir():
-                for file_path in source.rglob("*"):
-                    if file_path.is_file():
-                        name_map.setdefault(file_path.name, []).append(file_path)
-            else:
-                name_map.setdefault(source.name, []).append(source)
-        return [(name, paths) for name, paths in name_map.items() if len(paths) > 1]
+            for archive_name, origin in cls._planned_entry_paths(source):
+                normalized = archive_name.replace("\\", "/").rstrip("/").casefold()
+                if not normalized:
+                    continue
+                if normalized not in by_normalized_name:
+                    by_normalized_name[normalized] = (archive_name, [origin])
+                else:
+                    by_normalized_name[normalized][1].append(origin)
+
+        return [
+            (archive_name, paths)
+            for archive_name, paths in by_normalized_name.values()
+            if len(paths) > 1
+        ]
