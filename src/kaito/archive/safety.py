@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import filecmp
 import shutil
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def merge_staging_tree(staging: Path, destination: Path) -> None:
 
     ensure_no_reparse_ancestors(destination)
     directory_targets: list[tuple[Path, Path]] = []
-    file_targets: list[tuple[Path, Path]] = []
+    file_targets: list[tuple[Path, Path, bool]] = []
 
     # 何も変更する前に、全パス・親リンク・衝突を検証する。
     for directory in directories:
@@ -95,14 +96,21 @@ def merge_staging_tree(staging: Path, destination: Path) -> None:
         relative = source.relative_to(staging).as_posix()
         target = validate_entry_path(relative, destination)
         ensure_no_reparse_ancestors(target.parent)
+        should_move = True
         if target.exists():
-            raise ExtractionFailedError(f"展開先に同名項目があります: {relative}")
-        file_targets.append((source, target))
+            if target.is_file() and filecmp.cmp(source, target, shallow=False):
+                # 同一内容なら再展開を冪等操作として扱い、既存ファイルには触れない。
+                should_move = False
+            else:
+                raise ExtractionFailedError(f"展開先に同名項目があります: {relative}")
+        file_targets.append((source, target, should_move))
 
     destination.mkdir(parents=True, exist_ok=True)
     for _, target in directory_targets:
         target.mkdir(parents=True, exist_ok=True)
-    for source, target in file_targets:
+    for source, target, should_move in file_targets:
+        if not should_move:
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(source), str(target))
 
