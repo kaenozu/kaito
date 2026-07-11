@@ -7,6 +7,7 @@ src/kaito/archive/service.py
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -87,6 +88,22 @@ class ArchiveService:
                 "7z (7-Zip)", error_message, archive_path=str(archive_path)
             )
 
+    def _effective_extraction_options(
+        self, options: ExtractionOptions
+    ) -> ExtractionOptions:
+        """サービス全体の上限を超えない展開オプションを返す。"""
+        limits = self._safety_limits
+        return replace(
+            options,
+            max_total_size=min(options.max_total_size, limits.max_total_size),
+            max_file_size=min(options.max_file_size, limits.max_single_file_size),
+            max_entries=min(options.max_entries, limits.max_entries),
+            max_compression_ratio=min(
+                options.max_compression_ratio, limits.max_compression_ratio
+            ),
+            max_path_length=min(options.max_path_length, limits.max_path_length),
+        )
+
     def list_archive(
         self, path: str | Path, password: Optional[str] = None
     ) -> ArchiveInfo:
@@ -99,7 +116,7 @@ class ArchiveService:
         backend = self._get_backend(path)
         if isinstance(backend, SevenZipBackend):
             self._raise_if_backend_unavailable(backend, path)
-        backend.extract(Path(path), options)
+        backend.extract(Path(path), self._effective_extraction_options(options))
 
     def create(self, options: CompressionOptions) -> None:
         collisions = self.find_duplicate_names(options.sources)
