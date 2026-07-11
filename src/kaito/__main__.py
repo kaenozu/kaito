@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from typing import Callable
 
 
 def _version() -> str:
@@ -101,15 +104,64 @@ def _backend_info(as_json: bool) -> int:
     return 0
 
 
+def _extract_output_path(args: list[str]) -> tuple[list[str], Path | None]:
+    """`--output PATH`を除去し、診断結果の出力先を返す。"""
+    filtered: list[str] = []
+    output_path: Path | None = None
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument == "--output":
+            if output_path is not None or index + 1 >= len(args):
+                raise ValueError("--output には出力ファイルを1つ指定してください")
+            output_path = Path(args[index + 1])
+            index += 2
+            continue
+        filtered.append(argument)
+        index += 1
+    return filtered, output_path
+
+
+def _emit_output(text: str, output_path: Path | None) -> None:
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text, encoding="utf-8")
+        return
+
+    stream = sys.stdout or sys.__stdout__
+    if stream is not None:
+        stream.write(text)
+        stream.flush()
+
+
+def _run_captured(command: Callable[[], int], output_path: Path | None) -> int:
+    buffer = StringIO()
+    with redirect_stdout(buffer):
+        exit_code = command()
+    _emit_output(buffer.getvalue(), output_path)
+    return exit_code
+
+
 def main() -> None:
-    args = sys.argv[1:]
+    try:
+        args, output_path = _extract_output_path(sys.argv[1:])
+    except ValueError as exc:
+        _emit_output(f"Error: {exc}\n", None)
+        raise SystemExit(2) from exc
+
     if args and args[0] == "--version":
-        print(f"kaito {_version()}")
+        _emit_output(f"kaito {_version()}\n", output_path)
         return
     if args and args[0] == "--self-test":
-        raise SystemExit(_self_test())
+        raise SystemExit(_run_captured(_self_test, output_path))
     if args and args[0] == "--backend-info":
-        raise SystemExit(_backend_info("--json" in args[1:]))
+        raise SystemExit(
+            _run_captured(lambda: _backend_info("--json" in args[1:]), output_path)
+        )
+
+    if output_path is not None:
+        _emit_output("Error: --output is only valid with diagnostic commands\n", output_path)
+        raise SystemExit(2)
 
     from kaito.gui.unzip_app import main as gui_main
 
