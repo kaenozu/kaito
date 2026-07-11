@@ -90,6 +90,21 @@ class TestPathValidation:
         with pytest.raises(UnsafeArchiveError, match="リンク"):
             check_archive_safety(entries, ExtractionOptions(dest_dir=tmp_path / "out"))
 
+    def test_case_insensitive_duplicate_paths_are_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        entries = [_entry("Folder/File.txt"), _entry("folder/file.TXT")]
+        with pytest.raises(UnsafeArchiveError, match="衝突"):
+            check_archive_safety(entries, ExtractionOptions(dest_dir=tmp_path / "out"))
+
+    def test_overlong_archive_path_is_rejected(self, tmp_path: Path) -> None:
+        name = f"folder/{'a' * 255}.txt"
+        with pytest.raises(UnsafeArchiveError, match="長すぎ"):
+            check_archive_safety(
+                [_entry(name)],
+                ExtractionOptions(dest_dir=tmp_path / "out", max_path_length=260),
+            )
+
 
 class TestArchiveBombDetection:
     def test_normal_entries(self, tmp_path: Path) -> None:
@@ -184,6 +199,17 @@ class TestZipExtractionSecurity:
         with pytest.raises(UnsafeArchiveError):
             extract_all(archive_path, tmp_path / "out")
         assert not (tmp_path / "outside").exists()
+
+    def test_duplicate_zip_entries_are_rejected(self, tmp_path: Path) -> None:
+        archive_path = tmp_path / "duplicate.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("same.txt", b"first")
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr("same.txt", b"second")
+        destination = tmp_path / "out"
+        with pytest.raises(UnsafeArchiveError, match="重複"):
+            extract_all(archive_path, destination)
+        assert not destination.exists()
 
     def test_zip_symlink_entry_is_rejected_without_os_symlink_privilege(
         self, tmp_path: Path
