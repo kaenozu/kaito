@@ -111,7 +111,7 @@ jobs:
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $versionFile)) { throw "Version command failed: $($process.ExitCode)" }
           $version = Get-Content $versionFile -Raw
-          if ($version.Trim() -ne 'kaito 0.9.1.dev0') { throw "Version check failed: $version" }
+          if ($version.Trim() -ne 'kaito 0.10.0.dev0') { throw "Version check failed: $version" }
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', '--output', $selfTestFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $selfTestFile)) { throw "Self-test process failed: $($process.ExitCode)" }
