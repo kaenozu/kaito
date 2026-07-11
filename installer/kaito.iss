@@ -43,6 +43,7 @@ Source: "..\SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bundled\7-ZIP-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\bundled\SHA256SUMS"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\bundled\SOURCE-PACKAGE.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
