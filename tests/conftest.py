@@ -99,52 +99,27 @@ def encrypted_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
 
 
 @pytest.fixture
-def normal_rar(tmp_dir: Path, sevenz_available: bool) -> Path:
-    """RAR fixture: uses a pre-created minimal RAR file.
-    The file is a minimal valid RAR 5.0 archive containing 'readme.txt'.
-    SHA-256: stored in git, verify on first use."""
-    if not sevenz_available:
-        pytest.skip("7-Zip not available")
-    src_dir = tmp_dir / "rarsrc"
-    src_dir.mkdir()
-    readme = src_dir / "readme.txt"
-    readme.write_text("RAR test file")
+def normal_rar(tmp_dir: Path) -> Path:
+    """RAR fixture placeholder.
 
-    # Create the RAR using 7z.zip format trick: 7z can create RAR using
-    # the -trar flag with proper 7z.dll from installed version.
-    # If this fails, use a workaround.
+    7-Zip can only extract RAR, not create it.
+    Without WinRAR or a RAR creation tool, valid RAR test fixtures
+    cannot be generated programmatically. This fixture provides a
+    .rar file for format detection and error handling tests only.
+
+    For actual RAR extraction E2E, you need WinRAR to create the file,
+    then place it in tests/fixtures/ with SHA-256 verification.
+    """
     path = tmp_dir / "test.rar"
-    r = subprocess.run(
-        [str(_SEVENZ), "a", "-trar", str(path), str(readme), "-y"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if r.returncode != 0:
-        # 7-Zip can't create RAR on this system
-        pytest.skip(
-            "RAR creation not supported by this 7-Zip version (use WinRAR or install RAR plugin)"
-        )
+    path.write_bytes(b"Rar!\x1a\x07\x00" + b"\x00" * 50)
     return path
 
 
 @pytest.fixture
-def encrypted_rar(tmp_dir: Path, sevenz_available: bool) -> Path:
-    if not sevenz_available:
-        pytest.skip("7-Zip not available")
-    src_dir = tmp_dir / "encrarsrc"
-    src_dir.mkdir()
-    secret = src_dir / "secret.txt"
-    secret.write_text("Secret RAR")
+def encrypted_rar(tmp_dir: Path) -> Path:
+    """Encrypted RAR fixture placeholder (same limitation as normal_rar)."""
     path = tmp_dir / "encrypted.rar"
-    r = subprocess.run(
-        [str(_SEVENZ), "a", "-trar", "-psecret123", str(path), str(secret), "-y"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if r.returncode != 0:
-        pytest.skip("RAR creation not supported by this 7-Zip version")
+    path.write_bytes(b"Rar!\x1a\x07\x00" + b"\x00" * 50)
     return path
 
 
