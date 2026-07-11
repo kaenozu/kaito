@@ -5,7 +5,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from kaito.domain.errors import ArchiveBombError, ExtractionFailedError, UnsafeArchiveError
+from kaito.domain.errors import (
+    ArchiveBombError,
+    ExtractionFailedError,
+    UnsafeArchiveError,
+)
 from kaito.domain.models import (
     ExtractionOptions,
     SafetyLimits,
@@ -65,14 +69,16 @@ def validate_staging_tree(staging: Path, options: ExtractionOptions) -> None:
 
 def merge_staging_tree(staging: Path, destination: Path) -> None:
     """検査済みステージングツリーを既存ファイルを壊さず移動する。"""
-    ensure_no_reparse_ancestors(destination)
-
     directories = sorted(
         (item for item in staging.rglob("*") if item.is_dir()),
         key=lambda item: len(item.parts),
     )
     files = sorted(item for item in staging.rglob("*") if item.is_file())
 
+    if not directories and not files:
+        return
+
+    ensure_no_reparse_ancestors(destination)
     directory_targets: list[tuple[Path, Path]] = []
     file_targets: list[tuple[Path, Path]] = []
 
