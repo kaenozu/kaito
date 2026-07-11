@@ -49,7 +49,8 @@ try {
         (Join-Path $InstallDir 'SECURITY.md'),
         (Join-Path $InstallDir 'THIRD_PARTY_NOTICES.md'),
         (Join-Path $InstallDir 'licenses\7-ZIP-LICENSE.txt'),
-        (Join-Path $InstallDir 'licenses\SHA256SUMS')
+        (Join-Path $InstallDir 'licenses\SHA256SUMS'),
+        (Join-Path $InstallDir 'licenses\SOURCE-PACKAGE.txt')
     )
     foreach ($RequiredFile in $RequiredFiles) {
         if (-not (Test-Path $RequiredFile -PathType Leaf)) {
