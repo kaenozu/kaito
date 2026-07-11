@@ -163,19 +163,3 @@ release = replace_once(
     "release installed source notice",
 )
 write(".github/workflows/release.yml", release)
-
-write(
-    "tests/test_version.py",
-    '''"""バージョン情報の一元化テスト。"""\n\n'
-    'from importlib.metadata import version\n\n'
-    'from kaito.__main__ import _version\n'
-    'from kaito.gui.unzip_app import __version__ as gui_version\n'
-    'from kaito.version import __version__\n\n\n'
-    'def test_all_runtime_versions_use_package_metadata() -> None:\n'
-    '    expected = version("kaito")\n'
-    '    assert expected == "0.10.0.dev0"\n'
-    '    assert __version__ == expected\n'
-    '    assert gui_version == expected\n'
-    '    assert _version() == expected\n'
-'''.replace("'\n    '", ""),
-)
