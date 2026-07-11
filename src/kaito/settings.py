@@ -75,9 +75,7 @@ def _validate_settings(data: object) -> dict[str, Any]:
     defaults["theme"] = theme if theme in _ALLOWED_THEMES else "system"
 
     language = data.get("language")
-    defaults["language"] = (
-        language if language in _ALLOWED_LANGUAGES else "日本語"
-    )
+    defaults["language"] = language if language in _ALLOWED_LANGUAGES else "日本語"
 
     last_dest = data.get("last_dest")
     defaults["last_dest"] = last_dest if isinstance(last_dest, str) else ""
