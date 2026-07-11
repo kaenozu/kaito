@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller build definition for kaito 0.9.1.dev0."""
+"""PyInstaller build definition for kaito."""
 
 import sys
 from pathlib import Path
