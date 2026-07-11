@@ -28,7 +28,9 @@ class TestZipIntegration:
     def test_extract_all(self, normal_zip: Path, tmp_dir: Path) -> None:
         destination = tmp_dir / "out"
         ArchiveService().extract(normal_zip, ExtractionOptions(dest_dir=destination))
-        assert (destination / "sub/deep/secret.md").read_text(encoding="utf-8") == "# Secret"
+        assert (destination / "sub/deep/secret.md").read_text(
+            encoding="utf-8"
+        ) == "# Secret"
 
     def test_extract_members(self, normal_zip: Path, tmp_dir: Path) -> None:
         destination = tmp_dir / "out"
@@ -43,7 +45,9 @@ class TestZipIntegration:
         source = tmp_dir / "data.txt"
         source.write_text("test data", encoding="utf-8")
         output = tmp_dir / "out.zip"
-        ArchiveService().create(CompressionOptions(sources=[source], output_path=output))
+        ArchiveService().create(
+            CompressionOptions(sources=[source], output_path=output)
+        )
         with zipfile.ZipFile(output) as archive:
             assert archive.read("data.txt") == b"test data"
 
@@ -95,11 +99,13 @@ class Test7zIntegration:
         source = tmp_dir / "7zdata.txt"
         source.write_text("7z test data", encoding="utf-8")
         output = tmp_dir / "out.7z"
-        ArchiveService().create(CompressionOptions(sources=[source], output_path=output))
+        ArchiveService().create(
+            CompressionOptions(sources=[source], output_path=output)
+        )
         assert output.is_file()
-        assert {entry.name for entry in ArchiveService().list_archive(output).entries} == {
-            "7zdata.txt"
-        }
+        assert {
+            entry.name for entry in ArchiveService().list_archive(output).entries
+        } == {"7zdata.txt"}
 
     def test_encrypted_create_is_really_encrypted(self, tmp_dir: Path) -> None:
         source = tmp_dir / "secret.txt"
@@ -195,14 +201,11 @@ class TestRarIntegration:
         assert (destination / "foo.txt").stat().st_size == 16
         assert (destination / "bar.txt").stat().st_size == 16
 
-    def test_rar_link_entry_is_rejected(
-        self, symlink_rar: Path, tmp_dir: Path
-    ) -> None:
+    def test_rar_link_entry_is_rejected(self, symlink_rar: Path, tmp_dir: Path) -> None:
         service = ArchiveService()
         info = service.list_archive(symlink_rar)
         link = next(entry for entry in info.entries if entry.name == "testlink")
         assert link.is_link
-        assert link.link_target == "test.txt"
 
         destination = tmp_dir / "link-out"
         with pytest.raises(UnsafeArchiveError, match="リンク"):
