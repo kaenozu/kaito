@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 
 from kaito.archive.sevenzip_backend import SevenZipBackend, redact_command
-from kaito.domain.errors import CancelledError, ExternalToolNotFoundError
+from kaito.domain.errors import (
+    CancelledError,
+    ExternalToolNotFoundError,
+    ExtractionFailedError,
+)
 
 
 def test_backend_info_uses_verified_bundled_copy() -> None:
@@ -64,6 +68,50 @@ def test_actual_7z_result_does_not_expose_password(encrypted_7z: Path) -> None:
     )
     assert secret not in rendered
     assert "-p***" in " ".join(str(arg) for arg in result.args)
+
+
+def test_slt_parser_preserves_equals_in_path() -> None:
+    output = """Path = sample.7z
+Type = 7z
+----------
+Path = folder/name=with=equals.txt
+Size = 4
+Packed Size = 3
+Folder = -
+Encrypted = -
+
+"""
+
+    entries = SevenZipBackend._parse_slt_output(output)
+
+    assert entries == [
+        {
+            "Path": "folder/name=with=equals.txt",
+            "Size": "4",
+            "Packed Size": "3",
+            "Folder": "-",
+            "Encrypted": "-",
+        }
+    ]
+
+
+def test_slt_parser_rejects_missing_entry_separator() -> None:
+    output = """Path = sample.7z
+Type = 7z
+Physical Size = 32
+"""
+
+    with pytest.raises(ExtractionFailedError, match="区切り"):
+        SevenZipBackend._parse_slt_output(output)
+
+
+def test_slt_parser_accepts_empty_archive_with_separator() -> None:
+    output = """Path = empty.7z
+Type = 7z
+----------
+"""
+
+    assert SevenZipBackend._parse_slt_output(output) == []
 
 
 def test_running_7z_process_is_terminated_on_cancel() -> None:
