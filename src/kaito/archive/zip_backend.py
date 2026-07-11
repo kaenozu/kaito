@@ -128,18 +128,24 @@ class ZipBackend:
             if options.password is not None:
                 archive.setpassword(options.password.encode("utf-8"))
 
-            infos_by_name = {info.filename: info for info in archive.infolist()}
-            targets = options.members or list(infos_by_name)
-            try:
-                infos = [infos_by_name[name] for name in targets]
-            except KeyError as exc:
-                raise ExtractionFailedError(
-                    f"指定されたエントリが見つかりません: {exc.args[0]}",
-                    archive_path=str(path),
-                ) from exc
+            all_infos = archive.infolist()
+            all_entries = [self._entry_from_info(info) for info in all_infos]
+            # Validate the complete archive before converting names to a mapping.
+            # This rejects duplicate/case-colliding entries instead of silently
+            # discarding one through dictionary conversion.
+            check_archive_safety(all_entries, options)
 
-            entries = [self._entry_from_info(info) for info in infos]
-            check_archive_safety(entries, options)
+            if options.members is None:
+                infos = all_infos
+            else:
+                infos_by_name = {info.filename: info for info in all_infos}
+                missing = [name for name in options.members if name not in infos_by_name]
+                if missing:
+                    raise ExtractionFailedError(
+                        f"指定されたエントリが見つかりません: {', '.join(missing)}",
+                        archive_path=str(path),
+                    )
+                infos = [infos_by_name[name] for name in options.members]
 
             with tempfile.TemporaryDirectory(prefix="kaito_zip_extract_") as temporary:
                 staging = Path(temporary)
