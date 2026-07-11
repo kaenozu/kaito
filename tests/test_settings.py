@@ -42,7 +42,7 @@ class TestSettingsManager:
             sm.set("theme", "light")
             assert sm.get("theme") == "light"
             # ファイルに保存されている
-            raw = json.loads(cfg.read_text())
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
             assert raw["theme"] == "light"
 
     def test_add_recent_file(self, tmp_path: Path) -> None:
@@ -86,7 +86,7 @@ class TestSettingsManager:
             sm = SettingsManager()
             sm.set_password("C:\\a.zip", "secret")
             sm.save()
-            raw = json.loads(cfg.read_text())
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
             assert "password" not in raw
 
     def test_save_creates_dir(self, tmp_path: Path) -> None:
@@ -121,7 +121,9 @@ class TestSettingsManager:
     def test_get_path_non_windows(self) -> None:
         with (
             patch("sys.platform", "linux"),
-            patch("platformdirs.user_config_dir", return_value="/home/user/.config/kaito"),
+            patch(
+                "platformdirs.user_config_dir", return_value="/home/user/.config/kaito"
+            ),
         ):
             sm = SettingsManager.__new__(SettingsManager)
             path = sm._get_path()

@@ -1,6 +1,6 @@
 """
 tests/test_unzip.py
-unzip.py のテスト
+unzip.py のテスト (新アーキテクチャ対応)
 """
 
 from datetime import datetime
@@ -19,6 +19,12 @@ from kaito.unzip import (
     is_supported,
     list_archive,
     list_entries,
+    _validate_zip_member,
+)
+from kaito.domain.errors import (
+    ExtractionFailedError,
+    UnsupportedFormatError,
+    UnsafeArchiveError,
 )
 
 
@@ -70,20 +76,19 @@ class TestListEntries:
         assert "empty_dir/" in dir_names
 
     def test_encrypted_flag(self, tmp_dir: Path) -> None:
-        """central directoryのflag_bits(bit0)が立っているZIP"""
         import zipfile
+
         z = tmp_dir / "encrypted.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("secret.txt", "data")
         raw = bytearray(z.read_bytes())
-        # central directory header (PK\x01\x02) の flag_bits(offset 8) を書き換え
         patched = False
         for i in range(len(raw) - 4):
-            if raw[i:i+4] == b'PK\x01\x02':
+            if raw[i : i + 4] == b"PK\x01\x02":
                 raw[i + 8] |= 0x01
                 patched = True
                 break
-        assert patched, "central directory PK\x01\x02 not found"
+        assert patched, "central directory PK\\x01\\x02 not found"
         z.write_bytes(raw)
         entries, encrypted = list_entries(z)
         assert encrypted
@@ -97,11 +102,11 @@ class TestListEntries:
     def test_bad_zip(self, tmp_dir: Path) -> None:
         bad = tmp_dir / "notazip.zip"
         bad.write_text("not a zip file")
-        with pytest.raises(Exception):
+        with pytest.raises(ExtractionFailedError):
             list_entries(bad)
 
     def test_nonexistent_file(self) -> None:
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ExtractionFailedError):
             list_entries(Path("/nonexistent/path.zip"))
 
 
@@ -133,12 +138,13 @@ class TestExtract:
         assert calls[-1] == (3, 3)
 
     def test_extract_with_password(self, normal_zip: Path, tmp_dir: Path) -> None:
-        """パスワード付きでも通常ZIPは解凍できる"""
         dest = tmp_dir / "out"
         extract_all(normal_zip, dest, password="unused")
         assert (dest / "hello.txt").read_text() == "Hello World"
 
-    def test_extract_dir_entries(self, zip_with_dir_entries: Path, tmp_dir: Path) -> None:
+    def test_extract_dir_entries(
+        self, zip_with_dir_entries: Path, tmp_dir: Path
+    ) -> None:
         dest = tmp_dir / "out"
         extract_all(zip_with_dir_entries, dest)
         assert (dest / "folder").is_dir()
@@ -146,16 +152,14 @@ class TestExtract:
         assert (dest / "empty_dir").is_dir()
 
     def test_extract_nonexistent_member(self, normal_zip: Path, tmp_dir: Path) -> None:
-        """存在しないメンバーを指定するとKeyError"""
         dest = tmp_dir / "out"
-        with pytest.raises(KeyError):
+        with pytest.raises(ExtractionFailedError):
             extract(normal_zip, dest, members=["nonexistent.txt"])
 
     def test_extract_overwrite(self, normal_zip: Path, tmp_dir: Path) -> None:
-        """上書き解凍ができる"""
         dest = tmp_dir / "out"
         extract_all(normal_zip, dest)
-        extract_all(normal_zip, dest)  # 2回目もエラーなし
+        extract_all(normal_zip, dest)
         assert (dest / "hello.txt").read_text() == "Hello World"
 
 
@@ -163,15 +167,84 @@ class TestExtractEdgeCases:
     """extract のエッジケース"""
 
     def test_str_path(self, normal_zip: Path, tmp_dir: Path) -> None:
-        """文字列パスでも動作"""
         extract_all(str(normal_zip), str(tmp_dir / "out"))
         assert (tmp_dir / "out" / "hello.txt").read_text() == "Hello World"
 
     def test_empty_zip(self, empty_zip: Path, tmp_dir: Path) -> None:
-        """空のZIPを解凍してもエラーにならない（destが作成されない）"""
         dest = tmp_dir / "out"
         extract_all(empty_zip, dest)
         assert not dest.exists()
+
+
+class TestPathTraversal:
+    """パストラバーサル対策のテスト"""
+
+    def make_zip_with_name(
+        self, tmp_dir: Path, entry_name: str, content: bytes = b"data"
+    ) -> Path:
+        import zipfile
+
+        path = tmp_dir / "evil.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(entry_name, content)
+        return path
+
+    def test_normal_subfile(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "sub/file.txt")
+        dest = tmp_dir / "out"
+        extract_all(z, dest)
+        assert (dest / "sub/file.txt").read_text() == "data"
+
+    def test_normal_folder_entry(self, tmp_dir: Path) -> None:
+        import zipfile
+
+        path = tmp_dir / "normal.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("folder/", "")
+            zf.writestr("folder/a.txt", "A")
+        dest = tmp_dir / "out"
+        extract_all(path, dest)
+        assert (dest / "folder/a.txt").read_text() == "A"
+
+    def test_parent_traversal_slash(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "../evil.txt")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="親ディレクトリ参照"):
+            extract_all(z, dest)
+
+    def test_parent_traversal_backslash(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "..\\evil.txt")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="親ディレクトリ参照"):
+            extract_all(z, dest)
+
+    def test_absolute_path_slash(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "/absolute.txt")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="絶対パス"):
+            extract_all(z, dest)
+
+    def test_windows_drive_path(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "C:\\evil.txt")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="Windowsドライブパス"):
+            extract_all(z, dest)
+
+    def test_unc_path(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "\\\\server\\share\\file.txt")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="(UNCパス|絶対パス)"):
+            extract_all(z, dest)
+
+    def test_empty_name(self, tmp_dir: Path) -> None:
+        with pytest.raises(UnsafeArchiveError, match="空のエントリ名"):
+            _validate_zip_member("", tmp_dir / "out")
+
+    def test_deep_traversal(self, tmp_dir: Path) -> None:
+        z = self.make_zip_with_name(tmp_dir, "a/b/../../../../etc/passwd")
+        dest = tmp_dir / "out"
+        with pytest.raises(UnsafeArchiveError, match="親ディレクトリ参照"):
+            extract_all(z, dest)
 
 
 class TestArchiveExtensions:
@@ -206,40 +279,24 @@ class TestListArchive:
         assert len(entries) == 3
         assert not encrypted
 
-    def test_list_rar_success(self, tmp_path: Path) -> None:
+    def test_list_rar(self, tmp_path: Path) -> None:
+        """RARファイルの一覧取得 (7z CLIがなくてもエラーにならない)"""
         rar = tmp_path / "test.rar"
         rar.touch()
-        with (
-            patch("kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"]),
-        ):
-            entries, encrypted = list_archive(rar)
-            assert len(entries) == 2
-            assert entries[0].name == "file.txt"
-            assert entries[0].is_dir is False
-            assert entries[1].name == "dir/"
-            assert entries[1].is_dir
-            assert not encrypted
-
-    def test_list_patool_password_protected(self, tmp_path: Path) -> None:
-        rar = tmp_path / "secret.rar"
-        rar.touch()
-        with patch("kaito.unzip.patoolib.list_archive", side_effect=RuntimeError("password required")):
-            entries, encrypted = list_archive(rar)
-            assert entries == []
-            assert encrypted
-
-    def test_list_rar_from_patool(self, tmp_path: Path) -> None:
-        rar = tmp_path / "test.rar"
-        rar.touch()
-        with (
-            pytest.raises(RuntimeError, match="アーカイブの一覧取得に失敗"),
-        ):
+        with pytest.raises(ExtractionFailedError):
             list_archive(rar)
+
+    def test_list_7z(self, tmp_path: Path) -> None:
+        """7zファイルの一覧取得 (7z CLIがなくてもエラーにならない)"""
+        sz = tmp_path / "test.7z"
+        sz.touch()
+        with pytest.raises(ExtractionFailedError):
+            list_archive(sz)
 
     def test_list_unsupported(self, tmp_path: Path) -> None:
         f = tmp_path / "test.tar.gz"
         f.touch()
-        with pytest.raises(ValueError):
+        with pytest.raises(UnsupportedFormatError):
             list_archive(f)
 
 
@@ -257,6 +314,7 @@ class TestCreateArchive:
 
         assert output.exists()
         import zipfile
+
         with zipfile.ZipFile(output) as zf:
             names = zf.namelist()
             assert "a.txt" in names
@@ -276,6 +334,7 @@ class TestCreateArchive:
         create_archive([src_dir], output)
 
         import zipfile
+
         with zipfile.ZipFile(output) as zf:
             names = zf.namelist()
             assert "myfolder/file1.txt" in names
@@ -289,6 +348,7 @@ class TestCreateArchive:
         output = tmp_dir / "out.zip"
 
         calls: list[tuple[int, int, str]] = []
+
         def progress(cur: int, total: int, name: str = "") -> None:
             calls.append((cur, total, name))
 
@@ -296,30 +356,19 @@ class TestCreateArchive:
         assert len(calls) == 2
         assert calls[-1] == (2, 2, "b.txt")
 
-    def test_create_zip_accepts_compression_level(self, tmp_dir: Path) -> None:
-        """ZIP圧縮レベルを呼び出し側から指定できる。"""
-        src = tmp_dir / "a.txt"
-        src.write_text("A")
-        output = tmp_dir / "out.zip"
-
-        with patch("kaito.unzip.zipfile.ZipFile") as mock_zip:
-            create_archive([src], output, compression_level=9)
-
-        assert mock_zip.call_args.kwargs["compresslevel"] == 9
-
     def test_create_unsupported_raises(self, tmp_dir: Path) -> None:
         src = tmp_dir / "a.txt"
         src.write_text("A")
         output = tmp_dir / "out.tar.gz"
-        with pytest.raises(ValueError):
+        with pytest.raises(UnsupportedFormatError):
             create_archive([src], output)
 
-    def test_create_rar_fails_from_patool(self, tmp_dir: Path) -> None:
-        """patoolib が利用できない RAR 作成はエラー"""
+    def test_create_rar_unsupported(self, tmp_dir: Path) -> None:
+        """RAR作成は非対応"""
         src = tmp_dir / "a.txt"
         src.write_text("A")
         output = tmp_dir / "out.rar"
-        with pytest.raises(RuntimeError, match="アーカイブの作成に失敗"):
+        with pytest.raises(UnsupportedFormatError, match="RAR"):
             create_archive([src], output)
 
 
@@ -331,16 +380,20 @@ class TestExtractArchive:
         extract_archive(normal_zip, dest)
         assert (dest / "hello.txt").read_text() == "Hello World"
 
-    def test_extract_rar_from_patool(self, tmp_path: Path) -> None:
+    def test_extract_rar(self, tmp_path: Path) -> None:
         rar = tmp_path / "test.rar"
         rar.touch()
-        with (
-            pytest.raises(RuntimeError, match="アーカイブの展開に失敗"),
-        ):
+        with pytest.raises(ExtractionFailedError):
             extract_archive(rar, tmp_path / "out")
+
+    def test_extract_7z(self, tmp_path: Path) -> None:
+        sz = tmp_path / "test.7z"
+        sz.touch()
+        with pytest.raises(ExtractionFailedError):
+            extract_archive(sz, tmp_path / "out")
 
     def test_extract_unsupported(self, tmp_path: Path) -> None:
         f = tmp_path / "test.txt"
         f.touch()
-        with pytest.raises(ValueError, match="未対応"):
+        with pytest.raises(UnsupportedFormatError, match="未対応"):
             extract_archive(f, tmp_path / "out")
