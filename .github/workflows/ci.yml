@@ -27,19 +27,23 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen
 
-      - name: Capture signed 7-Zip source package identity
+      - name: Prepare artifacts directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+
+      - name: Verify pinned 7-Zip source package identity
         shell: pwsh
         run: |
           $url = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
+          $expected = '6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0'
           $package = Join-Path $env:RUNNER_TEMP '7z2602-x64.exe'
           Invoke-WebRequest -Uri $url -OutFile $package -UseBasicParsing
-          $signature = Get-AuthenticodeSignature $package
-          if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature: $($signature.Status)" }
-          if ($signature.SignerCertificate.Subject -notmatch 'Igor Pavlov') { throw "Unexpected signer: $($signature.SignerCertificate.Subject)" }
           $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $expected) { throw "7-Zip source package hash mismatch: $hash" }
+          $signature = Get-AuthenticodeSignature $package
           @(
             "Source: $url"
-            "Signer: $($signature.SignerCertificate.Subject)"
+            "Authenticode: $($signature.Status)"
             "SHA-256: $hash"
           ) | Set-Content 'artifacts/7zip-source-package.txt' -Encoding utf8
           Get-Content 'artifacts/7zip-source-package.txt'
@@ -47,7 +51,6 @@ jobs:
       - name: Verify bundled 7-Zip checksums
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
           $failed = $false
           $diagnostics = @()
           Get-Content bundled/SHA256SUMS | ForEach-Object {
@@ -99,7 +102,7 @@ jobs:
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $versionFile)) { throw "Version command failed: $($process.ExitCode)" }
           $version = Get-Content $versionFile -Raw
-          if ($version -notmatch '^kaito ') { throw "Version check failed: $version" }
+          if ($version.Trim() -ne 'kaito 0.9.1.dev0') { throw "Version check failed: $version" }
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', '--output', $selfTestFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $selfTestFile)) { throw "Self-test process failed: $($process.ExitCode)" }
