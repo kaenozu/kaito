@@ -137,11 +137,10 @@ wheels = [
 
 [[package]]
 name = "kaito"
-version = "0.9.1"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },
-    { name = "patool" },
     { name = "pillow" },
     { name = "platformdirs" },
     { name = "tkinterdnd2" },
@@ -159,7 +158,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "customtkinter", specifier = ">=5.2.2" },
-    { name = "patool", specifier = ">=4.0.5" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "platformdirs", specifier = ">=4.10.0" },
     { name = "tkinterdnd2", specifier = ">=0.4.4.1" },
@@ -202,15 +200,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
-]
-
-[[package]]
-name = "patool"
-version = "4.0.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/e2/215c7d5efd40cf9b33b4943055b47c22cb0851383facdaedd919e30de90a/patool-4.0.5.tar.gz", hash = "sha256:1c8bbbbe1f421181bf7055ada975befb024c1677449e9d36f42bb45ac69f8b4c", size = 2011328, upload-time = "2026-05-18T08:56:14.929Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/50/cb792aaf25a8f42f5738dafb3030a1243d484ab366ff321ebcd45dfcfc12/patool-4.0.5-py2.py3-none-any.whl", hash = "sha256:9413a114c7aedf2263f151a56798055a593de671ef0a9ef94870284ad21818fb", size = 101399, upload-time = "2026-05-18T08:56:16.465Z" },
 ]
 
 [[package]]
