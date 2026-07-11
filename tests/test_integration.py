@@ -1,9 +1,8 @@
-"""
-tests/test_integration.py
-アーカイブ処理の統合テスト（実7-Zipが必要なテストを含む）
-実際の展開結果を検証し、単体テストではカバーできない統合動作を確認する。
-"""
+"""アーカイブ処理の実ファイル統合テスト。"""
 
+from __future__ import annotations
+
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -12,212 +11,216 @@ from kaito.archive.service import ArchiveService
 from kaito.domain.errors import (
     ExtractionFailedError,
     InvalidPasswordError,
+    PasswordRequiredError,
+    UnsafeArchiveError,
     UnsupportedFormatError,
 )
-from kaito.domain.models import ExtractionOptions
-
-
-# =========================================================
-# ZIP統合テスト（標準ライブラリのみ、常に実行可能）
-# =========================================================
+from kaito.domain.models import CompressionOptions, ExtractionOptions
 
 
 class TestZipIntegration:
-    """ZIP: 一覧、展開、圧縮の実ファイル統合テスト"""
-
     def test_list(self, normal_zip: Path) -> None:
-        svc = ArchiveService()
-        info = svc.list_archive(normal_zip)
+        info = ArchiveService().list_archive(normal_zip)
         assert len(info.entries) == 3
-        names = [e.name for e in info.entries]
-        assert "hello.txt" in names
-        assert "sub/file.txt" in names
+        assert {entry.name for entry in info.entries} >= {"hello.txt", "sub/file.txt"}
         assert not info.is_encrypted
 
     def test_extract_all(self, normal_zip: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out")
-        svc.extract(normal_zip, opts)
-        assert (tmp_dir / "out/sub/deep/secret.md").read_text() == "# Secret"
+        destination = tmp_dir / "out"
+        ArchiveService().extract(normal_zip, ExtractionOptions(dest_dir=destination))
+        assert (destination / "sub/deep/secret.md").read_text(encoding="utf-8") == "# Secret"
 
     def test_extract_members(self, normal_zip: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out", members=["hello.txt"])
-        svc.extract(normal_zip, opts)
-        assert (tmp_dir / "out/hello.txt").read_text() == "Hello World"
-        assert not (tmp_dir / "out/sub").exists()
+        destination = tmp_dir / "out"
+        ArchiveService().extract(
+            normal_zip,
+            ExtractionOptions(dest_dir=destination, members=["hello.txt"]),
+        )
+        assert (destination / "hello.txt").read_text(encoding="utf-8") == "Hello World"
+        assert not (destination / "sub").exists()
 
     def test_compress(self, tmp_dir: Path) -> None:
-        src = tmp_dir / "data.txt"
-        src.write_text("test data")
-        out = tmp_dir / "out.zip"
-        svc = ArchiveService()
-        from kaito.domain.models import CompressionOptions
+        source = tmp_dir / "data.txt"
+        source.write_text("test data", encoding="utf-8")
+        output = tmp_dir / "out.zip"
+        ArchiveService().create(CompressionOptions(sources=[source], output_path=output))
+        with zipfile.ZipFile(output) as archive:
+            assert archive.read("data.txt") == b"test data"
 
-        opts = CompressionOptions(sources=[src], output_path=out)
-        svc.create(opts)
-        assert out.exists()
-        import zipfile
-
-        with zipfile.ZipFile(out) as zf:
-            assert zf.read("data.txt") == b"test data"
-
-    def test_empty_zip(self, empty_zip: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        info = svc.list_archive(empty_zip)
-        assert info.entries == []
+    def test_empty_zip(self, empty_zip: Path) -> None:
+        assert ArchiveService().list_archive(empty_zip).entries == []
 
     def test_corrupt_zip(self, corrupt_zip: Path) -> None:
-        svc = ArchiveService()
         with pytest.raises(ExtractionFailedError):
-            svc.list_archive(corrupt_zip)
+            ArchiveService().list_archive(corrupt_zip)
 
     def test_unsupported_format(self, tmp_dir: Path) -> None:
-        f = tmp_dir / "test.txt"
-        f.write_text("plain text")
-        svc = ArchiveService()
+        path = tmp_dir / "test.txt"
+        path.write_text("plain text", encoding="utf-8")
         with pytest.raises(UnsupportedFormatError):
-            svc.list_archive(f)
+            ArchiveService().list_archive(path)
 
 
-# =========================================================
-# 7z統合テスト（7-Zipが必要）
-# =========================================================
-
-
-@pytest.mark.skipif(
-    not Path("C:/Program Files/7-Zip/7z.exe").exists(),
-    reason="7-Zip not installed",
-)
 class Test7zIntegration:
-    """7z: 一覧、展開、圧縮の実ファイル統合テスト"""
-
     def test_list(self, normal_7z: Path) -> None:
-        svc = ArchiveService()
-        info = svc.list_archive(normal_7z)
-        assert len(info.entries) >= 2
-        names = [e.name for e in info.entries]
-        assert "hello.txt" in names
+        info = ArchiveService().list_archive(normal_7z)
+        assert {entry.name for entry in info.entries} >= {"hello.txt", "sub/file.txt"}
         assert not info.is_encrypted
 
     def test_extract(self, normal_7z: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out")
-        svc.extract(normal_7z, opts)
-        assert (tmp_dir / "out/hello.txt").read_text() == "Hello World"
+        destination = tmp_dir / "out"
+        ArchiveService().extract(normal_7z, ExtractionOptions(dest_dir=destination))
+        assert (destination / "hello.txt").read_text(encoding="utf-8") == "Hello World"
 
     def test_encrypted_list(self, encrypted_7z: Path) -> None:
-        """暗号化7zの一覧取得（パスワードなしでも一覧は取得可能、暗号化フラグが立つ）"""
-        svc = ArchiveService()
-        info = svc.list_archive(encrypted_7z)
+        info = ArchiveService().list_archive(encrypted_7z)
         assert info.is_encrypted
 
     def test_encrypted_extract(self, encrypted_7z: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out", password="secret123")
-        svc.extract(encrypted_7z, opts)
-        assert (tmp_dir / "out/secret.txt").read_text() == "Secret Data"
+        destination = tmp_dir / "out"
+        ArchiveService().extract(
+            encrypted_7z,
+            ExtractionOptions(dest_dir=destination, password="secret123"),
+        )
+        assert (destination / "secret.txt").read_text(encoding="utf-8") == "Secret Data"
 
-    def test_encrypted_wrong_password(self, encrypted_7z: Path) -> None:
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=Path("."), password="wrongpass")
+    def test_encrypted_wrong_password(self, encrypted_7z: Path, tmp_dir: Path) -> None:
         with pytest.raises(InvalidPasswordError):
-            svc.extract(encrypted_7z, opts)
+            ArchiveService().extract(
+                encrypted_7z,
+                ExtractionOptions(dest_dir=tmp_dir / "wrong", password="wrongpass"),
+            )
 
     def test_compress(self, tmp_dir: Path) -> None:
-        src = tmp_dir / "7zdata.txt"
-        src.write_text("7z test data")
-        out = tmp_dir / "out.7z"
-        svc = ArchiveService()
-        from kaito.domain.models import CompressionOptions
+        source = tmp_dir / "7zdata.txt"
+        source.write_text("7z test data", encoding="utf-8")
+        output = tmp_dir / "out.7z"
+        ArchiveService().create(CompressionOptions(sources=[source], output_path=output))
+        assert output.is_file()
+        assert {entry.name for entry in ArchiveService().list_archive(output).entries} == {
+            "7zdata.txt"
+        }
 
-        opts = CompressionOptions(sources=[src], output_path=out)
-        svc.create(opts)
-        assert out.exists()
+    def test_encrypted_create_is_really_encrypted(self, tmp_dir: Path) -> None:
+        source = tmp_dir / "secret.txt"
+        source.write_text("created encrypted data", encoding="utf-8")
+        output = tmp_dir / "encrypted-created.7z"
+        service = ArchiveService()
+        service.create(
+            CompressionOptions(
+                sources=[source], output_path=output, password="create-secret"
+            )
+        )
+
+        info = service.list_archive(output, password="create-secret")
+        assert info.is_encrypted
+        with pytest.raises((InvalidPasswordError, PasswordRequiredError)):
+            service.extract(
+                output,
+                ExtractionOptions(dest_dir=tmp_dir / "no-password"),
+            )
+        with pytest.raises(InvalidPasswordError):
+            service.extract(
+                output,
+                ExtractionOptions(dest_dir=tmp_dir / "wrong-password", password="bad"),
+            )
+        destination = tmp_dir / "correct-password"
+        service.extract(
+            output,
+            ExtractionOptions(dest_dir=destination, password="create-secret"),
+        )
+        assert (destination / "secret.txt").read_text(encoding="utf-8") == (
+            "created encrypted data"
+        )
 
     def test_japanese_filenames(self, japanese_7z: Path, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        info = svc.list_archive(japanese_7z)
-        assert any("日本語" in e.name for e in info.entries)
-
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out")
-        svc.extract(japanese_7z, opts)
-        files = list((tmp_dir / "out").iterdir())
-        assert any("日本語" in f.name for f in files)
+        service = ArchiveService()
+        info = service.list_archive(japanese_7z)
+        assert any("日本語" in entry.name for entry in info.entries)
+        destination = tmp_dir / "out"
+        service.extract(japanese_7z, ExtractionOptions(dest_dir=destination))
+        assert (destination / "日本語.txt").is_file()
 
     def test_corrupt_7z(self, corrupt_7z: Path) -> None:
-        svc = ArchiveService()
         with pytest.raises(ExtractionFailedError):
-            svc.list_archive(corrupt_7z)
+            ArchiveService().list_archive(corrupt_7z)
 
 
-# =========================================================
-# RAR統合テスト（7-Zipが必要、RARは展開のみ）
-# =========================================================
-
-
-@pytest.mark.skipif(
-    not Path("C:/Program Files/7-Zip/7z.exe").exists(),
-    reason="7-Zip not installed",
-)
 class TestRarIntegration:
-    """RAR: 展開のみ対応。テストはフォーマット検出とエラー処理を確認する。
+    """libarchiveの再配布可能な実RAR fixtureを7-Zipで検証する。"""
 
-    注意: 7-ZipはRARの作成をサポートしません（WinRARが必要）。
-    そのため、有効なRARテストフィクスチャをプログラムで生成できません。
-    以下のテストは無効なRARファイルを使用してエラー処理を検証します。
-    実際のRAR展開E2EはWinRARで作成した有効なRARファイルが必要です。
-    """
+    def test_list_real_rar(self, normal_rar: Path) -> None:
+        info = ArchiveService().list_archive(normal_rar)
+        assert info.format_name == "rar"
+        assert [entry.name for entry in info.entries] == ["test.txt"]
+        assert info.entries[0].size == 20
+        assert not info.is_encrypted
 
-    def test_detect_invalid_rar_format(self, normal_rar: Path) -> None:
-        """無効なRARファイルはExtractionFailedError"""
-        svc = ArchiveService()
-        with pytest.raises(ExtractionFailedError):
-            svc.list_archive(normal_rar)
+    def test_extract_real_rar(self, normal_rar: Path, tmp_dir: Path) -> None:
+        destination = tmp_dir / "out"
+        ArchiveService().extract(normal_rar, ExtractionOptions(dest_dir=destination))
+        assert (destination / "test.txt").read_bytes() == b"test text document\r\n"
 
-    def test_extract_invalid_rar(self, normal_rar: Path, tmp_dir: Path) -> None:
-        """無効なRARファイルの展開はExtractionFailedError"""
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out")
-        with pytest.raises(ExtractionFailedError):
-            svc.extract(normal_rar, opts)
+    def test_encrypted_rar_list(self, encrypted_rar: Path) -> None:
+        info = ArchiveService().list_archive(encrypted_rar)
+        assert {entry.name for entry in info.entries} == {"foo.txt", "bar.txt"}
+        assert info.is_encrypted
+        assert all(entry.size == 16 for entry in info.entries)
 
-    def test_encrypted_list_invalid(self, encrypted_rar: Path) -> None:
-        """無効な暗号化RARファイルはExtractionFailedError"""
-        svc = ArchiveService()
-        with pytest.raises(ExtractionFailedError):
-            svc.list_archive(encrypted_rar)
+    def test_encrypted_rar_requires_password(
+        self, encrypted_rar: Path, tmp_dir: Path
+    ) -> None:
+        with pytest.raises(PasswordRequiredError):
+            ArchiveService().extract(
+                encrypted_rar, ExtractionOptions(dest_dir=tmp_dir / "no-password")
+            )
 
-    def test_encrypted_extract_invalid(self, encrypted_rar: Path, tmp_dir: Path) -> None:
-        """無効な暗号化RARファイルはExtractionFailedError"""
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=tmp_dir / "out", password="secret123")
-        with pytest.raises(ExtractionFailedError):
-            svc.extract(encrypted_rar, opts)
+    def test_encrypted_rar_wrong_password(
+        self, encrypted_rar: Path, tmp_dir: Path
+    ) -> None:
+        with pytest.raises(InvalidPasswordError):
+            ArchiveService().extract(
+                encrypted_rar,
+                ExtractionOptions(dest_dir=tmp_dir / "wrong", password="wrong"),
+            )
 
-    def test_wrong_password_invalid(self, encrypted_rar: Path) -> None:
-        """無効なRARファイルはパスワードの正誤に関わらずExtractionFailedError"""
-        svc = ArchiveService()
-        opts = ExtractionOptions(dest_dir=Path("."), password="wrongpass")
-        with pytest.raises(ExtractionFailedError):
-            svc.extract(encrypted_rar, opts)
+    def test_encrypted_rar_extracts_with_correct_password(
+        self, encrypted_rar: Path, tmp_dir: Path
+    ) -> None:
+        destination = tmp_dir / "correct"
+        ArchiveService().extract(
+            encrypted_rar,
+            ExtractionOptions(dest_dir=destination, password="12345678"),
+        )
+        assert (destination / "foo.txt").stat().st_size == 16
+        assert (destination / "bar.txt").stat().st_size == 16
+
+    def test_rar_link_entry_is_rejected(
+        self, symlink_rar: Path, tmp_dir: Path
+    ) -> None:
+        service = ArchiveService()
+        info = service.list_archive(symlink_rar)
+        link = next(entry for entry in info.entries if entry.name == "testlink")
+        assert link.is_link
+        assert link.link_target == "test.txt"
+
+        destination = tmp_dir / "link-out"
+        with pytest.raises(UnsafeArchiveError, match="リンク"):
+            service.extract(symlink_rar, ExtractionOptions(dest_dir=destination))
+        assert not destination.exists()
 
     def test_create_rar_not_supported(self, tmp_dir: Path) -> None:
-        svc = ArchiveService()
-        from kaito.domain.models import CompressionOptions
-
-        src = tmp_dir / "a.txt"
-        src.write_text("data")
-        opts = CompressionOptions(sources=[src], output_path=tmp_dir / "out.rar")
+        source = tmp_dir / "a.txt"
+        source.write_text("data", encoding="utf-8")
         with pytest.raises(UnsupportedFormatError, match="RAR"):
-            svc.create(opts)
+            ArchiveService().create(
+                CompressionOptions(sources=[source], output_path=tmp_dir / "out.rar")
+            )
+        assert not (tmp_dir / "out.rar").exists()
 
     def test_corrupt_rar(self, corrupt_rar: Path) -> None:
-        svc = ArchiveService()
         with pytest.raises(ExtractionFailedError):
-            svc.list_archive(corrupt_rar)
+            ArchiveService().list_archive(corrupt_rar)
 
     def test_rar_create_not_in_filetypes(self) -> None:
-        """RARが作成形式一覧に含まれていないことを確認"""
-        svc = ArchiveService()
-        assert not svc.is_creation_supported(Path("test.rar"))
+        assert not ArchiveService().is_creation_supported(Path("test.rar"))
