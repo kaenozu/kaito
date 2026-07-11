@@ -1,0 +1,31 @@
+name: Apply formatting once
+
+on:
+  push:
+    branches: [feature/archive-redesign]
+    paths: [tools/format-once.trigger]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: feature/archive-redesign
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Format and commit
+        shell: pwsh
+        run: |
+          uv run ruff format .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rm tools/format-once.trigger .github/workflows/apply-format-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'style: apply Ruff formatting across repository'
+          git push origin HEAD:feature/archive-redesign
