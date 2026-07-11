@@ -148,6 +148,7 @@ def test_compress_done_resets_flag_and_schedules_close() -> None:
 
 def test_close_during_work_cancels_and_waits_for_worker() -> None:
     app = _bare_app()
+    app.after = MagicMock()
     app._is_busy = True
     worker = MagicMock()
     worker.is_alive.return_value = True
