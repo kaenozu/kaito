@@ -160,7 +160,9 @@ def main() -> None:
         )
 
     if output_path is not None:
-        _emit_output("Error: --output is only valid with diagnostic commands\n", output_path)
+        _emit_output(
+            "Error: --output is only valid with diagnostic commands\n", output_path
+        )
         raise SystemExit(2)
 
     from kaito.gui.unzip_app import main as gui_main
