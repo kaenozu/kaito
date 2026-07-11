@@ -1,271 +1,208 @@
-"""
-tests/test_security.py
-セキュリティテスト：パストラバーサル、アーカイブ爆弾対策を実ファイル展開で検証
-"""
+"""パストラバーサル、リンク、アーカイブ爆弾のセキュリティテスト。"""
 
+from __future__ import annotations
+
+import stat
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from kaito.domain.errors import UnsafeArchiveError, ArchiveBombError
+from kaito.domain.errors import ArchiveBombError, UnsafeArchiveError
 from kaito.domain.models import (
     ArchiveEntry,
     ExtractionOptions,
-    validate_entry_path,
     check_archive_safety,
+    validate_entry_path,
 )
+from kaito.unzip import extract_all
+
+
+def _entry(
+    name: str,
+    *,
+    size: int = 1,
+    compressed_size: int = 1,
+    is_dir: bool = False,
+    is_link: bool = False,
+    link_target: str | None = None,
+) -> ArchiveEntry:
+    return ArchiveEntry(
+        name=name,
+        size=size,
+        compressed_size=compressed_size,
+        modified=datetime(2026, 1, 1),
+        is_dir=is_dir,
+        is_link=is_link,
+        link_target=link_target,
+    )
 
 
 class TestPathValidation:
-    """validate_entry_path の網羅的テスト"""
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "../outside.txt",
+            "..\\outside.txt",
+            "a/b/../../../../etc/passwd",
+            "/absolute.txt",
+            "\\absolute.txt",
+            "C:\\outside.txt",
+            "\\\\server\\share\\file.txt",
+            "..\\folder/../file.txt",
+            "CON.txt",
+            "NUL",
+            "COM1",
+            "LPT1.txt",
+            "file.txt:Zone.Identifier",
+            "file.txt:$DATA",
+            "trailing-dot.",
+            "trailing-space ",
+            "bad\x00name",
+            "",
+        ],
+    )
+    def test_unsafe_names_are_rejected(self, name: str, tmp_path: Path) -> None:
+        with pytest.raises(UnsafeArchiveError):
+            validate_entry_path(name, tmp_path / "safe")
 
-    def _check(self, name: str, expect_safe: bool = True) -> None:
-        dest = Path("C:/safe")
-        if expect_safe:
-            result = validate_entry_path(name, dest)
-            assert result is not None
-        else:
-            with pytest.raises(UnsafeArchiveError):
-                validate_entry_path(name, dest)
+    @pytest.mark.parametrize(
+        "name", ["file.txt", "sub/file.txt", "folder/", "日本語/資料.txt"]
+    )
+    def test_safe_names_remain_inside_destination(
+        self, name: str, tmp_path: Path
+    ) -> None:
+        destination = tmp_path / "safe"
+        target = validate_entry_path(name, destination)
+        target.relative_to(destination.resolve())
 
-    def test_normal_file(self) -> None:
-        self._check("file.txt")
-
-    def test_normal_subdir(self) -> None:
-        self._check("sub/file.txt")
-
-    def test_normal_dir_entry(self) -> None:
-        self._check("folder/")
-
-    def test_traversal_slash(self) -> None:
-        self._check("../outside.txt", expect_safe=False)
-
-    def test_traversal_backslash(self) -> None:
-        self._check("..\\outside.txt", expect_safe=False)
-
-    def test_deep_traversal(self) -> None:
-        self._check("a/b/../../../../etc/passwd", expect_safe=False)
-
-    def test_absolute_slash(self) -> None:
-        self._check("/absolute.txt", expect_safe=False)
-
-    def test_absolute_backslash(self) -> None:
-        self._check("\\absolute.txt", expect_safe=False)
-
-    def test_windows_drive(self) -> None:
-        self._check("C:\\outside.txt", expect_safe=False)
-
-    def test_unc(self) -> None:
-        self._check("\\\\server\\share\\file.txt", expect_safe=False)
-
-    def test_mixed_separators(self) -> None:
-        self._check("..\\folder/../file.txt", expect_safe=False)
-
-    def test_reserved_name_con(self) -> None:
-        self._check("CON.txt", expect_safe=False)
-
-    def test_reserved_name_nul(self) -> None:
-        self._check("NUL", expect_safe=False)
-
-    def test_reserved_name_com1(self) -> None:
-        self._check("COM1", expect_safe=False)
-
-    def test_reserved_name_lpt1(self) -> None:
-        self._check("LPT1.txt", expect_safe=False)
-
-    def test_ads_normal(self) -> None:
-        self._check("file.txt:Zone.Identifier", expect_safe=False)
-
-    def test_ads_data(self) -> None:
-        self._check("file.txt:$DATA", expect_safe=False)
-
-    def test_empty_name(self) -> None:
-        self._check("", expect_safe=False)
-
-    def test_symlink_outside_skipped(self) -> None:
-        """シンボリックリンクのテストは展開先解決で保護される"""
-        # validate_entry_path の resolve() は symlink 先を追跡するため、
-        # リンク先が展開先外にある場合は UnsafeArchiveError になる。
-        # このテストはスキップ：Windowsのシンボリックリンク作成には特権が必要
-        pytest.skip("symlink test requires admin/developer mode on Windows")
+    def test_archive_link_entry_is_rejected(self, tmp_path: Path) -> None:
+        entries = [
+            _entry(
+                "link", size=0, compressed_size=0, is_link=True, link_target="../outside"
+            )
+        ]
+        with pytest.raises(UnsafeArchiveError, match="リンク"):
+            check_archive_safety(entries, ExtractionOptions(dest_dir=tmp_path / "out"))
 
 
 class TestArchiveBombDetection:
-    """check_archive_safety の網羅的テスト"""
+    def test_normal_entries(self, tmp_path: Path) -> None:
+        check_archive_safety(
+            [_entry("a.txt", size=100, compressed_size=80)],
+            ExtractionOptions(dest_dir=tmp_path / "out"),
+        )
 
-    def test_normal_entries(self) -> None:
-        entries = [
-            ArchiveEntry(
-                name="a.txt", size=100, compressed_size=80, modified=..., is_dir=False
-            )
-        ]
-        opts = ExtractionOptions(dest_dir=Path("."))
-        check_archive_safety(entries, opts)  # should not raise
-
-    def test_too_many_entries(self) -> None:
-        entries = [
-            ArchiveEntry(
-                name=f"f{i}.txt", size=1, compressed_size=1, modified=..., is_dir=False
-            )
-            for i in range(100001)
-        ]
-        opts = ExtractionOptions(dest_dir=Path("."), max_entries=100000)
+    def test_too_many_entries(self, tmp_path: Path) -> None:
+        entries = [_entry(f"f{i}.txt") for i in range(101)]
         with pytest.raises(ArchiveBombError, match="エントリ数"):
-            check_archive_safety(entries, opts)
-
-    def test_single_file_too_large(self) -> None:
-        entries = [
-            ArchiveEntry(
-                name="big.bin",
-                size=3 * 1024**3,
-                compressed_size=100,
-                modified=...,
-                is_dir=False,
+            check_archive_safety(
+                entries,
+                ExtractionOptions(dest_dir=tmp_path / "out", max_entries=100),
             )
-        ]
-        opts = ExtractionOptions(dest_dir=Path("."), max_file_size=2 * 1024**3)
+
+    def test_single_file_too_large(self, tmp_path: Path) -> None:
         with pytest.raises(ArchiveBombError, match="ファイルサイズ"):
-            check_archive_safety(entries, opts)
-
-    def test_total_size_too_large(self) -> None:
-        """合計サイズが上限を超えるケース（個別ファイルは上限内）"""
-        # entries list kept for documentation but unused
-        _ = [
-            ArchiveEntry(
-                name=f"a{i}.bin",
-                size=3 * 1024**3,
-                compressed_size=100,
-                modified=...,
-                is_dir=False,
+            check_archive_safety(
+                [_entry("big.bin", size=101, compressed_size=1)],
+                ExtractionOptions(dest_dir=tmp_path / "out", max_file_size=100),
             )
-            for i in range(4)
-        ]
-        # 単一ファイル: 3GB < max_file_size (2GB?) → 3GB > 2GB, so goes to single file check
-        # 代わりに小さいファイルを多数使う
-        entries2 = [
-            ArchiveEntry(
-                name=f"b{i}.bin",
-                size=500 * 1024**2,
-                compressed_size=100,
-                modified=...,
-                is_dir=False,
-            )
-            for i in range(3)
-        ]  # 合計 1500MB
-        opts = ExtractionOptions(
-            dest_dir=Path("."),
-            max_total_size=1000 * 1024**2,
-            max_file_size=2000 * 1024**2,
-        )
-        with pytest.raises(ArchiveBombError):
-            check_archive_safety(entries2, opts)
 
-    def test_high_compression_ratio(self) -> None:
-        """圧縮率が1000倍を超える場合（個別ファイルサイズは上限内）"""
+    def test_total_size_too_large(self, tmp_path: Path) -> None:
         entries = [
-            ArchiveEntry(
-                name="bomb.bin",
-                size=500_000_000,
-                compressed_size=1_000,
-                modified=...,
-                is_dir=False,
-            )
+            _entry("a.bin", size=60, compressed_size=40),
+            _entry("b.bin", size=60, compressed_size=40),
         ]
-        opts = ExtractionOptions(
-            dest_dir=Path("."),
-            max_compression_ratio=1000.0,
-            max_file_size=2 * 1024**3,
-        )
+        with pytest.raises(ArchiveBombError, match="合計展開サイズ"):
+            check_archive_safety(
+                entries,
+                ExtractionOptions(
+                    dest_dir=tmp_path / "out", max_file_size=100, max_total_size=100
+                ),
+            )
+
+    def test_high_compression_ratio(self, tmp_path: Path) -> None:
         with pytest.raises(ArchiveBombError, match="圧縮率"):
-            check_archive_safety(entries, opts)
+            check_archive_safety(
+                [_entry("bomb.bin", size=100_000, compressed_size=1)],
+                ExtractionOptions(
+                    dest_dir=tmp_path / "out",
+                    max_file_size=200_000,
+                    max_total_size=200_000,
+                    max_compression_ratio=100.0,
+                ),
+            )
+
+    def test_negative_size_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(UnsafeArchiveError, match="サイズ"):
+            check_archive_safety(
+                [_entry("bad.bin", size=-1, compressed_size=1)],
+                ExtractionOptions(dest_dir=tmp_path / "out"),
+            )
 
 
-class TestPathTraversalInExtract:
-    """実際の展開処理を通したパストラバーサル対策のテスト"""
+class TestZipExtractionSecurity:
+    @staticmethod
+    def _make_zip(tmp_path: Path, entries: list[tuple[str, bytes]]) -> Path:
+        archive_path = tmp_path / "archive.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            for name, content in entries:
+                archive.writestr(name, content)
+        return archive_path
 
-    def _make_zip_with(
-        self, tmp_dir: Path, entry_name: str, content: bytes = b"data"
-    ) -> Path:
-        path = tmp_dir / "evil.zip"
-        with zipfile.ZipFile(path, "w") as zf:
-            zf.writestr(entry_name, content)
-        return path
-
-    def test_traversal_slash(self, tmp_dir: Path) -> None:
-        z = self._make_zip_with(tmp_dir, "../outside.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
+    @pytest.mark.parametrize(
+        "entry_name",
+        [
+            "../outside.txt",
+            "..\\outside.txt",
+            "/absolute.txt",
+            "C:\\drive.txt",
+            "a/b/../../../../etc/passwd",
+            "../../outside/evil.txt",
+            "file.txt:Zone.Identifier",
+            "CON.txt",
+        ],
+    )
+    def test_unsafe_zip_cannot_escape(
+        self, entry_name: str, tmp_path: Path
+    ) -> None:
+        archive_path = self._make_zip(tmp_path, [(entry_name, b"evil")])
+        destination = tmp_path / "out"
         with pytest.raises(UnsafeArchiveError):
-            extract_all(z, dest)
-        # 確認: 展開先外にファイルが作成されていない
-        assert not (tmp_dir / "outside.txt").exists()
+            extract_all(archive_path, destination)
+        assert not (tmp_path / "outside.txt").exists()
+        assert not (tmp_path / "outside" / "evil.txt").exists()
 
-    def test_traversal_backslash(self, tmp_dir: Path) -> None:
-        z = self._make_zip_with(tmp_dir, "..\\outside.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
+    def test_directory_entry_traversal_is_rejected(self, tmp_path: Path) -> None:
+        archive_path = self._make_zip(
+            tmp_path,
+            [("../../outside/", b""), ("../../outside/evil.txt", b"evil")],
+        )
         with pytest.raises(UnsafeArchiveError):
-            extract_all(z, dest)
-        assert not (tmp_dir / "outside.txt").exists()
+            extract_all(archive_path, tmp_path / "out")
+        assert not (tmp_path / "outside").exists()
 
-    def test_absolute_path(self, tmp_dir: Path) -> None:
-        z = self._make_zip_with(tmp_dir, "/absolute.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
+    def test_zip_symlink_entry_is_rejected_without_os_symlink_privilege(
+        self, tmp_path: Path
+    ) -> None:
+        archive_path = tmp_path / "symlink.zip"
+        info = zipfile.ZipInfo("outside-link")
+        info.create_system = 3
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr(info, "../outside")
 
-        with pytest.raises(UnsafeArchiveError):
-            extract_all(z, dest)
+        destination = tmp_path / "out"
+        with pytest.raises(UnsafeArchiveError, match="リンク"):
+            extract_all(archive_path, destination)
+        assert not destination.exists()
 
-    def test_windows_drive(self, tmp_dir: Path) -> None:
-        z = self._make_zip_with(tmp_dir, "C:\\drive.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
-        with pytest.raises(UnsafeArchiveError):
-            extract_all(z, dest)
-
-    def test_deep_traversal(self, tmp_dir: Path) -> None:
-        z = self._make_zip_with(tmp_dir, "a/b/../../../../etc/passwd")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
-        with pytest.raises(UnsafeArchiveError):
-            extract_all(z, dest)
-        # 確認: 展開先外に作成されていない
-        assert not (dest / "etc").exists()
-
-    def test_normal_file_extracts(self, tmp_dir: Path) -> None:
-        """通常ファイルは安全に展開される"""
-        z = self._make_zip_with(tmp_dir, "safe_file.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
-        extract_all(z, dest)
-        assert (dest / "safe_file.txt").read_text() == "data"
-
-    def test_normal_subdir(self, tmp_dir: Path) -> None:
-        """通常のサブディレクトリは安全に展開される"""
-        z = self._make_zip_with(tmp_dir, "sub/safe.txt")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
-        extract_all(z, dest)
-        assert (dest / "sub/safe.txt").read_text() == "data"
-
-    def test_dir_entry_with_traversal(self, tmp_dir: Path) -> None:
-        """ディレクトリエントリを使ったZip Slip"""
-        import zipfile
-
-        path = tmp_dir / "dir_slip.zip"
-        with zipfile.ZipFile(path, "w") as zf:
-            zf.writestr("../../outside/", "")
-            zf.writestr("../../outside/evil.txt", "evil")
-        dest = tmp_dir / "out"
-        from kaito.unzip import extract_all
-
-        with pytest.raises(UnsafeArchiveError):
-            extract_all(path, dest)
-        assert not (tmp_dir / "outside" / "evil.txt").exists()
+    def test_normal_file_extracts(self, tmp_path: Path) -> None:
+        archive_path = self._make_zip(
+            tmp_path, [("safe_file.txt", b"data"), ("sub/safe.txt", b"nested")]
+        )
+        destination = tmp_path / "out"
+        extract_all(archive_path, destination)
+        assert (destination / "safe_file.txt").read_bytes() == b"data"
+        assert (destination / "sub/safe.txt").read_bytes() == b"nested"
