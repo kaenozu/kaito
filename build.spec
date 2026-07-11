@@ -4,6 +4,8 @@
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import copy_metadata
+
 sys.setrecursionlimit(5000)
 
 _python_root = Path(sys.base_prefix)
@@ -18,6 +20,7 @@ _tk_datas = [
     if (_python_root / "tcl" / name).exists()
 ]
 _tkinter_package = _python_root / "Lib" / "tkinter"
+_package_metadata = copy_metadata("kaito")
 
 _document_datas = []
 for document in (
@@ -26,11 +29,13 @@ for document in (
     "THIRD_PARTY_NOTICES.md",
     "bundled/7-ZIP-LICENSE.txt",
     "bundled/SHA256SUMS",
+    "bundled/SOURCE-PACKAGE.txt",
 ):
     path = Path(document)
-    if path.exists():
-        destination = "bundled" if path.parent.name == "bundled" else "."
-        _document_datas.append((str(path), destination))
+    if not path.exists():
+        raise FileNotFoundError(f"required release document is missing: {path}")
+    destination = "bundled" if path.parent.name == "bundled" else "."
+    _document_datas.append((str(path), destination))
 
 _bundled_binaries = []
 for path in (Path("bundled") / "7z.exe", Path("bundled") / "7z.dll"):
@@ -46,6 +51,7 @@ analysis = Analysis(
         ("src/kaito", "kaito"),
         *_tk_datas,
         (str(_tkinter_package), "tkinter"),
+        *_package_metadata,
         *_document_datas,
     ],
     hiddenimports=[
