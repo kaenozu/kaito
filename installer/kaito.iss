@@ -1,8 +1,11 @@
 ; kaito installer script for Inno Setup 6
 ; Build: ISCC.exe installer\kaito.iss
+; Override version: ISCC.exe /DMyAppVersion=0.10.0 installer\kaito.iss
 
 #define MyAppName "kaito"
-#define MyAppVersion "0.9.1-dev0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.9.1.dev0"
+#endif
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
 #define MyAppExeName "kaito.exe"
@@ -22,7 +25,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequiredOverridesAllowed=dialog commandline
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=no
