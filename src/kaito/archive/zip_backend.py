@@ -63,7 +63,9 @@ class ZipBackend:
 
     @staticmethod
     def _has_surrogates(names: list[str]) -> bool:
-        return any(0xDC80 <= ord(character) <= 0xDCFF for name in names for character in name)
+        return any(
+            0xDC80 <= ord(character) <= 0xDCFF for name in names for character in name
+        )
 
     def _try_zip_with_encodings(
         self, path: Path, operation: Callable[[zipfile.ZipFile], _T]
@@ -147,7 +149,10 @@ class ZipBackend:
                         target.mkdir(parents=True, exist_ok=True)
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        with archive.open(info, "r") as source, target.open("wb") as output:
+                        with (
+                            archive.open(info, "r") as source,
+                            target.open("wb") as output,
+                        ):
                             while chunk := source.read(1024 * 1024):
                                 output.write(chunk)
                     if options.on_progress:

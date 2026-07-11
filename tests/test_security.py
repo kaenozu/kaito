@@ -80,7 +80,11 @@ class TestPathValidation:
     def test_archive_link_entry_is_rejected(self, tmp_path: Path) -> None:
         entries = [
             _entry(
-                "link", size=0, compressed_size=0, is_link=True, link_target="../outside"
+                "link",
+                size=0,
+                compressed_size=0,
+                is_link=True,
+                link_target="../outside",
             )
         ]
         with pytest.raises(UnsafeArchiveError, match="リンク"):
@@ -164,9 +168,7 @@ class TestZipExtractionSecurity:
             "CON.txt",
         ],
     )
-    def test_unsafe_zip_cannot_escape(
-        self, entry_name: str, tmp_path: Path
-    ) -> None:
+    def test_unsafe_zip_cannot_escape(self, entry_name: str, tmp_path: Path) -> None:
         archive_path = self._make_zip(tmp_path, [(entry_name, b"evil")])
         destination = tmp_path / "out"
         with pytest.raises(UnsafeArchiveError):

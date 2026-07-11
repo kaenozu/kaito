@@ -125,7 +125,10 @@ class SevenZipBackend:
                 "同梱7-Zipの整合性検証に失敗しました。kaitoを再インストールしてください。",
             )
         library = executable.with_name("7z.dll")
-        if not library.is_file() or self._sha256(library).lower() != SEVENZIP_DLL_SHA256:
+        if (
+            not library.is_file()
+            or self._sha256(library).lower() != SEVENZIP_DLL_SHA256
+        ):
             raise ExternalToolNotFoundError(
                 "7z.dll",
                 "同梱7-Zip DLLの整合性検証に失敗しました。kaitoを再インストールしてください。",
@@ -211,7 +214,9 @@ class SevenZipBackend:
             "sha256": actual_hash,
             "expected_sha256": expected_hash,
             "integrity": (
-                "ok" if expected_hash is None or actual_hash == expected_hash else "mismatch"
+                "ok"
+                if expected_hash is None or actual_hash == expected_hash
+                else "mismatch"
             ),
         }
 
@@ -357,9 +362,7 @@ class SevenZipBackend:
         link_target = data.get("Symbolic Link") or data.get("Hard Link")
         attributes = data.get("Attributes", "").lower()
         is_link = (
-            bool(link_target)
-            or "lrwx" in attributes
-            or data.get("Reparse", "-") == "+"
+            bool(link_target) or "lrwx" in attributes or data.get("Reparse", "-") == "+"
         )
         return ArchiveEntry(
             name=entry_path.replace("\\", "/"),
@@ -389,7 +392,10 @@ class SevenZipBackend:
             raise InvalidPasswordError(str(path))
         if "password" in combined and password is None:
             raise PasswordRequiredError(str(path))
-        if "cannot open the file as archive" in combined or "is not archive" in combined:
+        if (
+            "cannot open the file as archive" in combined
+            or "is not archive" in combined
+        ):
             raise ExtractionFailedError(
                 f"ファイルをアーカイブとして開けません: {path.name}",
                 archive_path=str(path),
@@ -445,9 +451,7 @@ class SevenZipBackend:
                 3600.0,
                 max(60.0, options.max_total_size / (10 * 1024 * 1024)),
             )
-            result = self._run_7z(
-                arguments, password=options.password, timeout=timeout
-            )
+            result = self._run_7z(arguments, password=options.password, timeout=timeout)
             if result.returncode != 0:
                 self._raise_archive_error(path, options.password, result)
             self._check_cancelled()

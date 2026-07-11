@@ -146,7 +146,9 @@ class ArchiveService:
             elif entry.name:
                 has_root_file = True
 
-        resolved = dest if len(roots) == 1 and not has_root_file else dest / archive_path.stem
+        resolved = (
+            dest if len(roots) == 1 and not has_root_file else dest / archive_path.stem
+        )
         ensure_no_reparse_ancestors(resolved)
         return resolved
 
@@ -173,6 +175,4 @@ class ArchiveService:
                         name_map.setdefault(file_path.name, []).append(file_path)
             else:
                 name_map.setdefault(source.name, []).append(source)
-        return [
-            (name, paths) for name, paths in name_map.items() if len(paths) > 1
-        ]
+        return [(name, paths) for name, paths in name_map.items() if len(paths) > 1]
