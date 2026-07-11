@@ -130,16 +130,15 @@ class ZipBackend:
 
             all_infos = archive.infolist()
             all_entries = [self._entry_from_info(info) for info in all_infos]
-            # Validate the complete archive before converting names to a mapping.
-            # This rejects duplicate/case-colliding entries instead of silently
-            # discarding one through dictionary conversion.
             check_archive_safety(all_entries, options)
 
             if options.members is None:
                 infos = all_infos
             else:
                 infos_by_name = {info.filename: info for info in all_infos}
-                missing = [name for name in options.members if name not in infos_by_name]
+                missing = [
+                    name for name in options.members if name not in infos_by_name
+                ]
                 if missing:
                     raise ExtractionFailedError(
                         f"指定されたエントリが見つかりません: {', '.join(missing)}",
