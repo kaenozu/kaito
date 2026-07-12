@@ -14,12 +14,13 @@ from kaito.domain.models import ExtractionOptions
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SEVEN_ZIP = _REPO_ROOT / "bundled" / "7z.exe"
 _PASSWORD = "Kaito-Acceptance-2026!"
+_CONTENT = b"AES ZIP secret\n"
 
 
 def _create_aes_zip(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     source.mkdir()
-    (source / "secret.txt").write_text("AES ZIP secret\n", encoding="utf-8")
+    (source / "secret.txt").write_bytes(_CONTENT)
     archive = tmp_path / "encrypted-aes.zip"
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     result = subprocess.run(
@@ -77,16 +78,12 @@ def test_aes_zip_requires_password_and_extracts_with_correct_password(
         archive,
         ExtractionOptions(dest_dir=destination, password=_PASSWORD),
     )
-    assert (destination / "secret.txt").read_text(encoding="utf-8") == (
-        "AES ZIP secret\n"
-    )
+    assert (destination / "secret.txt").read_bytes() == _CONTENT
 
 
 def test_aes_zip_preview_uses_bundled_sevenzip(tmp_path: Path) -> None:
     archive = _create_aes_zip(tmp_path)
     service = ArchiveService()
 
-    assert service.read_entry(archive, "secret.txt", password=_PASSWORD) == (
-        b"AES ZIP secret\n"
-    )
+    assert service.read_entry(archive, "secret.txt", password=_PASSWORD) == _CONTENT
     assert service.read_entry(archive, "secret.txt", password="wrong") is None
