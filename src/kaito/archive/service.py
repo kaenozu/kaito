@@ -88,6 +88,10 @@ class ArchiveService:
                 "7z (7-Zip)", error_message, archive_path=str(archive_path)
             )
 
+    def _encrypted_zip_uses_sevenzip(self, path: str | Path) -> bool:
+        """暗号化ZIPはAESを含めて同梱7-Zipで処理する。"""
+        return self._zip_backend.list_archive(Path(path)).is_encrypted
+
     def _effective_extraction_options(
         self, options: ExtractionOptions
     ) -> ExtractionOptions:
@@ -113,10 +117,19 @@ class ArchiveService:
         return backend.list_archive(Path(path), password=password)
 
     def extract(self, path: str | Path, options: ExtractionOptions) -> None:
-        backend = self._get_backend(path)
+        archive_path = Path(path)
+        effective_options = self._effective_extraction_options(options)
+        if archive_path.suffix.lower() == ".zip" and self._encrypted_zip_uses_sevenzip(
+            archive_path
+        ):
+            self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
+            self._sevenzip_backend.extract(archive_path, effective_options)
+            return
+
+        backend = self._get_backend(archive_path)
         if isinstance(backend, SevenZipBackend):
-            self._raise_if_backend_unavailable(backend, path)
-        backend.extract(Path(path), self._effective_extraction_options(options))
+            self._raise_if_backend_unavailable(backend, archive_path)
+        backend.extract(archive_path, effective_options)
 
     def create(self, options: CompressionOptions) -> None:
         collisions = self.find_duplicate_names(options.sources)
@@ -150,6 +163,13 @@ class ArchiveService:
         archive_path = Path(path)
         extension = archive_path.suffix.lower()
         if extension == ".zip":
+            if self._encrypted_zip_uses_sevenzip(archive_path):
+                self._raise_if_backend_unavailable(
+                    self._sevenzip_backend, archive_path
+                )
+                return self._sevenzip_backend.read_entry(
+                    archive_path, entry_name, password=password
+                )
             return self._zip_backend.read_entry(
                 archive_path, entry_name, password=password
             )
