@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-12
+
 ### Added
 
 - 展開前に危険パス、リンク、上限超過、実行可能ファイル、二重拡張子を可視化する安全診断
@@ -24,6 +26,14 @@
 - 単一ルートを持たないアーカイブはアーカイブ名フォルダーへ展開し、既存フォルダーがある場合は`名前 (2)`形式で安全に別名化
 - 安定版Release Workflowでタグ対象が現在の`master` HEADと一致することを必須化
 - Release WorkflowでCHANGELOGの対象バージョンと診断レポートの正常性を検証
+
+### Fixed
+
+- Explorerレジストリの再帰削除に必要なアクセス権が不足していた問題
+- 引用符付きで空白を含むパスワードが診断へ漏れる可能性
+- 選択フォルダー展開時にアーカイブ項目数と選択数の積で処理量が増える問題
+- 選択メンバー判定でループごとに集合を再生成していた問題
+- ローカル署名時に`RUNNER_TEMP`が未定義だと失敗する問題
 
 ### Security
 
@@ -91,5 +101,6 @@
 - 7-Zip CLIの制約により、暗号化アーカイブのパスワードは子プロセスのコマンドライン引数として渡されます。同一ユーザー権限の別プロセスから閲覧される可能性があります。
 - Windowsコード署名は未導入のため、ダウンロードしたEXEまたはインストーラーでSmartScreen警告が表示される場合があります。
 
-[Unreleased]: https://github.com/kaenozu/kaito/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/kaenozu/kaito/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/kaenozu/kaito/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/kaenozu/kaito/compare/v0.9.3...v0.10.1
