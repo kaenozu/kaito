@@ -121,6 +121,60 @@ def _archive_smoke(as_json: bool) -> int:
     return 0 if result["failed"] == 0 else 1
 
 
+def _test_archive(path: Path, as_json: bool) -> tuple[int, str]:
+    """Test archive data without extracting it or accepting passwords on the CLI."""
+    from kaito.archive.service import ArchiveService
+    from kaito.domain.errors import ArchiveError
+
+    service = ArchiveService()
+    try:
+        result = service.test_archive(path)
+    except ArchiveError as exc:
+        payload = {
+            "archive": path.name,
+            "passed": False,
+            "checked_entries": 0,
+            "message": exc.user_message(),
+        }
+        return 1, (
+            json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            if as_json
+            else f"整合性検査に失敗しました: {payload['message']}\n"
+        )
+    except Exception as exc:
+        payload = {
+            "archive": path.name,
+            "passed": False,
+            "checked_entries": 0,
+            "message": str(exc),
+        }
+        return 1, (
+            json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            if as_json
+            else f"整合性検査に失敗しました: {payload['message']}\n"
+        )
+
+    payload = {
+        "archive": path.name,
+        "passed": result.passed,
+        "checked_entries": result.checked_entries,
+        "message": result.message,
+    }
+    text = (
+        json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if as_json
+        else f"{result.message}\n"
+    )
+    return (0 if result.passed else 1), text
+
+
+def _diagnostic_report() -> str:
+    from kaito.archive.service import ArchiveService
+    from kaito.diagnostics import build_diagnostic_report
+
+    return build_diagnostic_report(ArchiveService()) + "\n"
+
+
 def _extract_output_path(args: list[str]) -> tuple[list[str], Path | None]:
     """`--output PATH`を除去し、診断結果の出力先を返す。"""
     filtered: list[str] = []
@@ -148,20 +202,25 @@ def _existing_context_compression_output(args: list[str]) -> Path | None:
     return output if output.exists() else None
 
 
-def _show_native_error(message: str) -> None:
-    """コンソールなしEXEでもユーザーへエラーを表示する。"""
+def _show_native_message(message: str, *, error: bool) -> None:
+    """コンソールなしEXEでもユーザーへ結果を表示する。"""
     if sys.platform == "win32":
         try:
             import ctypes
 
-            ctypes.windll.user32.MessageBoxW(None, message, "kaito", 0x10)
+            flags = 0x10 if error else 0x40
+            ctypes.windll.user32.MessageBoxW(None, message, "kaito", flags)
             return
         except (AttributeError, OSError):
             pass
-    stream = sys.stderr or sys.__stderr__
+    stream = (sys.stderr or sys.__stderr__) if error else (sys.stdout or sys.__stdout__)
     if stream is not None:
         stream.write(f"kaito: {message}\n")
         stream.flush()
+
+
+def _show_native_error(message: str) -> None:
+    _show_native_message(message, error=True)
 
 
 def _emit_output(text: str, output_path: Path | None) -> None:
@@ -204,6 +263,23 @@ def main() -> None:
         raise SystemExit(
             _run_captured(lambda: _archive_smoke("--json" in args[1:]), output_path)
         )
+    if args and args[0] == "--diagnostics":
+        _emit_output(_diagnostic_report(), output_path)
+        return
+    if args and args[0] == "--test-archive":
+        if len(args) < 2:
+            _emit_output("Error: --test-archive requires an archive path\n", output_path)
+            raise SystemExit(2)
+        archive_path = Path(args[1])
+        if not archive_path.is_file():
+            _emit_output(f"Error: archive not found: {archive_path}\n", output_path)
+            raise SystemExit(2)
+        code, text = _test_archive(archive_path, "--json" in args[2:])
+        if output_path is not None or (sys.stdout or sys.__stdout__) is not None:
+            _emit_output(text, output_path)
+        else:
+            _show_native_message(text.strip(), error=code != 0)
+        raise SystemExit(code)
 
     if output_path is not None:
         _emit_output(
