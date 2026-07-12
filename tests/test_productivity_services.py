@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -73,14 +74,14 @@ def test_smart_destination_uses_numbered_container_on_collision(
             name="loose-a.txt",
             size=1,
             compressed_size=1,
-            modified=__import__("datetime").datetime(2026, 1, 1),
+            modified=datetime(2026, 1, 1),
             is_dir=False,
         ),
         ArchiveEntry(
             name="loose-b.txt",
             size=1,
             compressed_size=1,
-            modified=__import__("datetime").datetime(2026, 1, 1),
+            modified=datetime(2026, 1, 1),
             is_dir=False,
         ),
     ]
@@ -92,10 +93,7 @@ def test_smart_destination_uses_numbered_container_on_collision(
     assert resolved == tmp_path / "bundle (2)"
 
 
-def test_diagnostic_report_excludes_paths_entries_and_passwords(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service = ArchiveService()
+def _stub_backend_info(service: ArchiveService, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         service,
         "backend_info",
@@ -108,6 +106,13 @@ def test_diagnostic_report_excludes_paths_entries_and_passwords(
             "expected_sha256": "same",
         },
     )
+
+
+def test_diagnostic_report_excludes_paths_entries_and_passwords(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ArchiveService()
+    _stub_backend_info(service, monkeypatch)
     secret_path = tmp_path / "private" / "customer-name.zip"
 
     report_text = build_diagnostic_report(
@@ -128,3 +133,25 @@ def test_diagnostic_report_excludes_paths_entries_and_passwords(
     assert "customer-name" not in report_text
     assert "SuperSecret" not in report_text
     assert "-p***" in report["last_error"]
+
+
+def test_diagnostic_report_redacts_quoted_password_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ArchiveService()
+    _stub_backend_info(service, monkeypatch)
+
+    report_text = build_diagnostic_report(
+        service,
+        last_error=(
+            '7z failed -p"my secret password" '
+            "--password='another secret' remaining"
+        ),
+    )
+    report = json.loads(report_text)
+
+    assert "my secret password" not in report_text
+    assert "another secret" not in report_text
+    assert "-p***" in report["last_error"]
+    assert "--password=***" in report["last_error"]
+    assert "remaining" in report["last_error"]
