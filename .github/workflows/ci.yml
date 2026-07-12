@@ -148,6 +148,21 @@ jobs:
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Set-Content artifacts/installer-sha256.txt -Encoding ascii
 
+      - name: Record release artifact checksums
+        shell: pwsh
+        run: |
+          $files = @(
+            (Resolve-Path 'dist/kaito.exe').Path,
+            (Resolve-Path $env:KAITO_INSTALLER).Path
+          )
+          $lines = foreach ($file in $files) {
+            $item = Get-Item $file
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($item.Name)  $($item.Length) bytes"
+          }
+          $lines | Set-Content artifacts/release-sha256.txt -Encoding ascii
+          Get-Content artifacts/release-sha256.txt
+
       - name: Test install, registry integration, and uninstall
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
