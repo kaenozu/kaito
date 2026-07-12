@@ -237,6 +237,7 @@ class SevenZipBackend:
                     capture_output=True,
                     timeout=10,
                     check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             except (OSError, subprocess.SubprocessError):
                 pass
@@ -352,7 +353,7 @@ class SevenZipBackend:
         except ValueError as exc:
             raise ExtractionFailedError(f"不正なサイズ情報です: {entry_path}") from exc
 
-        modified = datetime.fromtimestamp(0)
+        modified = datetime(1970, 1, 1)
         modified_text = data.get("Modified", "")
         for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
             try:
