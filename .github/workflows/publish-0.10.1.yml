@@ -7,190 +7,102 @@ on:
       - .github/workflows/publish-0.10.1.yml
 
 permissions:
+  actions: read
   contents: write
   issues: write
 
 jobs:
-  verify-build-release:
-    runs-on: windows-latest
-    timeout-minutes: 50
+  publish-verified-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Check out verified release commit
+      - name: Check out release commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: 9459c393d3b189ebde4a547cdca0321671c5b4e0
           fetch-depth: 0
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
-
-      - name: Set up Python 3.12
-        run: uv python install 3.12
-
-      - name: Install locked dependencies
-        run: uv sync --frozen
-
-      - name: Verify release version
-        shell: pwsh
+      - name: Download verified Windows artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $projectVersion = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
-          if ($projectVersion -ne '0.10.1') { throw "Unexpected project version: $projectVersion" }
-          "KAITO_VERSION=$projectVersion" | Out-File $env:GITHUB_ENV -Append
+          gh run download 29190697300 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name kaito-windows-verification \
+            --dir release-artifact
 
-      - name: Prepare artifacts directory
-        shell: pwsh
-        run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
-
-      - name: Verify bundled 7-Zip checksums
-        shell: pwsh
-        run: |
-          Get-Content bundled/SHA256SUMS | ForEach-Object {
-            if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
-              $expected = $Matches[1]
-              $name = $Matches[2].Trim()
-              $path = Join-Path bundled $name
-              if (-not (Test-Path $path -PathType Leaf)) { throw "Missing bundled file: $path" }
-              $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-              if ($actual -ne $expected) { throw "Hash mismatch for $path: $actual" }
-              "$actual  $name" | Add-Content artifacts/bundled-sha256.txt -Encoding ascii
-            }
-          }
-
-      - name: Quality gates
-        shell: pwsh
-        run: |
-          uv run --frozen ruff check .
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --frozen ruff format --check .
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --frozen pyright
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --frozen pytest -ra --junitxml=artifacts/test-results.xml
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Build executable
-        run: uv run --frozen pyinstaller --clean --noconfirm build.spec
-
-      - name: Verify executable
-        shell: pwsh
-        run: |
-          $exe = (Resolve-Path 'dist/kaito.exe').Path
-          $versionFile = (Resolve-Path artifacts).Path + '\release-version.txt'
-          $selfTestFile = (Resolve-Path artifacts).Path + '\release-self-test.txt'
-          $backendFile = (Resolve-Path artifacts).Path + '\release-backend.json'
-          $archiveSmokeFile = (Resolve-Path artifacts).Path + '\release-archive-smoke.json'
-
-          $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Version process failed: $($process.ExitCode)" }
-          $version = Get-Content $versionFile -Raw
-          if ($version.Trim() -ne "kaito $env:KAITO_VERSION") { throw "Version output failed: $version" }
-
-          $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', '--output', $selfTestFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Self-test process failed: $($process.ExitCode)" }
-          if ((Get-Content $selfTestFile -Raw) -notmatch 'All checks passed') { throw 'Self-test failed' }
-
-          $process = Start-Process -FilePath $exe -ArgumentList @('--backend-info', '--json', '--output', $backendFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Backend-info process failed: $($process.ExitCode)" }
-          $info = Get-Content $backendFile -Raw | ConvertFrom-Json
-          if ($info.source -ne 'bundled' -or $info.version -ne '26.02' -or $info.integrity -ne 'ok' -or $info.sha256 -ne $info.expected_sha256) {
-            throw "Backend verification failed: $($info | ConvertTo-Json -Compress)"
-          }
-
-          $process = Start-Process -FilePath $exe -ArgumentList @('--archive-smoke', '--json', '--output', $archiveSmokeFile) -Wait -PassThru
-          if ($process.ExitCode -ne 0 -or -not (Test-Path $archiveSmokeFile)) {
-            $text = if (Test-Path $archiveSmokeFile) { Get-Content $archiveSmokeFile -Raw } else { '<missing output>' }
-            throw "Archive smoke process failed: exit=$($process.ExitCode) output=$text"
-          }
-          $archiveSmoke = Get-Content $archiveSmokeFile -Raw | ConvertFrom-Json
-          if ($archiveSmoke.failed -ne 0 -or $archiveSmoke.passed -ne 6) {
-            throw "Archive smoke verification failed: $($archiveSmoke | ConvertTo-Json -Depth 8 -Compress)"
-          }
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
-          if (-not (Test-Path $iscc)) {
-            choco install innosetup --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed: $LASTEXITCODE" }
-          }
-          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
-          "ISCC_PATH=$iscc" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Build installer
-        shell: pwsh
-        run: |
-          & $env:ISCC_PATH "/DMyAppVersion=$env:KAITO_VERSION" 'installer/kaito.iss'
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
-          $installer = Get-ChildItem 'dist/kaito-installer-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($null -eq $installer) { throw 'Installer output not found' }
-          "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Test install, registry integration, and uninstall
-        shell: pwsh
-        run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
-
-      - name: Generate release checksums
-        shell: pwsh
-        run: |
-          $files = @('dist/kaito.exe', $env:KAITO_INSTALLER)
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $([System.IO.Path]::GetFileName($file))"
-          }
-          $lines | Set-Content 'dist/SHA256SUMS' -Encoding ascii
-          Get-Content 'dist/SHA256SUMS'
-
-      - name: Upload verification artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: kaito-v0.10.1-release-verification
-          path: |
-            artifacts/
-            dist/kaito.exe
-            dist/kaito-installer-*.exe
-            dist/SHA256SUMS
-
-      - name: Create stable tag
+      - name: Verify artifact identity
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin refs/tags/v0.10.1; then
-            echo "v0.10.1 already exists"
-            exit 1
-          fi
-          git tag -a v0.10.1 9459c393d3b189ebde4a547cdca0321671c5b4e0 -m "kaito 0.10.1"
-          git push origin v0.10.1
+          set -euo pipefail
+          test "$(tr -d '\r\n' < release-artifact/artifacts/kaito-version.txt)" = "kaito 0.10.1"
 
-      - name: Publish GitHub release assets
+          exe='release-artifact/dist/kaito.exe'
+          installer='release-artifact/dist/kaito-installer-0.10.1.exe'
+          test -f "$exe"
+          test -f "$installer"
+
+          exe_hash="$(sha256sum "$exe" | cut -d' ' -f1)"
+          installer_hash="$(sha256sum "$installer" | cut -d' ' -f1)"
+
+          test "$exe_hash" = '5b90e145d28c836b39aaba98798ac209b81b3a8d414bf04e45628aa0e8d7da83'
+          test "$installer_hash" = 'd39a2011d1be7477f15315c6f3812751ba6b8fcaf7d11dbc8632880544deea46'
+
+          grep -F '5b90e145d28c836b39aaba98798ac209b81b3a8d414bf04e45628aa0e8d7da83  kaito.exe  23081463 bytes' release-artifact/artifacts/release-sha256.txt
+          grep -F 'd39a2011d1be7477f15315c6f3812751ba6b8fcaf7d11dbc8632880544deea46  kaito-installer-0.10.1.exe  24691071 bytes' release-artifact/artifacts/release-sha256.txt
+          grep -F '"failed": 0' release-artifact/artifacts/kaito-archive-smoke.json
+          grep -F '"passed": 6' release-artifact/artifacts/kaito-archive-smoke.json
+
+          printf '%s  %s\n' "$exe_hash" 'kaito.exe' > release-artifact/dist/SHA256SUMS
+          printf '%s  %s\n' "$installer_hash" 'kaito-installer-0.10.1.exe' >> release-artifact/dist/SHA256SUMS
+          cat release-artifact/dist/SHA256SUMS
+
+      - name: Create or verify stable tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='9459c393d3b189ebde4a547cdca0321671c5b4e0'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if git ls-remote --exit-code --tags origin refs/tags/v0.10.1 >/dev/null 2>&1; then
+            git fetch origin refs/tags/v0.10.1:refs/tags/v0.10.1
+            actual="$(git rev-list -n 1 v0.10.1)"
+            test "$actual" = "$target"
+          else
+            git tag -a v0.10.1 "$target" -m 'kaito 0.10.1'
+            git push origin v0.10.1
+          fi
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v0.10.1
           name: kaito v0.10.1
           generate_release_notes: true
           files: |
-            dist/kaito.exe
-            dist/kaito-installer-*.exe
-            dist/SHA256SUMS
+            release-artifact/dist/kaito.exe
+            release-artifact/dist/kaito-installer-0.10.1.exe
+            release-artifact/dist/SHA256SUMS
 
       - name: Record completed release
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $checksums = Get-Content 'dist/SHA256SUMS' -Raw
-          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          $body = @"
+          checksums="$(cat release-artifact/dist/SHA256SUMS)"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body=$(cat <<EOF
           ## v0.10.1 release completed
 
-          Stable tag and GitHub Release were published successfully from commit `9459c393d3b189ebde4a547cdca0321671c5b4e0`.
+          Stable tag and GitHub Release were published successfully from commit \`9459c393d3b189ebde4a547cdca0321671c5b4e0\` using the fully verified PR #7 artifact.
 
-          ```text
+          \`\`\`text
           $checksums
-          ```
+          \`\`\`
 
-          Workflow: $runUrl
-          "@
-          gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
+          Workflow: $run_url
+          EOF
+          )
+          gh issue comment 6 --repo "$GITHUB_REPOSITORY" --body "$body"
