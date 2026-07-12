@@ -132,6 +132,12 @@ class ArchiveService:
         backend.extract(archive_path, effective_options)
 
     def create(self, options: CompressionOptions) -> None:
+        if options.output_path.exists():
+            raise CompressionFailedError(
+                "出力先ファイルが既に存在します",
+                archive_path=str(options.output_path),
+            )
+
         collisions = self.find_duplicate_names(options.sources)
         if collisions:
             names = ", ".join(name for name, _ in collisions[:5])
