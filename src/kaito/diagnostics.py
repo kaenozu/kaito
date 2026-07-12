@@ -76,12 +76,38 @@ def build_diagnostic_report(
 def _sanitize_error(message: str) -> str:
     """Avoid copying likely file paths or command-line secrets into reports."""
     pieces: list[str] = []
+    in_password = False
+    quote_character = ""
+
     for token in message.replace("\r", " ").replace("\n", " ").split():
         lower = token.lower()
+        if in_password:
+            if quote_character and token.endswith(quote_character):
+                in_password = False
+                quote_character = ""
+            continue
+
         if lower.startswith("-p") and len(token) > 2:
+            value = token[2:]
             pieces.append("-p***")
-        elif ":\\" in token or token.startswith("/") or token.startswith("\\\\"):
+            if value.startswith(('"', "'")):
+                quote_character = value[0]
+                if not (len(value) > 1 and value.endswith(quote_character)):
+                    in_password = True
+            continue
+
+        if lower.startswith("--password="):
+            value = token.split("=", 1)[1]
+            pieces.append("--password=***")
+            if value.startswith(('"', "'")):
+                quote_character = value[0]
+                if not (len(value) > 1 and value.endswith(quote_character)):
+                    in_password = True
+            continue
+
+        if ":\\" in token or token.startswith("/") or token.startswith("\\\\"):
             pieces.append("<path>")
         else:
             pieces.append(token)
+
     return " ".join(pieces)[:1000]
