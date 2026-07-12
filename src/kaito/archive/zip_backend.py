@@ -220,7 +220,7 @@ class ZipBackend:
         self._check_cancelled()
         info = zipfile.ZipInfo.from_file(source, arcname=archive_name)
         info.compress_type = zipfile.ZIP_DEFLATED
-        info._compresslevel = compression_level
+        setattr(info, "_compresslevel", compression_level)
         with (
             source.open("rb") as input_stream,
             archive.open(info, "w") as output_stream,
