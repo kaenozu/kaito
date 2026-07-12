@@ -192,7 +192,7 @@ try {
 
         $signature = Get-AuthenticodeSignature $Resolved
         if ($signature.Status -ne 'Valid') {
-            throw "Authenticode verification failed for $Resolved: $($signature.Status)"
+            throw "Authenticode verification failed for ${Resolved}: $($signature.Status)"
         }
 
         $item = Get-Item $Resolved
