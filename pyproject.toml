@@ -1,6 +1,6 @@
 [project]
 name = "kaito"
-version = "0.10.0.dev0"
+version = "0.10.0"
 description = "アーカイブ解凍・圧縮ツール - GUI decompression/compression tool"
 requires-python = ">=3.12"
 dependencies = [
