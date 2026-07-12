@@ -18,6 +18,7 @@ $InstallLog = Join-Path $ArtifactsDir 'kaito-install.log'
 $UninstallLog = Join-Path $ArtifactsDir 'kaito-uninstall.log'
 $SelfTestOutput = Join-Path $ArtifactsDir 'kaito-installed-self-test.txt'
 $BackendOutput = Join-Path $ArtifactsDir 'kaito-installed-backend.json'
+$ArchiveSmokeOutput = Join-Path $ArtifactsDir 'kaito-installed-archive-smoke.json'
 
 $ExtractKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
     "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract"
@@ -79,6 +80,21 @@ try {
         throw 'Bundled backend integrity validation failed after installation'
     }
 
+    $ArchiveSmokeProcess = Start-Process -FilePath $InstalledExe -ArgumentList @('--archive-smoke', '--json', '--output', $ArchiveSmokeOutput) -Wait -PassThru
+    if ($ArchiveSmokeProcess.ExitCode -ne 0) {
+        $ArchiveSmokeText = if (Test-Path $ArchiveSmokeOutput) {
+            Get-Content $ArchiveSmokeOutput -Raw
+        }
+        else {
+            '<missing output>'
+        }
+        throw "Installed archive smoke failed with exit code $($ArchiveSmokeProcess.ExitCode): $ArchiveSmokeText"
+    }
+    $ArchiveSmoke = Get-Content $ArchiveSmokeOutput -Raw | ConvertFrom-Json
+    if ($ArchiveSmoke.failed -ne 0 -or $ArchiveSmoke.passed -ne 6) {
+        throw "Installed archive smoke reported failures: $($ArchiveSmoke | ConvertTo-Json -Depth 8 -Compress)"
+    }
+
     foreach ($Key in ($ExtractKeys + $CompressKeys)) {
         if (-not (Test-Path $Key)) { throw "Context-menu key missing: $Key" }
     }
@@ -115,6 +131,7 @@ try {
     Write-Host 'Installer lifecycle E2E passed.'
     Write-Host "Install log: $InstallLog"
     Write-Host "Uninstall log: $UninstallLog"
+    Write-Host "Archive smoke: $ArchiveSmokeOutput"
 }
 finally {
     foreach ($Key in ($ExtractKeys + $CompressKeys)) {
