@@ -184,6 +184,17 @@ jobs:
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
 
+      - name: Verify tracked files remain unchanged
+        shell: pwsh
+        run: |
+          $status = @(& git status --porcelain --untracked-files=no)
+          $status | Set-Content artifacts/tracked-status.txt -Encoding utf8
+          & git diff -- . | Set-Content artifacts/tracked-diff.patch -Encoding utf8
+          if ($status.Count -gt 0) {
+            $status | ForEach-Object { Write-Error "Tracked file changed during verification: $_" }
+            throw 'Verification mutated tracked repository files.'
+          }
+
       - name: Upload verification artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
