@@ -104,6 +104,23 @@ def _backend_info(as_json: bool) -> int:
     return 0
 
 
+def _archive_smoke(as_json: bool) -> int:
+    from kaito.archive_smoke import run_archive_smoke
+
+    result = run_archive_smoke()
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print("kaito archive smoke")
+        print("=" * 40)
+        for check in result["checks"]:
+            print(f"{check['status'].upper()}: {check['name']} - {check['detail']}")
+        print("=" * 40)
+        print(f"Passed: {result['passed']}")
+        print(f"Failed: {result['failed']}")
+    return 0 if result["failed"] == 0 else 1
+
+
 def _extract_output_path(args: list[str]) -> tuple[list[str], Path | None]:
     """`--output PATH`を除去し、診断結果の出力先を返す。"""
     filtered: list[str] = []
@@ -157,6 +174,10 @@ def main() -> None:
     if args and args[0] == "--backend-info":
         raise SystemExit(
             _run_captured(lambda: _backend_info("--json" in args[1:]), output_path)
+        )
+    if args and args[0] == "--archive-smoke":
+        raise SystemExit(
+            _run_captured(lambda: _archive_smoke("--json" in args[1:]), output_path)
         )
 
     if output_path is not None:
