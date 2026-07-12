@@ -6,6 +6,7 @@ import locale
 import os
 import stat
 import tempfile
+import threading
 import zipfile
 from collections.abc import Callable
 from datetime import datetime
@@ -19,6 +20,7 @@ from kaito.archive.safety import (
     validate_staging_tree,
 )
 from kaito.domain.errors import (
+    CancelledError,
     CompressionFailedError,
     ExtractionFailedError,
     InvalidPasswordError,
@@ -44,6 +46,14 @@ class ZipBackend:
     supports_password = True
 
     _FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "shift_jis", "euc-kr"]
+    _IO_CHUNK_SIZE = 1024 * 1024
+
+    def __init__(self, cancel_event: Optional[threading.Event] = None) -> None:
+        self._cancel_event = cancel_event or threading.Event()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise CancelledError()
 
     def _get_system_encoding(self) -> str:
         try:
@@ -124,6 +134,8 @@ class ZipBackend:
             ) from exc
 
     def extract(self, path: Path, options: ExtractionOptions) -> None:
+        self._check_cancelled()
+
         def perform(archive: zipfile.ZipFile) -> None:
             if options.password is not None:
                 archive.setpassword(options.password.encode("utf-8"))
@@ -149,6 +161,7 @@ class ZipBackend:
             with tempfile.TemporaryDirectory(prefix="kaito_zip_extract_") as temporary:
                 staging = Path(temporary)
                 for index, info in enumerate(infos):
+                    self._check_cancelled()
                     target = validate_entry_path(info.filename, staging)
                     if info.is_dir():
                         target.mkdir(parents=True, exist_ok=True)
@@ -158,12 +171,16 @@ class ZipBackend:
                             archive.open(info, "r") as source,
                             target.open("wb") as output,
                         ):
-                            while chunk := source.read(1024 * 1024):
+                            while chunk := source.read(self._IO_CHUNK_SIZE):
+                                self._check_cancelled()
                                 output.write(chunk)
+                    self._check_cancelled()
                     if options.on_progress:
                         options.on_progress(index + 1, len(infos), info.filename)
+                    self._check_cancelled()
 
                 validate_staging_tree(staging, options)
+                self._check_cancelled()
                 merge_staging_tree(staging, options.dest_dir)
 
         try:
@@ -180,9 +197,51 @@ class ZipBackend:
                 f"ZIPファイルの展開に失敗: {exc}", archive_path=str(path)
             ) from exc
 
+    def _count_files(self, sources: list[Path]) -> int:
+        total = 0
+        for source in sources:
+            self._check_cancelled()
+            if source.is_dir():
+                for item in source.rglob("*"):
+                    self._check_cancelled()
+                    if item.is_file():
+                        total += 1
+            else:
+                total += 1
+        return total
+
+    def _write_file(
+        self,
+        archive: zipfile.ZipFile,
+        source: Path,
+        archive_name: str,
+        compression_level: int,
+    ) -> None:
+        self._check_cancelled()
+        info = zipfile.ZipInfo.from_file(source, arcname=archive_name)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info._compresslevel = compression_level
+        with source.open("rb") as input_stream, archive.open(info, "w") as output_stream:
+            while chunk := input_stream.read(self._IO_CHUNK_SIZE):
+                self._check_cancelled()
+                output_stream.write(chunk)
+        self._check_cancelled()
+
+    def _verify_archive(self, path: Path) -> None:
+        with zipfile.ZipFile(path, "r") as verification:
+            for info in verification.infolist():
+                self._check_cancelled()
+                if info.is_dir():
+                    continue
+                with verification.open(info, "r") as source:
+                    while source.read(self._IO_CHUNK_SIZE):
+                        self._check_cancelled()
+
     def create(self, options: CompressionOptions) -> None:
+        self._check_cancelled()
         output_resolved = options.output_path.resolve(strict=False)
         for source in options.sources:
+            self._check_cancelled()
             source_resolved = source.resolve(strict=False)
             if source_resolved == output_resolved or (
                 source_resolved.is_dir()
@@ -201,12 +260,7 @@ class ZipBackend:
                 archive_path=str(options.output_path),
             )
 
-        total_files = sum(
-            sum(1 for item in source.rglob("*") if item.is_file())
-            if source.is_dir()
-            else 1
-            for source in options.sources
-        )
+        total_files = self._count_files(options.sources)
         options.output_path.parent.mkdir(parents=True, exist_ok=True)
 
         temporary_path: Optional[Path] = None
@@ -226,38 +280,49 @@ class ZipBackend:
                 compresslevel=options.compression_level,
             ) as archive:
                 for source in options.sources:
+                    self._check_cancelled()
                     if source.is_symlink():
                         raise CompressionFailedError(
                             f"シンボリックリンクは圧縮できません: {source}"
                         )
                     if source.is_dir():
                         for item in source.rglob("*"):
+                            self._check_cancelled()
                             if item.is_symlink():
                                 raise CompressionFailedError(
                                     f"シンボリックリンクは圧縮できません: {item}"
                                 )
                             archive_name = item.relative_to(source.parent).as_posix()
                             if item.is_file():
-                                archive.write(item, archive_name)
+                                self._write_file(
+                                    archive,
+                                    item,
+                                    archive_name,
+                                    options.compression_level,
+                                )
                                 done += 1
                                 if options.on_progress:
                                     options.on_progress(done, total_files, item.name)
+                                self._check_cancelled()
                             elif item.is_dir():
                                 archive.writestr(
                                     zipfile.ZipInfo(archive_name.rstrip("/") + "/"), b""
                                 )
                     else:
-                        archive.write(source, source.name)
+                        self._write_file(
+                            archive,
+                            source,
+                            source.name,
+                            options.compression_level,
+                        )
                         done += 1
                         if options.on_progress:
                             options.on_progress(done, total_files, source.name)
+                        self._check_cancelled()
 
-            with zipfile.ZipFile(temporary_path, "r") as verification:
-                bad_entry = verification.testzip()
-                if bad_entry is not None:
-                    raise CompressionFailedError(
-                        f"作成したZIPの検証に失敗しました: {bad_entry}"
-                    )
+            self._check_cancelled()
+            self._verify_archive(temporary_path)
+            self._check_cancelled()
             os.replace(temporary_path, options.output_path)
             temporary_path = None
         except CompressionFailedError:
