@@ -18,6 +18,8 @@ from kaito.domain.errors import (
 from kaito.domain.models import CompressionOptions, ExtractionOptions
 
 _SMOKE_PASSWORD = "Kaito-Smoke-Only-2026!"
+_HELLO_CONTENT = b"kaito archive smoke\n"
+_JAPANESE_CONTENT = "日本語 smoke\n".encode()
 
 
 class SmokeCheck(TypedDict):
@@ -105,8 +107,8 @@ def run_archive_smoke() -> SmokeResult:
         empty.mkdir(parents=True)
         hello = source / "hello.txt"
         japanese = nested / "日本語.txt"
-        hello.write_text("kaito archive smoke\n", encoding="utf-8")
-        japanese.write_text("日本語 smoke\n", encoding="utf-8")
+        hello.write_bytes(_HELLO_CONTENT)
+        japanese.write_bytes(_JAPANESE_CONTENT)
         expected_hello_hash = _sha256(hello)
 
         service = ArchiveService()
@@ -125,7 +127,7 @@ def run_archive_smoke() -> SmokeResult:
             service.create(CompressionOptions(sources=[source], output_path=normal_zip))
             entry = _find_entry(service, normal_zip, "hello.txt")
             preview = service.read_entry(normal_zip, entry)
-            if preview != b"kaito archive smoke\n":
+            if preview != _HELLO_CONTENT:
                 raise AssertionError("ZIP preview mismatch")
             destination = root / "normal-zip-output"
             service.extract(normal_zip, ExtractionOptions(dest_dir=destination))
@@ -141,7 +143,7 @@ def run_archive_smoke() -> SmokeResult:
             service.create(CompressionOptions(sources=[source], output_path=normal_7z))
             entry = _find_entry(service, normal_7z, "hello.txt")
             preview = service.read_entry(normal_7z, entry)
-            if preview != b"kaito archive smoke\n":
+            if preview != _HELLO_CONTENT:
                 raise AssertionError("7z preview mismatch")
             destination = root / "normal-7z-output"
             service.extract(normal_7z, ExtractionOptions(dest_dir=destination))
@@ -182,9 +184,9 @@ def run_archive_smoke() -> SmokeResult:
             if _sha256(extracted) != expected_hello_hash:
                 raise AssertionError("AES ZIP extraction hash mismatch")
             entry = _find_entry(service, aes_zip, "hello.txt")
-            if service.read_entry(aes_zip, entry, password=_SMOKE_PASSWORD) != (
-                b"kaito archive smoke\n"
-            ):
+            if service.read_entry(
+                aes_zip, entry, password=_SMOKE_PASSWORD
+            ) != _HELLO_CONTENT:
                 raise AssertionError("AES ZIP preview mismatch")
 
         run("aes-zip-password-and-extract", check_aes_zip)
