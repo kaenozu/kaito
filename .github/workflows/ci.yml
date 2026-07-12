@@ -107,6 +107,7 @@ jobs:
           $versionFile = (Resolve-Path artifacts).Path + '\kaito-version.txt'
           $selfTestFile = (Resolve-Path artifacts).Path + '\kaito-self-test.txt'
           $backendFile = (Resolve-Path artifacts).Path + '\kaito-backend.json'
+          $archiveSmokeFile = (Resolve-Path artifacts).Path + '\kaito-archive-smoke.json'
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $versionFile)) { throw "Version command failed: $($process.ExitCode)" }
@@ -125,6 +126,16 @@ jobs:
           if ($info.source -ne 'bundled') { throw "Unexpected backend source: $($info.source)" }
           if ($info.version -ne '26.02') { throw "Unexpected 7-Zip version: $($info.version)" }
           if ($info.integrity -ne 'ok' -or $info.sha256 -ne $info.expected_sha256) { throw 'Bundled backend integrity failed' }
+
+          $process = Start-Process -FilePath $exe -ArgumentList @('--archive-smoke', '--json', '--output', $archiveSmokeFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $archiveSmokeFile)) {
+            $text = if (Test-Path $archiveSmokeFile) { Get-Content $archiveSmokeFile -Raw } else { '<missing output>' }
+            throw "Archive smoke process failed: exit=$($process.ExitCode) output=$text"
+          }
+          $archiveSmoke = Get-Content $archiveSmokeFile -Raw | ConvertFrom-Json
+          if ($archiveSmoke.failed -ne 0 -or $archiveSmoke.passed -ne 6) {
+            throw "Archive smoke verification failed: $($archiveSmoke | ConvertTo-Json -Depth 8 -Compress)"
+          }
 
       - name: Install Inno Setup
         shell: pwsh
