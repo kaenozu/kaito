@@ -80,7 +80,8 @@ def test_filter_entries_supports_categories_and_globs() -> None:
         "images/photo.png"
     ]
     assert [item.name for item in filter_entries(entries, "", "文書")] == [
-        "docs/report.pdf"
+        "docs/report.pdf",
+        "secret.txt",
     ]
     assert [item.name for item in filter_entries(entries, "", "実行ファイル")] == [
         "tools/setup.exe"
