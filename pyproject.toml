@@ -1,11 +1,10 @@
 [project]
 name = "kaito"
-version = "0.9.1"
-description = "ZIP解凍ソフト - GUI decompression tool"
+version = "0.10.0"
+description = "アーカイブ解凍・圧縮ツール - GUI decompression/compression tool"
 requires-python = ">=3.12"
 dependencies = [
     "customtkinter>=5.2.2",
-    "patool>=4.0.5",
     "pillow>=12.2.0",
     "platformdirs>=4.10.0",
     "tkinterdnd2>=0.4.4.1",

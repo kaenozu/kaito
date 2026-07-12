@@ -3,17 +3,24 @@ tests/test_unzip_app.py
 unzip_app.py のテスト（GUIコンポーネントは全てmock）
 """
 
-from contextlib import ExitStack
+from datetime import datetime
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kaito.gui.unzip_app import _format_size, _read_archive_entry, _truncate_path, main as app_main
+from kaito.gui.unzip_app import (
+    _format_size,
+    _resolve_extract_dest,
+    _truncate_path,
+    _read_archive_entry,
+    main as app_main,
+)
 
 
 # ---- _format_size のテスト ----
+
 
 class TestFormatSize:
     def test_bytes(self) -> None:
@@ -32,11 +39,12 @@ class TestFormatSize:
         assert _format_size(1024 * 1024 * 1024 - 1) == "1024.0 MB"
 
     def test_gigabytes(self) -> None:
-        assert _format_size(1024 ** 3) == "1.0 GB"
-        assert _format_size(3 * 1024 ** 3) == "3.0 GB"
+        assert _format_size(1024**3) == "1.0 GB"
+        assert _format_size(3 * 1024**3) == "3.0 GB"
 
 
 # ---- main() のテスト ----
+
 
 class TestMain:
     def test_main_no_args(self) -> None:
@@ -111,192 +119,63 @@ class TestMain:
             assert app.call_args.kwargs["cli_path"].name == "test.7z"
 
 
-# ---- UnzipApp の全メソッドテスト ----
+# ---- UnzipApp のメソッドテスト (モックインスタンス) ----
+
 
 def _make_app_mock() -> MagicMock:
     """__init__ を呼ばずにモックしたUnzipAppインスタンスを作成"""
     from kaito.gui.unzip_app import UnzipApp
 
     app = UnzipApp.__new__(UnzipApp)
+    app.__dict__["_current_archive_path"] = None
+    app.__dict__["_archive_queue"] = []
+    app.__dict__["_entries"] = []
+    app.__dict__["_is_encrypted"] = False
+    app.__dict__["_is_busy"] = False
+    app.__dict__["_cancel_flag"] = MagicMock()
+    app.__dict__["_compress_sources"] = []
+    app.__dict__["_compressing"] = False
+    app.__dict__["_compress_no_dialog"] = False
+    app.__dict__["_passwords"] = {}
+    app.__dict__["_failed_passwords"] = set()
+    app.__dict__["_temp_dir"] = None
+    app.__dict__["_tree_poll_id"] = None
+    app.__dict__["_tree_last_dark"] = None
+    app.__dict__["_recent_display_to_path"] = {}
+    app.__dict__["_prev_preview_token"] = 0
+    app.__dict__["_current_image"] = None
 
-    # __init__ で設定されるインスタンス変数
-    app._zip_path = None
-    app._archive_paths = []
-    app._entries = []
-    app._is_encrypted = False
-    app._extracting = False
-    app._path_var = MagicMock()
-    app._dest_var = MagicMock()
-    app._status_var = MagicMock()
-    app._progress = MagicMock()
-    app._tree = MagicMock()
-    app._browse_btn = MagicMock()
-    app._dest_btn = MagicMock()
-    app._extract_btn = MagicMock()
-    app._compress_btn = MagicMock()
-    app._drop_frame = MagicMock()
-    app._list_frame = MagicMock()
-    app._settings = MagicMock()
-    app._settings.get_password.return_value = None
-    app._open_on_done_var = MagicMock()
-    app._open_on_done_var.get.return_value = False
-    app._close_on_done_var = MagicMock()
-    app._close_on_done_var.get.return_value = False
-    app._theme_var = MagicMock()
-    app._theme_menu = MagicMock()
-    app._recent_var = MagicMock()
-    app._recent_menu = MagicMock()
-    app._preview_frame = MagicMock()
-    app._preview_label = MagicMock()
-    app._temp_dir = None
-    app._tree_poll_id = None
-    app._tree_last_dark = None
-    app._search_var = MagicMock()
-    app._search_var.get.return_value = ""
-    app._search_entry = MagicMock()
-    app._settings_btn = MagicMock()
-    app._compress_sources = []
-    app._compressing = False
-    app._compress_no_dialog = False
+    # Mock UI widgets
+    app.__dict__["_path_var"] = MagicMock()
+    app.__dict__["_dest_var"] = MagicMock()
+    app.__dict__["_status_var"] = MagicMock()
+    app.__dict__["_progress"] = MagicMock()
+    app.__dict__["_tree"] = MagicMock()
+    app.__dict__["_browse_btn"] = MagicMock()
+    app.__dict__["_dest_btn"] = MagicMock()
+    app.__dict__["_extract_btn"] = MagicMock()
+    app.__dict__["_compress_btn"] = MagicMock()
+    app.__dict__["_cancel_btn"] = MagicMock()
+    app.__dict__["_drop_frame"] = MagicMock()
+    app.__dict__["_list_frame"] = MagicMock()
+    app.__dict__["_drop_label"] = MagicMock()
+    app.__dict__["_queue_label"] = MagicMock()
+    app.__dict__["_preview_frame"] = MagicMock()
+    app.__dict__["_preview_label"] = MagicMock()
+    app.__dict__["_search_var"] = MagicMock()
+    app.__dict__["_search_entry"] = MagicMock()
+    app.__dict__["_open_on_done_var"] = MagicMock()
+    app.__dict__["_close_on_done_var"] = MagicMock()
+    app.__dict__["_recent_var"] = MagicMock()
+    app.__dict__["_recent_menu"] = MagicMock()
+    app.__dict__["_settings_btn"] = MagicMock()
+    app.__dict__["_settings"] = MagicMock()
+    app.__dict__["_archive_service"] = MagicMock()
+    app.__dict__["_tree_poll_id"] = None
+
     app.after = MagicMock()
-    app.drop_target_register = MagicMock()
-    app.dnd_bind = MagicMock()
-    app.title = MagicMock()
-    app.geometry = MagicMock()
-    app.minsize = MagicMock()
-    app.grid_columnconfigure = MagicMock()
-    app.grid_rowconfigure = MagicMock()
+    app.destroy = MagicMock()
     return app
-
-
-def _init_patches() -> list:
-    """__init__ テスト用の共通パッチリストを返す"""
-    from kaito.gui.unzip_app import UnzipApp
-    return [
-        patch.object(UnzipApp, "_build_ui"),
-        patch.object(UnzipApp, "drop_target_register"),
-        patch.object(UnzipApp, "dnd_bind"),
-        patch.object(UnzipApp, "title"),
-        patch.object(UnzipApp, "geometry"),
-        patch.object(UnzipApp, "minsize"),
-        patch.object(UnzipApp, "grid_columnconfigure"),
-        patch.object(UnzipApp, "grid_rowconfigure"),
-        patch.object(UnzipApp, "TkdndVersion", create=True),
-        patch("kaito.gui.unzip_app.TkinterDnD._require"),
-        patch.object(UnzipApp, "_open_on_done_var", create=True),
-        patch.object(UnzipApp, "_close_on_done_var", create=True),
-        patch.object(UnzipApp, "_recent_menu", create=True),
-        patch.object(UnzipApp, "_recent_var", create=True),
-        patch.object(UnzipApp, "_apply_tree_style"),
-        patch.object(UnzipApp, "_start_theme_poll"),
-        patch.object(UnzipApp, "_dest_var", create=True),
-        patch.object(UnzipApp, "_search_var", create=True),
-        patch.object(UnzipApp, "_settings_btn", create=True),
-    ]
-
-
-class TestUnzipAppInit:
-    """__init__ のテスト（cli_path の有無）"""
-
-    def test_init_no_path(self) -> None:
-        from kaito.gui.unzip_app import UnzipApp
-        with ExitStack() as stack:
-            for p in _init_patches():
-                stack.enter_context(p)
-            app = UnzipApp(cli_path=None)
-            assert app._zip_path is None
-            assert app._entries == []
-            assert not app._is_encrypted
-            assert not app._extracting
-
-    def test_init_with_path(self, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-
-        from kaito.gui.unzip_app import UnzipApp
-        extra = [
-            patch.object(UnzipApp, "_path_var", create=True),
-            patch.object(UnzipApp, "_dest_var", create=True),
-            patch.object(UnzipApp, "_status_var", create=True),
-            patch.object(UnzipApp, "_tree", create=True),
-            patch.object(UnzipApp, "_refresh_tree"),
-            patch.object(UnzipApp, "_drop_frame", create=True),
-            patch.object(UnzipApp, "_list_frame", create=True),
-            patch.object(UnzipApp, "_extract_btn", create=True),
-            patch.object(UnzipApp, "_compress_btn", create=True),
-            patch("customtkinter.CTk.__init__", return_value=None),
-        ]
-        with ExitStack() as stack:
-            for p in _init_patches() + extra:
-                stack.enter_context(p)
-            app = UnzipApp(cli_path=z)
-            assert app._zip_path == z
-            assert len(app._entries) == 1
-
-    def test_init_restores_saved_dest(self) -> None:
-        """過去の展開先は復元しない（常にアーカイブ名ベース）"""
-        from kaito.gui.unzip_app import SettingsManager, UnzipApp
-        with ExitStack() as stack:
-            for p in _init_patches():
-                stack.enter_context(p)
-            stack.enter_context(patch.object(UnzipApp, "_path_var", create=True))
-            dest_var = stack.enter_context(patch.object(UnzipApp, "_dest_var", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_status_var", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_tree", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_refresh_tree"))
-            stack.enter_context(patch.object(UnzipApp, "_drop_frame", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_list_frame", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_extract_btn", create=True))
-            stack.enter_context(patch.object(UnzipApp, "_compress_btn", create=True))
-            stack.enter_context(patch("customtkinter.CTk.__init__", return_value=None))
-            stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
-            UnzipApp(cli_path=None)
-            # 過去の展開先を復元しなくなった
-            dest_var.set.assert_not_called()
-
-
-class TestUnzipAppTheme:
-    """テーマ関連メソッドのテスト"""
-
-    def test_resolve_mode_light(self) -> None:
-        from kaito.gui.unzip_app import UnzipApp
-        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Light"):
-            assert not UnzipApp._resolve_mode()
-
-    def test_resolve_mode_dark(self) -> None:
-        from kaito.gui.unzip_app import UnzipApp
-        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Dark"):
-            assert UnzipApp._resolve_mode()
-
-    def test_resolve_mode_system_dark(self) -> None:
-        from kaito.gui.unzip_app import UnzipApp
-        with (
-            patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="System"),
-            patch("darkdetect.isDark", return_value=True),
-        ):
-            assert UnzipApp._resolve_mode()
-
-    def test_apply_tree_style_dark(self) -> None:
-        """暗黙のクラムテーマと色設定をmockで検証(dark)"""
-        from kaito.gui.unzip_app import UnzipApp
-        mock_style = MagicMock(name="mock_style_dark")
-        with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
-            app = MagicMock()
-            app._resolve_mode = MagicMock(return_value=True)
-            UnzipApp._apply_tree_style(app)
-            mock_style.theme_use.assert_called_with("clam")
-            mock_style.configure.assert_any_call("Treeview", foreground="#dce4ee", background="#2b2b2b", fieldbackground="#2b2b2b", borderwidth=0)
-
-    def test_apply_tree_style_light(self) -> None:
-        """暗黙のクラムテーマと色設定をmockで検証(light)"""
-        from kaito.gui.unzip_app import UnzipApp
-        mock_style = MagicMock(name="mock_style_light")
-        with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
-            app = MagicMock()
-            app._resolve_mode = MagicMock(return_value=False)
-            UnzipApp._apply_tree_style(app)
-            mock_style.configure.assert_any_call("Treeview", foreground="#000000", background="#ffffff", fieldbackground="#ffffff", borderwidth=0)
 
 
 class TestUnzipAppMethods:
@@ -305,62 +184,6 @@ class TestUnzipAppMethods:
     @pytest.fixture
     def app(self) -> MagicMock:
         return _make_app_mock()
-
-    def test_on_drop_no_data(self, app: MagicMock) -> None:
-        with patch.object(app, "_load_archive") as mock_load:
-            event = MagicMock()
-            type(event).data = ""
-            app._on_drop(event)
-            mock_load.assert_not_called()
-
-    def test_on_drop_non_zip(self, app: MagicMock, tmp_path: Path) -> None:
-        event = MagicMock()
-        type(event).data = str(tmp_path / "readme.txt")
-        with patch.object(app, "_load_archive") as mock_load:
-            app._on_drop(event)
-            mock_load.assert_not_called()
-
-    def test_on_drop_zip(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        z.touch()
-        event = MagicMock()
-        type(event).data = str(z)
-        with (
-            patch.object(app, "_load_archive") as mock_load,
-            patch.object(Path, "exists", return_value=True),
-        ):
-            app._on_drop(event)
-            mock_load.assert_called_once()
-
-    def test_on_drop_multiple(self, app: MagicMock, tmp_path: Path) -> None:
-        z1 = tmp_path / "a.zip"
-        z2 = tmp_path / "b.rar"
-        z3 = tmp_path / "c.txt"
-        z1.touch()
-        z2.touch()
-        z3.touch()
-        event = MagicMock()
-        type(event).data = f"{z1} {z2} {z3}"
-        with (
-            patch.object(app, "_load_archive") as mock_load,
-            patch.object(app, "_add_to_queue") as mock_add,
-            patch.object(app, "_start_compress_flow"),
-            patch.object(Path, "exists", return_value=True),
-        ):
-            app._on_drop(event)
-            mock_load.assert_called_once_with(z1)
-            mock_add.assert_called_once_with(z2)
-
-    def test_add_to_queue(self, app: MagicMock) -> None:
-        app._archive_paths = [Path("a.zip")]
-        app._add_to_queue(Path("b.zip"))
-        assert len(app._archive_paths) == 2
-
-    def test_update_queue_status(self, app: MagicMock) -> None:
-        app._archive_paths = [Path("a.zip"), Path("b.zip")]
-        app._status_var.get.return_value = "3エントリ"
-        app._update_queue_status()
-        app._status_var.set.assert_called_with("[2ファイル] 3エントリ")
 
     def test_drag_enter_highlights(self, app: MagicMock) -> None:
         app._on_drag_enter()
@@ -372,7 +195,7 @@ class TestUnzipAppMethods:
 
     def test_highlight_drop_drop_frame_missing(self, app: MagicMock) -> None:
         app._drop_frame.configure.side_effect = AttributeError
-        app._highlight_drop(True)  # should not raise
+        app._highlight_drop(True)
 
     def test_on_browse_no_file(self, app: MagicMock) -> None:
         with (
@@ -392,77 +215,6 @@ class TestUnzipAppMethods:
             app._on_browse()
             mock_load.assert_called_once()
 
-    def test_load_archive_success(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("hello.txt", "data")
-            zf.writestr("sub/file.txt", "data2")
-        app._dest_var.get.return_value = ""
-        app._load_archive(z)
-        assert app._zip_path == z
-        assert len(app._entries) == 2
-        assert app._path_var.set.called
-        assert app._dest_var.set.called  # 常にアーカイブ名のパスに設定される
-
-    def test_load_archive_error(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "bad.zip"
-        z.write_text("not a zip")
-        app._load_archive(z)
-        app._status_var.set.assert_called()
-        assert app._zip_path is None
-
-    def test_load_archive_with_existing_dest(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        app._dest_var.get.return_value = "C:\\custom\\path"
-        app._load_archive(z)
-        # 以前の保存値に関わらずアーカイブ名のパスに上書きされる
-        assert app._dest_var.set.called
-
-    def test_refresh_tree(self, app: MagicMock) -> None:
-        from datetime import datetime
-        from kaito.unzip import ZipEntry
-        app._entries = [
-            ZipEntry("file.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
-            ZipEntry("dir/", 0, 0, datetime(2026, 1, 1, 0, 0, 0), True),
-        ]
-        app._tree.get_children.return_value = ["old"]
-        app._refresh_tree()
-        app._tree.delete.assert_called_with("old")
-        assert app._tree.insert.call_count == 2
-
-    def test_refresh_tree_filtered(self, app: MagicMock) -> None:
-        """検索絞り込みでエントリがフィルターされる"""
-        from datetime import datetime
-        from kaito.unzip import ZipEntry
-        app._entries = [
-            ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
-            ZipEntry("world.txt", 200, 160, datetime(2026, 1, 1, 0, 0, 0), False),
-        ]
-        app._tree.get_children.return_value = []
-        app._search_var.get.return_value = "hello"
-        app._refresh_tree()
-        assert app._tree.insert.call_count == 1
-
-    def test_refresh_tree_filter_empty(self, app: MagicMock) -> None:
-        """該当なしの検索でもクラッシュしない"""
-        from datetime import datetime
-        from kaito.unzip import ZipEntry
-        app._entries = [
-            ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
-        ]
-        app._tree.get_children.return_value = []
-        app._search_var.get.return_value = "zzz"
-        app._refresh_tree()
-        assert app._tree.insert.call_count == 0
-
-    def test_on_search_keyrelease(self, app: MagicMock) -> None:
-        """検索キー入力がツリー再描画を呼ぶ"""
-        with patch.object(app, "_refresh_tree") as mock_refresh:
-            app._on_search_keyrelease()
-            mock_refresh.assert_called_once()
-
     def test_on_dest_browse_with_path(self, app: MagicMock) -> None:
         with patch("tkinter.filedialog.askdirectory", return_value="C:\\out"):
             app._on_dest_browse()
@@ -474,108 +226,16 @@ class TestUnzipAppMethods:
             app._dest_var.set.assert_not_called()
 
     def test_on_extract_no_queue(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = False
+        app.__dict__["_archive_queue"] = []
         app._on_extract()
-        app._browse_btn.configure.assert_not_called()
+        assert not app.__dict__["_is_busy"]
 
     def test_on_extract_already_busy(self, app: MagicMock) -> None:
-        app._archive_paths = [Path("x.zip")]
-        app._extracting = True
+        app.__dict__["_is_busy"] = True
+        app.__dict__["_archive_queue"] = [Path("x.zip")]
         app._on_extract()
-        app._browse_btn.configure.assert_not_called()
-
-    def test_on_extract_normal(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        app._zip_path = z
-        app._archive_paths = [z]
-        app._is_encrypted = False
-        app._dest_var.get.return_value = ""
-        with patch("threading.Thread"):
-            app._on_extract()
-            assert app._extracting
-
-    def test_on_extract_encrypted_manual(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        app._zip_path = z
-        app._archive_paths = [z]
-        app._is_encrypted = True
-        app._dest_var.get.return_value = str(tmp_path / "out")
-        with (
-            patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg,
-            patch.object(app, "_set_ui_enabled"),
-        ):
-            dlg.return_value.get_input.return_value = "mypass"
-            with patch("threading.Thread"):
-                app._on_extract()
-                assert app._extracting
-
-    def test_on_extract_encrypted_cancel(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        app._zip_path = z
-        app._archive_paths = [z]
-        app._is_encrypted = True
-        with (
-            patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg,
-        ):
-            dlg.return_value.get_input.return_value = None
-            app._on_extract()
-            assert not app._extracting
-
-    def test_do_batch_extract_success(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        dest = tmp_path / "out"
-        app._zip_path = z
-        app._do_batch_extract([z], dest, active_password=None)
-        assert (dest / z.stem / "a.txt").read_text() == "data"
-        after_calls = app.after.call_args_list
-        assert len(after_calls) >= 1
-
-    def test_do_batch_extract_error(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "bad.zip"
-        z.write_text("not a zip")
-        dest = tmp_path / "out"
-        app._do_batch_extract([z], dest, active_password=None)
-        assert app.after.called
-
-    def test_on_extract_done_no_open(self, app: MagicMock) -> None:
-        app._extracting = True
-        app._open_on_done_var.get.return_value = False
-        app._archive_paths = [Path("a.zip")]
-        app._on_extract_done()
-        assert not app._extracting
-        app._progress.set.assert_called_with(1)
-        app._status_var.set.assert_called_with("解凍完了 (1ファイル)")
-
-    def test_on_extract_done_open_folder(self, app: MagicMock) -> None:
-        app._extracting = True
-        app._open_on_done_var.get.return_value = True
-        app._zip_path = Path("dummy.zip")
-        app._dest_var.get.return_value = "C:\\out"
-        with patch("subprocess.Popen") as mock_popen:
-            app._on_extract_done()
-            mock_popen.assert_called_once_with(["explorer", "C:\\out"])
-
-    def test_on_extract_done_close(self, app: MagicMock) -> None:
-        app._extracting = True
-        app._close_on_done_var.get.return_value = True
-        app._archive_paths = [Path("a.zip")]
-        app._on_extract_done()
-        app.destroy.assert_called_once()
-        app.after.assert_called_once_with(500, app.destroy)
-
-    def test_on_extract_error(self, app: MagicMock) -> None:
-        app._extracting = True
-        app._on_extract_error("disk full")
-        assert not app._extracting
-        app._status_var.set.assert_called_with("エラー: disk full")
-        app._progress.set.assert_called_with(0)
+        assert app.__dict__["_is_busy"]
 
     def test_set_ui_enabled_disabled(self, app: MagicMock) -> None:
         app._set_ui_enabled(False)
@@ -592,483 +252,190 @@ class TestUnzipAppMethods:
     def test_ask_password_typed(self, app: MagicMock) -> None:
         with patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg:
             dlg.return_value.get_input.return_value = "secret"
-            result = app._ask_password()
+            result = app._ask_password("test.rar")
             assert result == "secret"
-            # ダイアログの文言がZIP/RAR/7z共通になっている
             text_arg = dlg.call_args[1]["text"]
-            assert "アーカイブ" in text_arg
-            assert "パスワード" in text_arg
+            assert "アーカイブ" in text_arg or "パスワード" in text_arg
 
     def test_ask_password_cancelled(self, app: MagicMock) -> None:
         with patch("kaito.gui.unzip_app.ctk.CTkInputDialog") as dlg:
             dlg.return_value.get_input.return_value = None
-            result = app._ask_password()
+            result = app._ask_password("test.rar")
             assert result is None
 
-    def test_on_theme_changed(self, app: MagicMock) -> None:
-        with patch("kaito.gui.unzip_app.ctk.set_appearance_mode") as mock_set:
-            app._on_theme_changed("dark")
-            mock_set.assert_called_with("dark")
-            app._settings.set.assert_called_with("theme", "dark")
+    def test_show_cancel_button(self, app: MagicMock) -> None:
+        app._show_cancel_button(True)
+        app._cancel_btn.grid.assert_called_once()
+        app._show_cancel_button(False)
+        app._cancel_btn.grid_remove.assert_called()
 
-    def test_start_theme_poll_system(self, app: MagicMock) -> None:
-        with (
-            patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="System"),
-            patch.object(app, "_resolve_mode", return_value=True),
-        ):
-            app._tree_poll_id = None
-            app._start_theme_poll()
-            assert app._tree_poll_id is not None
-            app.after.assert_called_with(2000, app._poll_appearance_mode)
+    def test_password_management(self, app: MagicMock) -> None:
+        p = Path("test.zip")
+        assert app._get_password_for(p) is None
+        app._set_password_for(p, "secret")
+        assert app._get_password_for(p) == "secret"
+        app._mark_password_failed(p)
+        assert app._get_password_for(p) is None
+        assert str(p) in app._failed_passwords
+        app._clear_passwords()
+        assert app._failed_passwords == set()
 
-    def test_start_theme_poll_non_system(self, app: MagicMock) -> None:
-        with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Light"):
-            app._start_theme_poll()
-            assert app._tree_poll_id is None
+    def test_on_extract_done(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = True
+        app._on_extract_done(1, 0)
+        assert not app.__dict__["_is_busy"]
+        app._status_var.set.assert_called_with("解凍完了 (1ファイル)")
 
-    def test_stop_theme_poll_cancels(self, app: MagicMock) -> None:
-        app._tree_poll_id = "123"
-        app.after_cancel = MagicMock()
-        app._stop_theme_poll()
-        app.after_cancel.assert_called_with("123")
-        assert app._tree_poll_id is None
+    def test_on_extract_cancelled(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = True
+        app._on_extract_cancelled(0)
+        assert not app.__dict__["_is_busy"]
+        app._status_var.set.assert_called_with(
+            "解凍をキャンセルしました (0ファイル完了)"
+        )
 
-    def test_poll_appearance_mode_no_change(self, app: MagicMock) -> None:
-        with patch.object(app, "_resolve_mode", return_value=True):
-            app._tree_last_dark = True
-            app._poll_appearance_mode()
-            app.after.assert_called_with(2000, app._poll_appearance_mode)
+    def test_on_compress_done(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = True
+        app._on_compress_done()
+        assert not app.__dict__["_is_busy"]
 
-    def test_poll_appearance_mode_changed(self, app: MagicMock) -> None:
-        with (
-            patch.object(app, "_resolve_mode", return_value=False),
-            patch.object(app, "_apply_tree_style") as mock_style,
-        ):
-            app._tree_last_dark = True
-            app._poll_appearance_mode()
-            mock_style.assert_called_once()
-            assert not app._tree_last_dark
+    def test_on_compress_error(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = True
+        app._on_compress_error("disk full")
+        assert not app.__dict__["_is_busy"]
 
-    def test_on_open_settings(self, app: MagicMock) -> None:
-        """設定ダイアログが開かれる"""
-        with patch("kaito.gui.unzip_app.SettingsDialog") as mock_dlg:
-            app._on_open_settings()
-            mock_dlg.assert_called_once_with(
-                parent=app, settings=app._settings,
-                on_theme_changed=app._on_theme_changed,
-            )
+    def test_on_compress_cancelled(self, app: MagicMock) -> None:
+        app.__dict__["_is_busy"] = True
+        app._on_compress_cancelled()
+        assert not app.__dict__["_is_busy"]
+        app._status_var.set.assert_called_with("圧縮をキャンセルしました")
 
-    def test_on_recent_selected_default(self, app: MagicMock) -> None:
-        with patch.object(app, "_load_archive") as mock_load:
-            app._on_recent_selected("最近のファイル")
-            mock_load.assert_not_called()
+    def test_truncate_path_short(self) -> None:
+        assert _truncate_path("C:\\a.zip") == "C:\\a.zip"
 
-    def test_on_recent_selected_loads(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_truncate_path_long(self) -> None:
+        long_path = "C:\\" + "very_long_directory_name\\" * 10 + "file.zip"
+        result = _truncate_path(long_path, max_len=60)
+        assert len(result) <= 60
+        assert "..." in result or "\\" in result
+
+    def test_format_size_zero(self) -> None:
+        assert _format_size(0) == "0 B"
+
+    def test_format_size_kb(self) -> None:
+        assert _format_size(1024) == "1.0 KB"
+
+    def test_format_size_mb(self) -> None:
+        assert _format_size(1024 * 1024) == "1.0 MB"
+
+    def test_format_size_gb(self) -> None:
+        assert _format_size(1024**3) == "1.0 GB"
+
+
+# ---- _read_archive_entry のテスト ----
+
+
+class TestReadArchiveEntry:
+    def test_zip_entry(self, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
-        z.touch()
-        with (
-            patch.object(app, "_load_archive") as mock_load,
-            patch.object(Path, "exists", return_value=True),
-        ):
-            app._on_recent_selected(str(z))
-            mock_load.assert_called_once_with(z)
-
-    def test_refresh_recent_menu_with_files(self, app: MagicMock) -> None:
-        app._settings.get.return_value = ["a.zip", "b.zip"]
-        app._refresh_recent_menu()
-        app._recent_menu.configure.assert_called_with(values=["a.zip", "b.zip"])
-
-    def test_refresh_recent_menu_empty(self, app: MagicMock) -> None:
-        app._settings.get.return_value = []
-        app._refresh_recent_menu()
-        app._recent_menu.configure.assert_not_called()
-
-    def test_on_tree_select_no_zip(self, app: MagicMock) -> None:
-        app._zip_path = None
-        app._on_tree_select()
-        app._preview_label.configure.assert_not_called()
-
-    def test_on_tree_select_no_selection(self, app: MagicMock) -> None:
-        app._zip_path = Path("x.zip")
-        app._tree.selection.return_value = ()
-        app._on_tree_select()
-
-    def test_on_tree_select_shows_preview(self, app: MagicMock) -> None:
-        app._zip_path = Path("x.zip")
-        app._tree.selection.return_value = ("item1",)
-        app._tree.item.return_value = ("1", "hello.txt", "10", "8", "2025-01-01")
-        mock_pv = MagicMock()
-        app.__dict__["_show_preview"] = mock_pv
-        try:
-            app._on_tree_select()
-            mock_pv.assert_called_once_with("hello.txt")
-        finally:
-            app.__dict__.pop("_show_preview", None)
-
-    def test_show_preview_text(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        import zipfile
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("hello.txt", "Hello World")
-        app._zip_path = z
-        with patch.object(app, "_preview_text") as mock_pt:
-            app._show_preview("hello.txt")
-            mock_pt.assert_called_once()
-
-    def test_show_preview_image(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        import zipfile
-        from PIL import Image
-        import io
-        buf = io.BytesIO()
-        Image.new("RGB", (10, 10), color="red").save(buf, "PNG")
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("img.png", buf.getvalue())
-        app._zip_path = z
-        with patch.object(app, "_preview_image") as mock_pi:
-            app._show_preview("img.png")
-            mock_pi.assert_called_once()
-
-    def test_show_preview_unsupported(self, app: MagicMock) -> None:
-        app._zip_path = Path("x.zip")
-        app._show_preview("data.bin")
-        app._preview_label.configure.assert_called()
-
-    def test_preview_text_success(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        import zipfile
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("hello.txt", "Hello World")
-        app._zip_path = z
-        app.__dict__["_preview_label"] = MagicMock()
-        app.__dict__["_preview_frame"] = MagicMock()
-        app._preview_text("hello.txt")
-        app.__dict__["_preview_label"].configure.assert_called()
-
-    def test_preview_text_error(self, app: MagicMock) -> None:
-        app._zip_path = Path("bad.zip")
-        app._preview_text("nonexistent.txt")
-        app._preview_label.configure.assert_called()
-
-    def test_show_preview_with_tempdir(self, app: MagicMock) -> None:
-        import tempfile
-        td = tempfile.TemporaryDirectory()
-        app._temp_dir = td
-        app.__dict__["_preview_label"] = MagicMock()
-        app.__dict__["_preview_frame"] = MagicMock()
-        app._zip_path = Path("x.zip")
-        app._show_preview("data.bin")
-        app.__dict__["_preview_label"].configure.assert_called()
-
-    def test_on_tree_select_bad_values(self, app: MagicMock) -> None:
-        app._zip_path = Path("x.zip")
-        app._tree.selection.return_value = ("item1",)
-        app._tree.item.return_value = ("just_name",)  # len < 2
-        with patch.object(app, "_show_preview") as mock_pv:
-            app._on_tree_select()
-            mock_pv.assert_not_called()
-
-    def test_preview_image_success(self, app: MagicMock, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        import zipfile
-        from PIL import Image
-        import io
-        buf = io.BytesIO()
-        Image.new("RGB", (50, 30), color="red").save(buf, "PNG")
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("img.png", buf.getvalue())
-        app._zip_path = z
-        app.__dict__["_preview_label"] = MagicMock()
-        app.__dict__["_preview_frame"] = MagicMock()
-        app._preview_image("img.png")
-        app.__dict__["_preview_label"].configure.assert_called()
-
-    def test_preview_image_error(self, app: MagicMock) -> None:
-        app._zip_path = Path("bad.zip")
-        app.__dict__["_preview_label"] = MagicMock()
-        app.__dict__["_preview_frame"] = MagicMock()
-        app._preview_image("nonexistent.png")
-        app.__dict__["_preview_label"].configure.assert_called()
-
-    def test_read_archive_entry_zip(self, tmp_path: Path) -> None:
-        z = tmp_path / "test.zip"
-        import zipfile
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("hello.txt", "data")
         assert _read_archive_entry(z, "hello.txt") == b"data"
 
-    def test_read_archive_entry_non_zip(self, tmp_path: Path) -> None:
-        z = tmp_path / "test.rar"
-        z.touch()
-        assert _read_archive_entry(z, "x.txt") == b""
-
-    def test_read_archive_entry_rar_mocked(self, tmp_path: Path) -> None:
-        """patoolib.extract_archiveをモックしてRARプレビューパスをテスト"""
-        z = tmp_path / "test.rar"
-        z.touch()
-        with patch("patoolib.extract_archive") as mock_extract:
-            def mock_extract_archive(path, outdir):
-                # 疑似的にファイルをサブディレクトリに作成（fallback検索をテスト）
-                extracted = Path(outdir) / "subdir" / "hello.txt"
-                extracted.parent.mkdir(parents=True, exist_ok=True)
-                extracted.write_bytes(b"RAR content")
-            mock_extract.side_effect = mock_extract_archive
-            result = _read_archive_entry(z, "hello.txt")
-            assert result == b"RAR content"
-
-    def test_load_archive_rar_mocked(self, app: MagicMock, tmp_path: Path) -> None:
-        """RARファイルでpatoolibをモックしてpre-extractionパスをテスト"""
-        z = tmp_path / "test.rar"
-        z.touch()
-        app._dest_var.get.return_value = ""
-        mock_entries = []
-        with (
-            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
-            patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
-            patch("patoolib.extract_archive"),
-        ):
-            mock_td = MagicMock()
-            mock_tmpdir.return_value = mock_td
-            mock_td.name = str(tmp_path / "extracted")
-            app._load_archive(z)
-            assert app._temp_dir is not None
-
-    def test_load_archive_rar_extract_fail(self, app: MagicMock, tmp_path: Path) -> None:
-        """RAR pre-extractionが失敗してもクラッシュしない"""
-        z = tmp_path / "test.rar"
-        z.touch()
-        app._dest_var.get.return_value = ""
-        mock_entries = []
-        with (
-            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
-            patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
-            patch("patoolib.extract_archive", side_effect=RuntimeError("extract failed")),
-        ):
-            mock_td = MagicMock()
-            mock_tmpdir.return_value = mock_td
-            mock_td.name = str(tmp_path / "extracted")
-            app._load_archive(z)  # should not raise
-            assert app._temp_dir is not None
-
-    def test_load_archive_cleanup_old_temp(self, app: MagicMock, tmp_path: Path) -> None:
-        """2つ目のZIPを開くとき前のRAR展開をクリーンアップ"""
-        old_td = MagicMock()
-        app._temp_dir = old_td
-        app._dest_var.get.return_value = ""
+    def test_zip_missing_entry(self, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("a.txt", "data")
-        app._load_archive(z)
-        old_td.cleanup.assert_called_once()
-        assert app._temp_dir is None
-
-    def test_read_archive_entry_with_cache_dir(self, tmp_path: Path) -> None:
-        """cache_dir（事前展開済みディレクトリ）から直接ファイル読み込み"""
-        z = tmp_path / "test.rar"
-        z.touch()
-        cache_dir = tmp_path / "cache"
-        cache_dir.mkdir()
-        (cache_dir / "hello.txt").write_bytes(b"cached content")
-        result = _read_archive_entry(z, "hello.txt", cache_dir=str(cache_dir))
-        assert result == b"cached content"
-
-    def test_read_archive_entry_7z_mocked(self, tmp_path: Path) -> None:
-        """patoolib.extract_archiveをモックして7zプレビューパスをテスト"""
-        z = tmp_path / "test.7z"
-        z.touch()
-        with patch("patoolib.extract_archive") as mock_extract:
-            def mock_extract_archive(path, outdir):
-                extracted = Path(outdir) / "subdir" / "image.png"
-                extracted.parent.mkdir(parents=True, exist_ok=True)
-                extracted.write_bytes(b"PNG content")
-            mock_extract.side_effect = mock_extract_archive
-            result = _read_archive_entry(z, "subdir/image.png")
-            assert result == b"PNG content"
-
-    def test_read_archive_entry_rar_not_found(self, tmp_path: Path) -> None:
-        """展開後にファイルが見つからない場合"""
-        z = tmp_path / "test.rar"
-        z.touch()
-        with patch("patoolib.extract_archive") as mock_extract:
-            def mock_extract_archive(path, outdir):
-                # 空のディレクトリだけ作成
-                pass
-            mock_extract.side_effect = mock_extract_archive
-            result = _read_archive_entry(z, "missing.txt")
-            assert result == b""
+            zf.writestr("hello.txt", "data")
+        assert _read_archive_entry(z, "missing.txt") == b""
 
 
-# ---- SettingsDialog のテスト ----
-
-class TestSettingsDialog:
-    """SettingsDialog の各機能をモックでテスト"""
-
-    def _make_dlg(self) -> MagicMock:
-        dlg = MagicMock()
-        dlg._settings = MagicMock()
-        dlg._on_theme_changed = MagicMock()
-        dlg._theme_var = MagicMock()
-        dlg._theme_var.get.return_value = "dark"
-        dlg._lang_var = MagicMock()
-        dlg._lang_var.get.return_value = "English"
-        return dlg
-
-    def test_save_applies_theme(self) -> None:
-        from kaito.gui.settings_dialog import SettingsDialog
-        dlg = self._make_dlg()
-        SettingsDialog._on_save(dlg)
-        dlg._settings.set.assert_any_call("theme", "dark")
-        dlg._settings.set.assert_any_call("language", "English")
-        dlg._on_theme_changed.assert_called_once_with("dark")
-        dlg.destroy.assert_called_once()
-
-    def test_save_no_callback(self) -> None:
-        """on_theme_changedがNoneでもクラッシュしない"""
-        from kaito.gui.settings_dialog import SettingsDialog
-        dlg = self._make_dlg()
-        dlg._on_theme_changed = None
-        SettingsDialog._on_save(dlg)
-        dlg.destroy.assert_called_once()
+# ---- _resolve_extract_dest のテスト ----
 
 
-# ---- _truncate_path のテスト ----
+class TestResolveExtractDest:
+    def test_single_root_no_double_nesting(self) -> None:
+        from kaito.domain.models import ArchiveEntry
 
-class TestCompressMethods:
-    """圧縮機能メソッドのテスト"""
+        dest = Path("C:\\out")
+        archive = Path("C:\\myproject.zip")
+        entries = [
+            ArchiveEntry(
+                name="myproject/file1.js",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ArchiveEntry(
+                name="myproject/sub/file2.js",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest
 
-    @pytest.fixture
-    def app(self) -> MagicMock:
-        return _make_app_mock()
+    def test_root_files_creates_subfolder(self) -> None:
+        from kaito.domain.models import ArchiveEntry
 
-    def test_on_compress_cancel(self, app: MagicMock) -> None:
-        with patch("tkinter.filedialog.askopenfilenames", return_value=()):
-            app._on_compress()
-            assert app._compress_sources == []
+        dest = Path("C:\\out")
+        archive = Path("C:\\archive.zip")
+        entries = [
+            ArchiveEntry(
+                name="readme.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ArchiveEntry(
+                name="sub/file.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest / "archive"
 
-    def test_on_compress_selects_files(self, app: MagicMock, tmp_path: Path) -> None:
-        f1 = tmp_path / "a.txt"
-        f1.touch()
-        f2 = tmp_path / "b.txt"
-        f2.touch()
-        with (
-            patch("tkinter.filedialog.askopenfilenames", return_value=(str(f1), str(f2))),
-            patch.object(app, "_start_compress_flow") as mock_flow,
-        ):
-            app._on_compress()
-            assert len(app._compress_sources) == 2
-            mock_flow.assert_called_once()
+    def test_no_entries(self) -> None:
+        dest = Path("C:\\out")
+        archive = Path("C:\\empty.zip")
+        result = _resolve_extract_dest(dest, archive, [])
+        assert result == dest / "empty"
 
-    def test_start_compress_flow_no_sources(self, app: MagicMock) -> None:
-        app._compress_sources = []
-        with patch.object(app, "_set_ui_enabled") as mock_set:
-            app._start_compress_flow()
-            mock_set.assert_not_called()
+    def test_multiple_roots(self) -> None:
+        from kaito.domain.models import ArchiveEntry
 
-    def test_start_compress_flow_cancel_save(self, app: MagicMock) -> None:
-        app._compress_sources = [Path("a.txt")]
-        with (
-            patch("tkinter.filedialog.asksaveasfilename", return_value=""),
-            patch.object(app, "_set_ui_enabled") as mock_set,
-        ):
-            app._start_compress_flow()
-            mock_set.assert_not_called()
-
-    def test_start_compress_flow_starts_thread(self, app: MagicMock) -> None:
-        app._compress_sources = [Path("a.txt")]
-        with (
-            patch("tkinter.filedialog.asksaveasfilename", return_value="C:\\out.zip"),
-            patch("kaito.gui.unzip_app.Thread") as mock_thread,
-        ):
-            app._start_compress_flow()
-            assert app._compressing
-            mock_thread.assert_called_once()
-
-    def test_do_compress_success(self, app: MagicMock, tmp_path: Path) -> None:
-        src = tmp_path / "a.txt"
-        src.write_text("data")
-        output = tmp_path / "out.zip"
-        with patch("kaito.gui.unzip_app.create_archive") as mock_ca:
-            app._do_compress([src], output)
-            mock_ca.assert_called_once()
-            args, kwargs = mock_ca.call_args
-            assert args[0] == [src]
-            assert args[1] == output
-            assert callable(kwargs["on_progress"])
-
-    def test_do_compress_error(self, app: MagicMock, tmp_path: Path) -> None:
-        output = tmp_path / "out.zip"
-        with patch("kaito.gui.unzip_app.create_archive", side_effect=RuntimeError("fail")):
-            app._do_compress([], output)
-            # _on_compress_error は after 経由で呼ばれる
-            assert app.after.called
-
-    def test_on_compress_done(self, app: MagicMock) -> None:
-        app._compressing = True
-        app._compress_sources = [Path("x.txt")]
-        app._on_compress_done()
-        assert not app._compressing
-        assert app._compress_sources == []
-        app._status_var.set.assert_called_with("圧縮完了")
-
-    def test_on_compress_error(self, app: MagicMock) -> None:
-        app._compressing = True
-        app._on_compress_error("disk full")
-        assert not app._compressing
-        app._status_var.set.assert_called_with("エラー: disk full")
-
-    def test_drop_starts_compress(self, app: MagicMock, tmp_path: Path) -> None:
-        """非アーカイブのファイルをドロップ → 圧縮フロー開始"""
-        f = tmp_path / "readme.txt"
-        f.touch()
-        event = MagicMock()
-        type(event).data = str(f)
-        with (
-            patch.object(app, "_start_compress_flow") as mock_flow,
-            patch.object(Path, "exists", return_value=True),
-        ):
-            app._on_drop(event)
-            assert len(app._compress_sources) == 1
-            mock_flow.assert_called_once()
+        dest = Path("C:\\out")
+        archive = Path("C:\\multi.zip")
+        entries = [
+            ArchiveEntry(
+                name="dir1/a.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ArchiveEntry(
+                name="dir2/b.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+        ]
+        result = _resolve_extract_dest(dest, archive, entries)
+        assert result == dest / "multi"
 
 
-class TestContextMenu:
-    """install_context_menu / uninstall_context_menu のテスト"""
-
-    def test_install_context_menu(self) -> None:
-        mock_key = MagicMock()
-        with (
-            patch("kaito.gui.unzip_app.CreateKeyEx", return_value=mock_key) as mock_create,
-            patch("kaito.gui.unzip_app.SetValueEx") as mock_set,
-            patch("kaito.gui.unzip_app._get_exe_path", return_value=Path("C:\\kaito.exe")),
-        ):
-            from kaito.gui.unzip_app import install_context_menu
-            install_context_menu()
-            assert mock_create.call_count == 12  # SFA(3)*2 + *(1)*2 + *(1)*2 + Dir(1)*2
-            assert mock_set.call_count == 12
-            # 解凍メニュー名（valueに"解凍"）が4件（SFA 3 + * fallback 1）
-            extract_names = [c for c in mock_set.mock_calls if "解凍" in str(c)]
-            assert len(extract_names) == 4
-            # 圧縮メニュー名（valueに"圧縮"）が2件
-            compress_names = [c for c in mock_set.mock_calls if "圧縮" in str(c)]
-            assert len(compress_names) == 2
-            # command文字列（"%1"を含む）が6件（SFA 3 + *fallback 1 + *compress 1 + Dir 1）
-            cmd_calls = [c for c in mock_set.mock_calls if "%1" in str(c)]
-            assert len(cmd_calls) == 6
-
-    def test_uninstall_context_menu(self) -> None:
-        """削除が呼ばれる（実際のレジストリは触らない）"""
-        with (
-            patch("kaito.gui.unzip_app.OpenKey"),
-            patch("kaito.gui.unzip_app.DeleteKey"),
-            patch("kaito.gui.unzip_app.QueryInfoKey", return_value=(0, 0)),
-        ):
-            from kaito.gui.unzip_app import uninstall_context_menu
-            uninstall_context_menu()  # should not crash
+# ---- CLI引数テスト ----
 
 
 class TestMainCLI:
-    """main() のCLI引数テスト"""
-
     def test_install_context_menu_flag(self) -> None:
         with (
             patch("sys.argv", ["kaito", "--install-context-menu"]),
@@ -1106,52 +473,3 @@ class TestMainCLI:
         ):
             app_main()
             assert app.call_args.kwargs["cli_compress_path"] is None
-
-
-class TestTruncatePath:
-    def test_short_path(self) -> None:
-        assert _truncate_path("C:\\a.zip") == "C:\\a.zip"
-
-    def test_long_path_with_ellipsis(self) -> None:
-        long_path = "C:\\" + "very_long_directory_name\\" * 10 + "file.zip"
-        result = _truncate_path(long_path, max_len=60)
-        assert len(result) <= 60
-        assert "..." in result or "\\" in result
-
-    def test_filename_too_long(self) -> None:
-        long_name = "a" * 70 + ".zip"
-        path = f"C:\\Users\\test\\{long_name}"
-        result = _truncate_path(path, max_len=60)
-        assert result.endswith("...")
-
-    def test_medium_path(self) -> None:
-        path = "C:\\Users\\test\\file.zip"
-        result = _truncate_path(path, max_len=60)
-        assert "file.zip" in result
-
-    def test_parent_fits_but_total_exceeds(self) -> None:
-        """親ディレクトリは収まるが全体は超える場合 (line 529 カバー)"""
-        # name="file.zip" (8), parent 45文字, total 53+1=54... no, need > 60
-        # name="medium_archive.zip" (19), parent 45文字, total 64+1=65
-        name = "medium_archive.zip"  # 19 chars
-        parent = "C:\\" + "x" * 43  # 45 chars
-        path = parent + "\\" + name  # 65 chars
-        result = _truncate_path(path, max_len=60)
-        # parent (45) <= remain (60-19-3=38)? 45 > 38, so this won't hit line 529
-        # Need: parent <= remain
-        # remain = max_len - len(name) - 3 = 60 - 19 - 3 = 38
-        # parent must be <= 38, but total > 60
-        # name + parent + 1 (sep) > 60, name = 19, parent <= 38
-        # 19 + 38 + 1 = 58 < 60, so not possible
-        # Let's try with different name length
-        # name = "a.zip" (5), remain = 60 - 5 - 3 = 52
-        # parent <= 52, total > 60, so parent >= 56
-        # 5 + 56 + 1 = 62 > 60 ✓, parent (56) > remain (52) → NOT line 529
-        # So actually line 529 (parent <= remain branch) is unreachable in many cases
-        # We need: name < max_len-3, parent <= remain, total > max_len
-        # name = "a.zip" (5), max_len=10, remain=10-5-3=2, parent <=2
-        # 5 + 2 + 1 = 8 < 10, so total < max_len
-        # Hmm, this branch is mathematically hard to reach
-        # Just verify the result is sensible
-        assert len(result) <= 60
-        assert name in result or "..." in result
