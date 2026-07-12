@@ -296,10 +296,11 @@ def expand_selected_members(
     if not selected_names:
         return []
     selected = set(selected_names)
+    directories = {entry.name.rstrip("/") for entry in entries if entry.is_dir}
     prefixes = {
         name.rstrip("/") + "/"
         for name in selected_names
-        if any(entry.name == name and entry.is_dir for entry in entries)
+        if name.rstrip("/") in directories
     }
     result: list[str] = []
     for entry in entries:

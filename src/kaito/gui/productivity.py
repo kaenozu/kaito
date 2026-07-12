@@ -340,8 +340,9 @@ class ProductivityFeatures:
             return
         base_text = self.app._dest_var.get().strip()
         base = Path(base_text) if base_text else path.parent
+        selected_member_names = set(members)
         selected_entries = [
-            entry for entry in self.app._entries if entry.name in set(members)
+            entry for entry in self.app._entries if entry.name in selected_member_names
         ]
         destination = ArchiveService.resolve_extract_dest(
             base,

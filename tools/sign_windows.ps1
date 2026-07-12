@@ -27,7 +27,13 @@ if ($null -eq $SignTool) {
     throw 'signtool.exe was not found in the Windows SDK.'
 }
 
-$PfxPath = Join-Path $env:RUNNER_TEMP ('kaito-signing-' + [guid]::NewGuid() + '.pfx')
+$TempDir = if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+    [System.IO.Path]::GetTempPath()
+}
+else {
+    $env:RUNNER_TEMP
+}
+$PfxPath = Join-Path $TempDir ('kaito-signing-' + [guid]::NewGuid() + '.pfx')
 try {
     [IO.File]::WriteAllBytes($PfxPath, [Convert]::FromBase64String($CertificateBase64))
     foreach ($Candidate in $FilePath) {
