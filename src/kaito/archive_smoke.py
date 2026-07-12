@@ -50,7 +50,9 @@ def _find_entry(service: ArchiveService, archive: Path, suffix: str) -> str:
     return matches[0]
 
 
-def _assert_password_failures(service: ArchiveService, archive: Path, root: Path) -> None:
+def _assert_password_failures(
+    service: ArchiveService, archive: Path, root: Path
+) -> None:
     try:
         service.extract(archive, ExtractionOptions(dest_dir=root / "missing-password"))
     except PasswordRequiredError:
