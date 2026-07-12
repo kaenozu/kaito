@@ -12,7 +12,9 @@ permissions:
 jobs:
   verify-build-release:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
+    env:
+      WINDOWS_SIGNING_MODE: ${{ vars.WINDOWS_SIGNING_MODE || 'disabled' }}
 
     steps:
       - name: Check out repository
@@ -56,6 +58,17 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 
+      - name: Validate Windows signing configuration
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -ValidateOnly `
+            -StatusPath 'artifacts/windows-signing-preflight.json'
+
       - name: Verify bundled 7-Zip checksums
         shell: pwsh
         run: |
@@ -86,12 +99,16 @@ jobs:
       - name: Build executable
         run: uv run --frozen pyinstaller --clean --noconfirm build.spec
 
-      - name: Sign executable when configured
+      - name: Sign executable according to release mode
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath 'dist/kaito.exe'
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -FilePath 'dist/kaito.exe' `
+            -StatusPath 'artifacts/windows-signing-executable.json'
 
       - name: Verify executable
         shell: pwsh
@@ -155,21 +172,77 @@ jobs:
           if ($null -eq $installer) { throw 'Installer output not found' }
           "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
 
-      - name: Sign installer when configured
+      - name: Sign installer according to release mode
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath $env:KAITO_INSTALLER
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -FilePath $env:KAITO_INSTALLER `
+            -StatusPath 'artifacts/windows-signing-installer.json'
 
       - name: Test install, registry integration, and uninstall
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
 
+      - name: Generate CycloneDX runtime SBOM
+        shell: pwsh
+        run: |
+          uv run --frozen python tools/generate_sbom.py `
+            --repository-root . `
+            --output dist/kaito-sbom.cdx.json `
+            --commit $env:GITHUB_SHA
+          Get-Content dist/kaito-sbom.cdx.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Generate release metadata
+        shell: pwsh
+        run: |
+          $exeSigning = Get-Content 'artifacts/windows-signing-executable.json' -Raw | ConvertFrom-Json
+          $installerSigning = Get-Content 'artifacts/windows-signing-installer.json' -Raw | ConvertFrom-Json
+          if ($exeSigning.result -ne $installerSigning.result) {
+            throw "Executable and installer signing states differ: $($exeSigning.result) vs $($installerSigning.result)"
+          }
+
+          $assetPaths = @(
+            (Resolve-Path 'dist/kaito.exe').Path,
+            (Resolve-Path $env:KAITO_INSTALLER).Path,
+            (Resolve-Path 'dist/kaito-sbom.cdx.json').Path
+          )
+          $assets = foreach ($assetPath in $assetPaths) {
+            $item = Get-Item $assetPath
+            [ordered]@{
+              name = $item.Name
+              sha256 = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = $item.Length
+            }
+          }
+
+          $metadata = [ordered]@{
+            schema_version = 1
+            version = $env:KAITO_VERSION
+            tag = $env:GITHUB_REF_NAME
+            commit = $env:GITHUB_SHA
+            workflow_run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            signing = [ordered]@{
+              mode = $env:WINDOWS_SIGNING_MODE
+              result = $exeSigning.result
+              certificate = $exeSigning.certificate
+            }
+            assets = $assets
+          }
+          $metadata | ConvertTo-Json -Depth 10 | Set-Content 'dist/RELEASE-METADATA.json' -Encoding utf8
+
       - name: Generate release checksums
         shell: pwsh
         run: |
-          $files = @('dist/kaito.exe', $env:KAITO_INSTALLER)
+          $files = @(
+            'dist/kaito.exe',
+            $env:KAITO_INSTALLER,
+            'dist/kaito-sbom.cdx.json',
+            'dist/RELEASE-METADATA.json'
+          )
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([System.IO.Path]::GetFileName($file))"
@@ -187,7 +260,7 @@ jobs:
             throw 'Release verification mutated tracked repository files.'
           }
 
-      - name: Upload verification artifacts
+      - name: Upload build verification evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kaito-release-verification
@@ -195,34 +268,132 @@ jobs:
             artifacts/
             dist/kaito.exe
             dist/kaito-installer-*.exe
+            dist/kaito-sbom.cdx.json
+            dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Publish GitHub release assets
+      - name: Create draft GitHub Release with verified assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: kaito v${{ env.KAITO_VERSION }}
+          draft: true
           generate_release_notes: true
           files: |
             dist/kaito.exe
             dist/kaito-installer-*.exe
+            dist/kaito-sbom.cdx.json
+            dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
+      - name: Redownload and verify draft Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $published = Join-Path $env:RUNNER_TEMP 'kaito-published-assets'
+          Remove-Item $published -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $published -Force | Out-Null
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir $published
+          if ($LASTEXITCODE -ne 0) { throw "Unable to download draft release assets: $LASTEXITCODE" }
+
+          $localSums = (Get-FileHash 'dist/SHA256SUMS' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $publishedSumsPath = Join-Path $published 'SHA256SUMS'
+          if (-not (Test-Path $publishedSumsPath -PathType Leaf)) { throw 'Published SHA256SUMS is missing.' }
+          $publishedSums = (Get-FileHash $publishedSumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($publishedSums -ne $localSums) { throw 'Published SHA256SUMS differs from the verified local file.' }
+
+          $expected = @{}
+          Get-Content $publishedSumsPath | ForEach-Object {
+            if ($_ -notmatch '^([0-9a-f]{64})\s+(.+)$') { throw "Invalid checksum line: $_" }
+            $expected[$Matches[2].Trim()] = $Matches[1]
+          }
+          foreach ($entry in $expected.GetEnumerator()) {
+            $assetPath = Join-Path $published $entry.Key
+            if (-not (Test-Path $assetPath -PathType Leaf)) { throw "Published asset is missing: $($entry.Key)" }
+            $actual = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $entry.Value) { throw "Published asset hash mismatch: $($entry.Key) $actual" }
+            "$actual  $($entry.Key)" | Add-Content artifacts/published-sha256.txt -Encoding ascii
+          }
+
+          $allowedNames = @($expected.Keys) + 'SHA256SUMS'
+          $unexpected = @(Get-ChildItem $published -File | Where-Object { $_.Name -notin $allowedNames })
+          if ($unexpected.Count -gt 0) {
+            throw "Unexpected published assets: $($unexpected.Name -join ', ')"
+          }
+
+          $releaseMetadata = Get-Content (Join-Path $published 'RELEASE-METADATA.json') -Raw | ConvertFrom-Json
+          if ($releaseMetadata.version -ne $env:KAITO_VERSION -or $releaseMetadata.commit -ne $env:GITHUB_SHA) {
+            throw 'Published release metadata does not match the tag target.'
+          }
+          Get-Content (Join-Path $published 'kaito-sbom.cdx.json') -Raw | ConvertFrom-Json | Out-Null
+
+          foreach ($binaryName in @('kaito.exe', "kaito-installer-$env:KAITO_VERSION.exe")) {
+            $binaryPath = Join-Path $published $binaryName
+            $signature = Get-AuthenticodeSignature $binaryPath
+            if ($releaseMetadata.signing.result -eq 'signed' -and $signature.Status -ne 'Valid') {
+              throw "Published signed asset failed Authenticode verification: $binaryName $($signature.Status)"
+            }
+            if ($releaseMetadata.signing.result -eq 'unsigned' -and $signature.Status -ne 'NotSigned') {
+              throw "Published unsigned asset has an unexpected signature state: $binaryName $($signature.Status)"
+            }
+          }
+
+      - name: Upload publication verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-publication-evidence
+          path: |
+            artifacts/published-sha256.txt
+            dist/RELEASE-METADATA.json
+            dist/SHA256SUMS
+
+      - name: Publish verified GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Unable to publish verified release: $LASTEXITCODE" }
+
       - name: Record completed release
+        continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $checksums = Get-Content 'dist/SHA256SUMS' -Raw
+          $releaseMetadata = Get-Content 'dist/RELEASE-METADATA.json' -Raw | ConvertFrom-Json
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $body = @"
           ## v$env:KAITO_VERSION release completed
 
-          Stable tag and GitHub Release were published successfully.
+          Stable tag and GitHub Release were published after the assets were downloaded again and verified.
+
+          Signing mode: ``$($releaseMetadata.signing.mode)``
+          Signing result: ``$($releaseMetadata.signing.result)``
 
           ```text
           $checksums
           ```
 
+          Workflow: $runUrl
+          "@
+          gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
+
+      - name: Record failed release workflow
+        if: failure()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $body = @"
+          ## v$env:KAITO_VERSION release workflow failed
+
+          The release was not promoted from draft to public by this workflow. Existing tags are never moved or reused.
+
+          Signing mode: ``$env:WINDOWS_SIGNING_MODE``
           Workflow: $runUrl
           "@
           gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
