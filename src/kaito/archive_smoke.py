@@ -184,9 +184,10 @@ def run_archive_smoke() -> SmokeResult:
             if _sha256(extracted) != expected_hello_hash:
                 raise AssertionError("AES ZIP extraction hash mismatch")
             entry = _find_entry(service, aes_zip, "hello.txt")
-            if service.read_entry(
-                aes_zip, entry, password=_SMOKE_PASSWORD
-            ) != _HELLO_CONTENT:
+            if (
+                service.read_entry(aes_zip, entry, password=_SMOKE_PASSWORD)
+                != _HELLO_CONTENT
+            ):
                 raise AssertionError("AES ZIP preview mismatch")
 
         run("aes-zip-password-and-extract", check_aes_zip)
