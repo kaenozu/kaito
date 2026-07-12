@@ -145,11 +145,8 @@ def test_diagnostic_report_redacts_quoted_password_arguments(
     short_option_secret = "fixture value one"
     long_option_secret = "fixture value two"
     last_error = (
-        '7z failed -p"'
-        + short_option_secret
-        + '" --password=\''
-        + long_option_secret
-        + "' remaining"
+        f'7z failed -p"{short_option_secret}" '
+        f"--password='{long_option_secret}' remaining"
     )
 
     report_text = build_diagnostic_report(service, last_error=last_error)
