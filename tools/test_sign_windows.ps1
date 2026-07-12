@@ -19,14 +19,18 @@ function Invoke-ExpectedFailure {
         [string]$MessagePattern
     )
 
+    $failed = $false
     try {
         & $Action
-        throw "Expected failure matching '$MessagePattern', but the command succeeded."
     }
     catch {
+        $failed = $true
         if ($_.Exception.Message -notmatch $MessagePattern) {
             throw "Expected failure matching '$MessagePattern', but received: $($_.Exception.Message)"
         }
+    }
+    if (-not $failed) {
+        throw "Expected failure matching '$MessagePattern', but the command succeeded."
     }
 }
 
