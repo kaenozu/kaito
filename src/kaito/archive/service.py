@@ -11,6 +11,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
+from kaito.archive.inspection import (
+    ArchiveSafetyReport,
+    IntegrityCheckResult,
+    inspect_archive,
+)
 from kaito.archive.safety import ensure_no_reparse_ancestors
 from kaito.archive.sevenzip_backend import SevenZipBackend
 from kaito.archive.zip_backend import ZipBackend
@@ -116,6 +121,30 @@ class ArchiveService:
             self._raise_if_backend_unavailable(backend, path)
         return backend.list_archive(Path(path), password=password)
 
+    def analyze_archive(self, info: ArchiveInfo) -> ArchiveSafetyReport:
+        """一覧情報だけを使って非破壊の安全診断を行う。"""
+        return inspect_archive(info, self._safety_limits)
+
+    def test_archive(
+        self, path: str | Path, password: Optional[str] = None
+    ) -> IntegrityCheckResult:
+        """展開せずに全データのCRC/整合性を検査する。"""
+        archive_path = Path(path)
+        if archive_path.suffix.lower() == ".zip" and self._encrypted_zip_uses_sevenzip(
+            archive_path
+        ):
+            self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
+            return self._sevenzip_backend.test_archive(archive_path, password=password)
+
+        backend = self._get_backend(archive_path)
+        if isinstance(backend, SevenZipBackend):
+            self._raise_if_backend_unavailable(backend, archive_path)
+        return backend.test_archive(archive_path, password=password)
+
+    def backend_info(self) -> dict[str, object]:
+        """診断レポート用に7-Zipバックエンド情報を返す。"""
+        return self._sevenzip_backend.backend_info()
+
     def extract(self, path: str | Path, options: ExtractionOptions) -> None:
         archive_path = Path(path)
         effective_options = self._effective_extraction_options(options)
@@ -149,7 +178,13 @@ class ArchiveService:
 
         extension = options.output_path.suffix.lower()
         if extension == ".zip":
-            self._zip_backend.create(options)
+            if options.password:
+                self._raise_if_backend_unavailable(
+                    self._sevenzip_backend, options.output_path
+                )
+                self._sevenzip_backend.create(options)
+            else:
+                self._zip_backend.create(options)
             return
         if extension == ".7z":
             self._raise_if_backend_unavailable(
@@ -189,7 +224,11 @@ class ArchiveService:
 
     @staticmethod
     def resolve_extract_dest(
-        dest: Path, archive_path: Path, entries: list[ArchiveEntry]
+        dest: Path,
+        archive_path: Path,
+        entries: list[ArchiveEntry],
+        *,
+        avoid_existing: bool = False,
     ) -> Path:
         """アーカイブ構成に応じて安全な展開先を決定する。"""
         roots: set[str] = set()
@@ -200,9 +239,15 @@ class ArchiveService:
             elif entry.name:
                 has_root_file = True
 
-        resolved = (
-            dest if len(roots) == 1 and not has_root_file else dest / archive_path.stem
-        )
+        needs_container = len(roots) != 1 or has_root_file
+        resolved = dest / archive_path.stem if needs_container else dest
+        if avoid_existing and needs_container and resolved.exists():
+            base_name = resolved.name
+            for index in range(2, 10_000):
+                candidate = resolved.with_name(f"{base_name} ({index})")
+                if not candidate.exists():
+                    resolved = candidate
+                    break
         ensure_no_reparse_ancestors(resolved)
         return resolved
 
