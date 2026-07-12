@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, TypeVar
 
+from kaito.archive.inspection import IntegrityCheckResult
 from kaito.archive.safety import (
     check_archive_safety,
     merge_staging_tree,
@@ -354,6 +355,47 @@ class ZipBackend:
             return self._try_zip_with_encodings(path, read)
         except (KeyError, RuntimeError, ValueError, zipfile.BadZipFile):
             return None
+
+    def test_archive(
+        self, path: Path, password: Optional[str] = None
+    ) -> IntegrityCheckResult:
+        """Read every ZIP member and verify CRC values without extracting."""
+        self._check_cancelled()
+
+        def verify(archive: zipfile.ZipFile) -> IntegrityCheckResult:
+            if password is not None:
+                archive.setpassword(password.encode("utf-8"))
+            checked = 0
+            for info in archive.infolist():
+                self._check_cancelled()
+                if info.is_dir():
+                    continue
+                try:
+                    with archive.open(info, "r") as source:
+                        while source.read(self._IO_CHUNK_SIZE):
+                            self._check_cancelled()
+                except RuntimeError as exc:
+                    message = str(exc).lower()
+                    if "password" in message or "pwd" in message:
+                        raise InvalidPasswordError(str(path)) from exc
+                    raise
+                checked += 1
+            return IntegrityCheckResult(
+                status="passed",
+                checked_entries=checked,
+                message=f"整合性検査に成功しました（{checked}ファイル、CRCエラーなし）",
+            )
+
+        try:
+            return self._try_zip_with_encodings(path, verify)
+        except InvalidPasswordError:
+            raise
+        except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+            return IntegrityCheckResult(
+                status="failed",
+                checked_entries=0,
+                message=f"ZIP整合性検査に失敗しました: {exc}",
+            )
 
     def check_tool_availability(self) -> tuple[bool, str | None]:
         return True, None
