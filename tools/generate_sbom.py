@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import platform
 import json
+import platform
 import re
 import tomllib
 import uuid
@@ -44,12 +44,13 @@ def _license_entry(distribution: metadata.Distribution) -> list[dict[str, Any]] 
     if expression:
         return [{"expression": expression}]
     license_text = distribution.metadata.get("License")
+    normalized_license = " ".join((license_text or "").split())
     if (
-        license_text
-        and license_text.strip()
-        and license_text.strip().upper() != "UNKNOWN"
+        normalized_license
+        and normalized_license.upper() != "UNKNOWN"
+        and len(normalized_license) <= 200
     ):
-        return [{"license": {"name": license_text.strip()}}]
+        return [{"license": {"name": normalized_license}}]
     return None
 
 
