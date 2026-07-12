@@ -1,0 +1,61 @@
+name: Apply remaining review optimizations
+
+on:
+  push:
+    branches:
+      - agent/archive-productivity-suite
+    paths:
+      - .github/workflows/apply-review-optimizations.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Patch reviewed hot paths
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"{path}: expected one match")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "src/kaito/archive/inspection.py",
+              '''    selected = set(selected_names)\n    prefixes = {\n        name.rstrip("/") + "/"\n        for name in selected_names\n        if any(entry.name == name and entry.is_dir for entry in entries)\n    }\n''',
+              '''    selected = set(selected_names)\n    directories = {entry.name.rstrip("/") for entry in entries if entry.is_dir}\n    prefixes = {\n        name.rstrip("/") + "/"\n        for name in selected_names\n        if name.rstrip("/") in directories\n    }\n''',
+          )
+
+          replace_once(
+              "src/kaito/gui/productivity.py",
+              '''        selected_entries = [\n            entry for entry in self.app._entries if entry.name in set(members)\n        ]\n''',
+              '''        selected_member_names = set(members)\n        selected_entries = [\n            entry\n            for entry in self.app._entries\n            if entry.name in selected_member_names\n        ]\n''',
+          )
+
+          replace_once(
+              "tools/sign_windows.ps1",
+              "$PfxPath = Join-Path $env:RUNNER_TEMP ('kaito-signing-' + [guid]::NewGuid() + '.pfx')\n",
+              '''$TempDir = if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {\n    [System.IO.Path]::GetTempPath()\n}\nelse {\n    $env:RUNNER_TEMP\n}\n$PfxPath = Join-Path $TempDir ('kaito-signing-' + [guid]::NewGuid() + '.pfx')\n''',
+          )
+
+      - name: Format and lint
+        run: |
+          python -m pip install ruff==0.15.16
+          ruff format src tests
+          ruff check src tests
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src tools/sign_windows.ps1
+          git commit -m "Optimize reviewed archive operations"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
