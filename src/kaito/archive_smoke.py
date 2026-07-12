@@ -6,7 +6,7 @@ import hashlib
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypedDict
 
 from kaito.archive.service import ArchiveService
 from kaito.archive.sevenzip_backend import SevenZipBackend
@@ -18,6 +18,18 @@ from kaito.domain.errors import (
 from kaito.domain.models import CompressionOptions, ExtractionOptions
 
 _SMOKE_PASSWORD = "Kaito-Smoke-Only-2026!"
+
+
+class SmokeCheck(TypedDict):
+    name: str
+    status: str
+    detail: str
+
+
+class SmokeResult(TypedDict):
+    passed: int
+    failed: int
+    checks: list[SmokeCheck]
 
 
 def _sha256(path: Path) -> str:
@@ -64,9 +76,9 @@ def _redact(text: str) -> str:
     return text.replace(_SMOKE_PASSWORD, "***")
 
 
-def run_archive_smoke() -> dict[str, object]:
+def run_archive_smoke() -> SmokeResult:
     """主要形式を実際に作成・一覧・展開し、JSON化可能な結果を返す。"""
-    checks: list[dict[str, str]] = []
+    checks: list[SmokeCheck] = []
 
     def run(name: str, operation: Callable[[], None]) -> None:
         try:
@@ -108,9 +120,7 @@ def run_archive_smoke() -> dict[str, object]:
         normal_zip = root / "normal.zip"
 
         def check_normal_zip() -> None:
-            service.create(
-                CompressionOptions(sources=[source], output_path=normal_zip)
-            )
+            service.create(CompressionOptions(sources=[source], output_path=normal_zip))
             entry = _find_entry(service, normal_zip, "hello.txt")
             preview = service.read_entry(normal_zip, entry)
             if preview != b"kaito archive smoke\n":
@@ -126,9 +136,7 @@ def run_archive_smoke() -> dict[str, object]:
         normal_7z = root / "normal.7z"
 
         def check_normal_7z() -> None:
-            service.create(
-                CompressionOptions(sources=[source], output_path=normal_7z)
-            )
+            service.create(CompressionOptions(sources=[source], output_path=normal_7z))
             entry = _find_entry(service, normal_7z, "hello.txt")
             preview = service.read_entry(normal_7z, entry)
             if preview != b"kaito archive smoke\n":
