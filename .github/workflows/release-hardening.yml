@@ -22,6 +22,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   signing-and-sbom:
@@ -43,7 +45,13 @@ jobs:
 
       - name: Test Windows signing modes and certificate validation
         shell: pwsh
-        run: ./tools/test_sign_windows.ps1 -ArtifactsDir artifacts/signing-tests
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $output = & pwsh -NoProfile -File ./tools/test_sign_windows.ps1 `
+            -ArtifactsDir artifacts/signing-tests 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/signing-test-output.txt
+          if ($code -ne 0) { exit $code }
 
       - name: Test and generate CycloneDX SBOM
         shell: pwsh
@@ -54,6 +62,32 @@ jobs:
             --output artifacts/kaito-sbom.cdx.json `
             --commit $env:GITHUB_SHA
           Get-Content artifacts/kaito-sbom.cdx.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Report hardening failure on pull request
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $logPath = 'artifacts/signing-test-output.txt'
+          $details = if (Test-Path $logPath) {
+            (Get-Content $logPath -Tail 60) -join "`n"
+          }
+          else {
+            'The signing test did not produce a diagnostic output file.'
+          }
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $body = @"
+          ## Release hardening check failed
+
+          ```text
+          $details
+          ```
+
+          Workflow: $runUrl
+          "@
+          gh pr comment ${{ github.event.pull_request.number }} --repo $env:GITHUB_REPOSITORY --body $body
 
       - name: Upload hardening evidence
         if: always()
