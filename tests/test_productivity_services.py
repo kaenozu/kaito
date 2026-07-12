@@ -59,9 +59,7 @@ def test_encrypted_aes_zip_creation_and_extraction(tmp_path: Path) -> None:
         ),
     )
     assert (destination / "secret.txt").read_text(encoding="utf-8") == "classified"
-    assert service.test_archive(
-        archive, password="correct horse battery staple"
-    ).passed
+    assert service.test_archive(archive, password="correct horse battery staple").passed
 
 
 def test_smart_destination_uses_numbered_container_on_collision(

@@ -154,12 +154,18 @@ def inspect_archive(info: ArchiveInfo, limits: SafetyLimits) -> ArchiveSafetyRep
     files = [entry for entry in info.entries if entry.is_file]
     encrypted = [entry for entry in files if entry.is_encrypted]
     executables = [
-        entry for entry in files if Path(entry.name).suffix.lower() in _EXECUTABLE_EXTENSIONS
+        entry
+        for entry in files
+        if Path(entry.name).suffix.lower() in _EXECUTABLE_EXTENSIONS
     ]
     links = [entry for entry in info.entries if entry.is_link]
     total_size = sum(max(0, entry.size) for entry in files)
     compressed_size = sum(max(0, entry.compressed_size) for entry in files)
-    ratio = total_size / compressed_size if compressed_size else (1.0 if total_size == 0 else float("inf"))
+    ratio = (
+        total_size / compressed_size
+        if compressed_size
+        else (1.0 if total_size == 0 else float("inf"))
+    )
 
     if encrypted:
         findings.append(
@@ -183,7 +189,10 @@ def inspect_archive(info: ArchiveInfo, limits: SafetyLimits) -> ArchiveSafetyRep
             SafetyFinding("blocked", "links", f"リンクエントリが{len(links)}件あります")
         )
 
-    if total_size >= int(limits.max_total_size * 0.8) and total_size <= limits.max_total_size:
+    if (
+        total_size >= int(limits.max_total_size * 0.8)
+        and total_size <= limits.max_total_size
+    ):
         findings.append(
             SafetyFinding(
                 "warning",
@@ -191,7 +200,11 @@ def inspect_archive(info: ArchiveInfo, limits: SafetyLimits) -> ArchiveSafetyRep
                 "展開後サイズが安全上限の80%を超えています",
             )
         )
-    if ratio != float("inf") and ratio >= limits.max_compression_ratio * 0.8 and ratio <= limits.max_compression_ratio:
+    if (
+        ratio != float("inf")
+        and ratio >= limits.max_compression_ratio * 0.8
+        and ratio <= limits.max_compression_ratio
+    ):
         findings.append(
             SafetyFinding(
                 "warning",
@@ -247,7 +260,11 @@ def filter_entries(
         if not normalized_query:
             return True
         candidate = entry.name.casefold()
-        return fnmatch(candidate, normalized_query) if wildcard else normalized_query in candidate
+        return (
+            fnmatch(candidate, normalized_query)
+            if wildcard
+            else normalized_query in candidate
+        )
 
     def matches_category(entry: ArchiveEntry) -> bool:
         if category in {"", "すべて", "all"}:
@@ -267,7 +284,9 @@ def filter_entries(
             return entry.is_encrypted
         return True
 
-    return [entry for entry in entries if matches_query(entry) and matches_category(entry)]
+    return [
+        entry for entry in entries if matches_query(entry) and matches_category(entry)
+    ]
 
 
 def expand_selected_members(
@@ -284,7 +303,9 @@ def expand_selected_members(
     }
     result: list[str] = []
     for entry in entries:
-        if entry.name in selected or any(entry.name.startswith(prefix) for prefix in prefixes):
+        if entry.name in selected or any(
+            entry.name.startswith(prefix) for prefix in prefixes
+        ):
             result.append(entry.name)
     return result
 

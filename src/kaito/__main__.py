@@ -252,7 +252,9 @@ def main() -> None:
 
     if args and args[0] == "--install-context-menu":
         if output_path is not None:
-            _emit_output("Error: --output is not valid for context-menu commands\n", output_path)
+            _emit_output(
+                "Error: --output is not valid for context-menu commands\n", output_path
+            )
             raise SystemExit(2)
         from kaito.context_menu import install_context_menu
 
@@ -260,7 +262,9 @@ def main() -> None:
         return
     if args and args[0] == "--uninstall-context-menu":
         if output_path is not None:
-            _emit_output("Error: --output is not valid for context-menu commands\n", output_path)
+            _emit_output(
+                "Error: --output is not valid for context-menu commands\n", output_path
+            )
             raise SystemExit(2)
         from kaito.context_menu import uninstall_context_menu
 
@@ -284,7 +288,9 @@ def main() -> None:
         return
     if args and args[0] == "--test-archive":
         if len(args) < 2:
-            _emit_output("Error: --test-archive requires an archive path\n", output_path)
+            _emit_output(
+                "Error: --test-archive requires an archive path\n", output_path
+            )
             raise SystemExit(2)
         archive_path = Path(args[1])
         if not archive_path.is_file():

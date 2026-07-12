@@ -519,7 +519,9 @@ class SevenZipBackend:
             temporary_output = Path(temporary) / output.name
             arguments = ["a", f"-mx={seven_zip_level}"]
             if extension == ".zip":
-                arguments.extend(["-tzip", "-mem=AES256"] if options.password else ["-tzip"])
+                arguments.extend(
+                    ["-tzip", "-mem=AES256"] if options.password else ["-tzip"]
+                )
             elif options.password:
                 arguments.append("-mhe=on")
             arguments.append(str(temporary_output))

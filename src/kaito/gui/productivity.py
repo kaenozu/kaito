@@ -64,7 +64,9 @@ class _CreationPasswordDialog(ctk.CTkToplevel):  # pragma: no cover - GUI
 
         self._password = ctk.CTkEntry(self, show="*", placeholder_text="パスワード")
         self._password.grid(row=2, column=0, padx=24, pady=4, sticky="ew")
-        self._confirm = ctk.CTkEntry(self, show="*", placeholder_text="パスワードを再入力")
+        self._confirm = ctk.CTkEntry(
+            self, show="*", placeholder_text="パスワードを再入力"
+        )
         self._confirm.grid(row=3, column=0, padx=24, pady=4, sticky="ew")
 
         buttons = ctk.CTkFrame(self, fg_color="transparent")
@@ -80,10 +82,14 @@ class _CreationPasswordDialog(ctk.CTkToplevel):  # pragma: no cover - GUI
     def _accept(self) -> None:
         password = self._password.get()
         if not password:
-            messagebox.showerror("パスワード", "パスワードを入力してください", parent=self)
+            messagebox.showerror(
+                "パスワード", "パスワードを入力してください", parent=self
+            )
             return
         if password != self._confirm.get():
-            messagebox.showerror("パスワード", "確認用パスワードが一致しません", parent=self)
+            messagebox.showerror(
+                "パスワード", "確認用パスワードが一致しません", parent=self
+            )
             return
         if len(password) < 8:
             if not messagebox.askyesno(
@@ -152,7 +158,10 @@ class ProductivityFeatures:
         )
         self._diagnostics_button.grid(row=0, column=4, padx=3)
         self._update_button = ctk.CTkButton(
-            toolbar, text="更新確認", width=82, command=lambda: self.check_updates(False)
+            toolbar,
+            text="更新確認",
+            width=82,
+            command=lambda: self.check_updates(False),
         )
         self._update_button.grid(row=0, column=5, padx=(3, 0))
 
@@ -209,7 +218,9 @@ class ProductivityFeatures:
 
     def show_safety_report(self) -> None:
         if self._safety_report is None:
-            messagebox.showinfo("安全診断", "アーカイブを開いてください", parent=self.app)
+            messagebox.showinfo(
+                "安全診断", "アーカイブを開いてください", parent=self.app
+            )
             return
         messagebox.showinfo(
             "アーカイブ安全診断",
@@ -253,7 +264,9 @@ class ProductivityFeatures:
     def test_integrity(self) -> None:
         path = self.app._current_archive_path
         if path is None:
-            messagebox.showinfo("整合性検査", "アーカイブを開いてください", parent=self.app)
+            messagebox.showinfo(
+                "整合性検査", "アーカイブを開いてください", parent=self.app
+            )
             return
         password = self._password_for_current_archive()
         if self.app._is_encrypted and password is None:
@@ -265,11 +278,20 @@ class ProductivityFeatures:
             try:
                 result = self.app._archive_service.test_archive(path, password=password)
             except CancelledError:
-                self.app.after(0, lambda: self._finish_integrity(None, "検査をキャンセルしました"))
+                self.app.after(
+                    0, lambda: self._finish_integrity(None, "検査をキャンセルしました")
+                )
             except ArchiveError as exc:
-                self.app.after(0, lambda message=exc.user_message(): self._finish_integrity(None, message))
+                self.app.after(
+                    0,
+                    lambda message=exc.user_message(): self._finish_integrity(
+                        None, message
+                    ),
+                )
             except Exception as exc:
-                self.app.after(0, lambda message=str(exc): self._finish_integrity(None, message))
+                self.app.after(
+                    0, lambda message=str(exc): self._finish_integrity(None, message)
+                )
             else:
                 self.app.after(0, lambda: self._finish_integrity(result, None))
 
@@ -306,7 +328,11 @@ class ProductivityFeatures:
                 selected_names.append(str(values[1]))
         members = expand_selected_members(self.app._entries, selected_names)
         if not members:
-            messagebox.showinfo("選択を解凍", "一覧からファイルまたはフォルダーを選択してください", parent=self.app)
+            messagebox.showinfo(
+                "選択を解凍",
+                "一覧からファイルまたはフォルダーを選択してください",
+                parent=self.app,
+            )
             return
 
         password = self._password_for_current_archive()
@@ -314,7 +340,9 @@ class ProductivityFeatures:
             return
         base_text = self.app._dest_var.get().strip()
         base = Path(base_text) if base_text else path.parent
-        selected_entries = [entry for entry in self.app._entries if entry.name in set(members)]
+        selected_entries = [
+            entry for entry in self.app._entries if entry.name in set(members)
+        ]
         destination = ArchiveService.resolve_extract_dest(
             base,
             path,
@@ -346,11 +374,20 @@ class ProductivityFeatures:
                     ),
                 )
             except CancelledError:
-                self.app.after(0, lambda: self._finish_selected(None, "解凍をキャンセルしました"))
+                self.app.after(
+                    0, lambda: self._finish_selected(None, "解凍をキャンセルしました")
+                )
             except ArchiveError as exc:
-                self.app.after(0, lambda message=exc.user_message(): self._finish_selected(None, message))
+                self.app.after(
+                    0,
+                    lambda message=exc.user_message(): self._finish_selected(
+                        None, message
+                    ),
+                )
             except Exception as exc:
-                self.app.after(0, lambda message=str(exc): self._finish_selected(None, message))
+                self.app.after(
+                    0, lambda message=str(exc): self._finish_selected(None, message)
+                )
             else:
                 self.app.after(0, lambda: self._finish_selected(destination, None))
 
@@ -375,8 +412,12 @@ class ProductivityFeatures:
         report = build_diagnostic_report(
             self.app._archive_service,
             archive_path=self.app._current_archive_path,
-            entry_count=len(self.app._entries) if self.app._current_archive_path else None,
-            encrypted=self.app._is_encrypted if self.app._current_archive_path else None,
+            entry_count=len(self.app._entries)
+            if self.app._current_archive_path
+            else None,
+            encrypted=self.app._is_encrypted
+            if self.app._current_archive_path
+            else None,
             last_error=self._last_error,
         )
         self.app.clipboard_clear()
@@ -435,7 +476,10 @@ class ProductivityFeatures:
 
     def start_compress(self, output: Path) -> None:
         setattr(self.app, "_compress_password", None)
-        if not self.app._compress_no_dialog and output.suffix.lower() in {".zip", ".7z"}:
+        if not self.app._compress_no_dialog and output.suffix.lower() in {
+            ".zip",
+            ".7z",
+        }:
             choice = messagebox.askyesnocancel(
                 "暗号化",
                 "パスワードで暗号化しますか？\n\n"
