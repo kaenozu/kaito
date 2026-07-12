@@ -1,10 +1,10 @@
 ; kaito installer script for Inno Setup 6
 ; Build: ISCC.exe installer\kaito.iss
-; Override version: ISCC.exe /DMyAppVersion=0.10.1 installer\kaito.iss
+; Override version: ISCC.exe /DMyAppVersion=0.11.0 installer\kaito.iss
 
 #define MyAppName "kaito"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.10.1"
+  #define MyAppVersion "0.11.0"
 #endif
 #define MyAppPublisher "kaenozu"
 #define MyAppURL "https://github.com/kaenozu/kaito"
