@@ -105,15 +105,11 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             safety_limits=SafetyLimits(
                 max_entries=int(self._settings.get("safety_max_entries")),
                 max_total_size=int(self._settings.get("safety_max_total_size")),
-                max_single_file_size=int(
-                    self._settings.get("safety_max_file_size")
-                ),
+                max_single_file_size=int(self._settings.get("safety_max_file_size")),
                 max_compression_ratio=float(
                     self._settings.get("safety_max_compression_ratio")
                 ),
-                max_path_length=int(
-                    self._settings.get("safety_max_path_length")
-                ),
+                max_path_length=int(self._settings.get("safety_max_path_length")),
             )
         )
 
