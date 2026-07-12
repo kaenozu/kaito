@@ -106,14 +106,14 @@ def _delete_key_recursive(root_key: Any, sub_key: str) -> None:
         from winreg import (  # type: ignore[attr-defined]
             DeleteKey,
             EnumKey,
-            KEY_SET_VALUE,
+            KEY_ALL_ACCESS,
             OpenKey,
             QueryInfoKey,
         )
     except ImportError:
         return
     try:
-        with OpenKey(root_key, sub_key, 0, KEY_SET_VALUE) as key:
+        with OpenKey(root_key, sub_key, 0, KEY_ALL_ACCESS) as key:
             child_count = QueryInfoKey(key)[0]
             for _ in range(child_count):
                 _delete_key_recursive(key, EnumKey(key, 0))
