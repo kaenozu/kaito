@@ -6,7 +6,9 @@
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-07-12
+## [0.10.1] - 2026-07-12
+
+`v0.10.0`は既存の履歴タグと競合していたため、このリリースは`v0.10.1`として公開します。
 
 ### Added
 
@@ -64,5 +66,5 @@
 - 7-Zip CLIの制約により、暗号化アーカイブのパスワードは子プロセスのコマンドライン引数として渡されます。同一ユーザー権限の別プロセスから閲覧される可能性があります。
 - Windowsコード署名は未導入のため、ダウンロードしたEXEまたはインストーラーでSmartScreen警告が表示される場合があります。
 
-[Unreleased]: https://github.com/kaenozu/kaito/compare/v0.10.0...HEAD
-[0.10.0]: https://github.com/kaenozu/kaito/compare/v0.9.3...v0.10.0
+[Unreleased]: https://github.com/kaenozu/kaito/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/kaenozu/kaito/compare/v0.9.3...v0.10.1
