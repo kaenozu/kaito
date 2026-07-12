@@ -250,6 +250,22 @@ def main() -> None:
         _emit_output(f"Error: {exc}\n", None)
         raise SystemExit(2) from exc
 
+    if args and args[0] == "--install-context-menu":
+        if output_path is not None:
+            _emit_output("Error: --output is not valid for context-menu commands\n", output_path)
+            raise SystemExit(2)
+        from kaito.context_menu import install_context_menu
+
+        install_context_menu()
+        return
+    if args and args[0] == "--uninstall-context-menu":
+        if output_path is not None:
+            _emit_output("Error: --output is not valid for context-menu commands\n", output_path)
+            raise SystemExit(2)
+        from kaito.context_menu import uninstall_context_menu
+
+        uninstall_context_menu()
+        return
     if args and args[0] == "--version":
         _emit_output(f"kaito {_version()}\n", output_path)
         return
