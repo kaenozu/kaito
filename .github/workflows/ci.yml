@@ -163,6 +163,23 @@ jobs:
           $lines | Set-Content artifacts/release-sha256.txt -Encoding ascii
           Get-Content artifacts/release-sha256.txt
 
+      - name: Smoke-test acceptance preparation and evidence collection
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'kaito-acceptance-helper'
+          $evidence = Join-Path (Resolve-Path artifacts).Path 'acceptance-helper'
+          ./tools/prepare_acceptance.ps1 `
+            -ArtifactRoot . `
+            -RepositoryRoot . `
+            -WorkRoot $work `
+            -EvidenceRoot $evidence `
+            -LargeFileSizeMB 1
+          ./tools/collect_acceptance_evidence.ps1 `
+            -Phase Before `
+            -RepositoryRoot . `
+            -EvidenceRoot $evidence `
+            -WorkRoot $work
+
       - name: Test install, registry integration, and uninstall
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
