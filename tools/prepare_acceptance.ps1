@@ -136,7 +136,7 @@ if (-not (Test-Path -LiteralPath $generator -PathType Leaf)) {
 
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if ($null -ne $uv) {
-    & $uv.Source run python $generator `
+    & $uv.Source run --frozen python $generator `
         --repo-root $RepositoryRoot `
         --work-root $WorkRoot `
         --large-file-size-mib $LargeFileSizeMB
