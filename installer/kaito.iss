@@ -56,6 +56,12 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.rar\shell\kaito_ex
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.rar\shell\kaito_extract\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" ""%1"""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_extract"; ValueType: string; ValueName: ""; ValueData: "kaitoで解凍"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_extract\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\kaito_test"; ValueType: string; ValueName: ""; ValueData: "kaitoで整合性を検査"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\kaito_test\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --test-archive ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.rar\shell\kaito_test"; ValueType: string; ValueName: ""; ValueData: "kaitoで整合性を検査"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.rar\shell\kaito_test\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --test-archive ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_test"; ValueType: string; ValueName: ""; ValueData: "kaitoで整合性を検査"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.7z\shell\kaito_test\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --test-archive ""%1"""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_compress"; ValueType: string; ValueName: ""; ValueData: "kaitoで圧縮"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\*\shell\kaito_compress\command"; ValueType: string; ValueName: ""; ValueData: """{app}\kaito.exe"" --compress ""%1"""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\kaito_compress"; ValueType: string; ValueName: ""; ValueData: "kaitoで圧縮"; Flags: uninsdeletekey
