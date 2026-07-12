@@ -93,7 +93,9 @@ def test_smart_destination_uses_numbered_container_on_collision(
     assert resolved == tmp_path / "bundle (2)"
 
 
-def _stub_backend_info(service: ArchiveService, monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_backend_info(
+    service: ArchiveService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         service,
         "backend_info",
@@ -143,10 +145,7 @@ def test_diagnostic_report_redacts_quoted_password_arguments(
 
     report_text = build_diagnostic_report(
         service,
-        last_error=(
-            '7z failed -p"my secret password" '
-            "--password='another secret' remaining"
-        ),
+        last_error="7z failed -p\"my secret password\" --password='another secret' remaining",
     )
     report = json.loads(report_text)
 
