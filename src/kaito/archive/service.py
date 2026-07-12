@@ -164,9 +164,7 @@ class ArchiveService:
         extension = archive_path.suffix.lower()
         if extension == ".zip":
             if self._encrypted_zip_uses_sevenzip(archive_path):
-                self._raise_if_backend_unavailable(
-                    self._sevenzip_backend, archive_path
-                )
+                self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
                 return self._sevenzip_backend.read_entry(
                     archive_path, entry_name, password=password
                 )
