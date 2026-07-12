@@ -19,7 +19,7 @@ from kaito.archive.inspection import (
 from kaito.archive.service import ArchiveService
 from kaito.diagnostics import build_diagnostic_report
 from kaito.domain.errors import ArchiveError, CancelledError
-from kaito.domain.models import ArchiveEntry, ArchiveInfo, ExtractionOptions
+from kaito.domain.models import ArchiveInfo, ExtractionOptions
 from kaito.update_checker import UpdateCheckResult, check_for_update
 from kaito.version import __version__
 
