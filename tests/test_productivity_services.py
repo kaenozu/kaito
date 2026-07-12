@@ -142,15 +142,18 @@ def test_diagnostic_report_redacts_quoted_password_arguments(
 ) -> None:
     service = ArchiveService()
     _stub_backend_info(service, monkeypatch)
-
-    report_text = build_diagnostic_report(
-        service,
-        last_error="7z failed -p\"my secret password\" --password='another secret' remaining",
+    short_option_secret = "fixture value one"
+    long_option_secret = "fixture value two"
+    last_error = (
+        f'7z failed -p"{short_option_secret}" '
+        f"--password='{long_option_secret}' remaining"
     )
+
+    report_text = build_diagnostic_report(service, last_error=last_error)
     report = json.loads(report_text)
 
-    assert "my secret password" not in report_text
-    assert "another secret" not in report_text
+    assert short_option_secret not in report_text
+    assert long_option_secret not in report_text
     assert "-p***" in report["last_error"]
     assert "--password=***" in report["last_error"]
     assert "remaining" in report["last_error"]
