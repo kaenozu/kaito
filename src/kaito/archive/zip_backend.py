@@ -221,7 +221,10 @@ class ZipBackend:
         info = zipfile.ZipInfo.from_file(source, arcname=archive_name)
         info.compress_type = zipfile.ZIP_DEFLATED
         info._compresslevel = compression_level
-        with source.open("rb") as input_stream, archive.open(info, "w") as output_stream:
+        with (
+            source.open("rb") as input_stream,
+            archive.open(info, "w") as output_stream,
+        ):
             while chunk := input_stream.read(self._IO_CHUNK_SIZE):
                 self._check_cancelled()
                 output_stream.write(chunk)
