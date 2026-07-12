@@ -76,7 +76,12 @@ jobs:
           if ($failed) { throw 'Bundled 7-Zip checksum verification failed' }
 
       - name: Lint
-        run: uv run --frozen ruff check .
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen ruff check . 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/ruff-check.txt
+          exit $code
 
       - name: Format check
         shell: pwsh
@@ -87,7 +92,12 @@ jobs:
           exit $code
 
       - name: Type check
-        run: uv run --frozen pyright
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen pyright 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/pyright-output.txt
+          exit $code
 
       - name: Test
         shell: pwsh
@@ -108,6 +118,7 @@ jobs:
           $selfTestFile = (Resolve-Path artifacts).Path + '\kaito-self-test.txt'
           $backendFile = (Resolve-Path artifacts).Path + '\kaito-backend.json'
           $archiveSmokeFile = (Resolve-Path artifacts).Path + '\kaito-archive-smoke.json'
+          $diagnosticsFile = (Resolve-Path artifacts).Path + '\kaito-diagnostics.json'
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path $versionFile)) { throw "Version command failed: $($process.ExitCode)" }
@@ -137,6 +148,12 @@ jobs:
           if ($archiveSmoke.failed -ne 0 -or $archiveSmoke.passed -ne 6) {
             throw "Archive smoke verification failed: $($archiveSmoke | ConvertTo-Json -Depth 8 -Compress)"
           }
+
+          $process = Start-Process -FilePath $exe -ArgumentList @('--diagnostics', '--output', $diagnosticsFile) -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $diagnosticsFile)) { throw 'Diagnostics command failed' }
+          $diagnostics = Get-Content $diagnosticsFile -Raw | ConvertFrom-Json
+          if ($diagnostics.application.version -ne $projectVersion) { throw 'Diagnostics version mismatch' }
+          if ($diagnostics.backend.integrity -ne 'ok') { throw 'Diagnostics backend verification failed' }
 
       - name: Install Inno Setup
         shell: pwsh
