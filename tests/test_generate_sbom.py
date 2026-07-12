@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,7 +19,10 @@ def test_sbom_contains_runtime_dependencies_and_bundled_backend() -> None:
     assert sbom["bomFormat"] == "CycloneDX"
     assert sbom["specVersion"] == "1.6"
     assert sbom["metadata"]["component"]["name"] == "kaito"
-    assert sbom["metadata"]["component"]["version"] == "0.11.0"
+    project = tomllib.loads(
+        (repository_root / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    assert sbom["metadata"]["component"]["version"] == project["version"]
 
     component_names = {component["name"] for component in sbom["components"]}
     assert {
