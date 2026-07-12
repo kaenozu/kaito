@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 _CONTEXT_EXTENSIONS = (".zip", ".rar", ".7z")
 
@@ -69,19 +70,19 @@ def install_context_menu() -> None:
 
 
 def _write_action(
-    root: object,
-    create_key: object,
-    set_value: object,
+    root: Any,
+    create_key: Any,
+    set_value: Any,
     key_access: int,
     string_type: int,
     key_path: str,
     label: str,
     command: str,
 ) -> None:
-    with create_key(root, key_path, 0, key_access) as key:  # type: ignore[operator]
-        set_value(key, None, 0, string_type, label)  # type: ignore[operator]
-    with create_key(root, f"{key_path}\\command", 0, key_access) as key:  # type: ignore[operator]
-        set_value(key, None, 0, string_type, command)  # type: ignore[operator]
+    with create_key(root, key_path, 0, key_access) as key:
+        set_value(key, None, 0, string_type, label)
+    with create_key(root, f"{key_path}\\command", 0, key_access) as key:
+        set_value(key, None, 0, string_type, command)
 
 
 def uninstall_context_menu() -> None:
@@ -100,7 +101,7 @@ def uninstall_context_menu() -> None:
         _delete_key_recursive(HKEY_CURRENT_USER, f"{root}\\kaito_compress")
 
 
-def _delete_key_recursive(root_key: object, sub_key: str) -> None:
+def _delete_key_recursive(root_key: Any, sub_key: str) -> None:
     try:
         from winreg import (  # type: ignore[attr-defined]
             DeleteKey,
