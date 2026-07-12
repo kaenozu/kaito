@@ -36,12 +36,13 @@ function Invoke-ExpectedFailure {
 
 $createdThumbprint = $null
 try {
+    $ignoredSecret = [guid]::NewGuid().ToString('N')
     $disabledStatus = Join-Path $ArtifactsDir 'disabled.json'
     ./tools/sign_windows.ps1 `
         -Mode disabled `
         -ValidateOnly `
         -CertificateBase64 'not-base64' `
-        -CertificatePassword 'ignored' `
+        -CertificatePassword $ignoredSecret `
         -StatusPath $disabledStatus
     $disabled = Get-Content $disabledStatus -Raw | ConvertFrom-Json
     if ($disabled.result -ne 'unsigned' -or $disabled.mode -ne 'disabled') {
@@ -66,11 +67,14 @@ try {
     Invoke-ExpectedFailure -MessagePattern 'mode is required' -Action {
         ./tools/sign_windows.ps1 -Mode required -ValidateOnly -CertificateBase64 '' -CertificatePassword ''
     }
+    $malformedPfxSecret = [guid]::NewGuid().ToString('N')
     Invoke-ExpectedFailure -MessagePattern 'not valid Base64' -Action {
-        ./tools/sign_windows.ps1 -Mode required -ValidateOnly -CertificateBase64 'not-base64' -CertificatePassword 'password'
+        ./tools/sign_windows.ps1 -Mode required -ValidateOnly -CertificateBase64 'not-base64' -CertificatePassword $malformedPfxSecret
     }
 
-    $passwordText = 'kaito-ci-signing-test'
+    $passwordText = [Convert]::ToBase64String(
+        [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24)
+    )
     $securePassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `
@@ -103,12 +107,13 @@ try {
         throw 'A valid test certificate did not pass signing preflight.'
     }
 
+    $wrongPassword = [guid]::NewGuid().ToString('N')
     Invoke-ExpectedFailure -MessagePattern 'could not be opened' -Action {
         ./tools/sign_windows.ps1 `
             -Mode required `
             -ValidateOnly `
             -CertificateBase64 $certificateBase64 `
-            -CertificatePassword 'wrong-password'
+            -CertificatePassword $wrongPassword
     }
 
     $sourceExecutable = Join-Path $PSHOME 'pwsh.exe'
