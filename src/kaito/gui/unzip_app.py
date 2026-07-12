@@ -40,6 +40,7 @@ from kaito.domain.models import (
 )
 from kaito.settings import SettingsManager
 from kaito.version import __version__
+from kaito.gui.productivity import ProductivityFeatures
 from kaito.gui.settings_dialog import SettingsDialog
 
 _DROP_BORDER_COLOR = "#3a7ebf"
@@ -118,6 +119,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._failed_passwords: set[str] = set()
 
         self._build_ui()
+        self._productivity = ProductivityFeatures(self)
 
         self._apply_tree_style()
         self._start_theme_poll()
@@ -970,7 +972,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     continue
 
                 archive_destination = ArchiveService.resolve_extract_dest(
-                    base_destination, archive_path, info.entries
+                    base_destination, archive_path, info.entries, avoid_existing=True
                 )
 
                 if password is None and info.is_encrypted:
@@ -1325,6 +1327,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 sources=sources,
                 output_path=temp_output,
                 compression_level=compression_level,
+                password=getattr(self, "_compress_password", None),
                 on_progress=on_progress,
             )
 
@@ -1370,6 +1373,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.set(1)
         self._progress.grid_remove()
         self._compress_sources = []
+        self._compress_password = None
         close_after = self._compress_no_dialog
         self._compress_no_dialog = False
         if close_after:
@@ -1385,6 +1389,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._progress.set(0)
         self._progress.grid_remove()
         self._compress_sources = []
+        self._compress_password = None
         self._compress_no_dialog = False
         self._set_ui_enabled(True)
 
@@ -1399,6 +1404,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._status_var.set(f"エラー: {user_msg}")
         self._progress.set(0)
         self._progress.grid_remove()
+        self._compress_password = None
         if self._compress_no_dialog:
             self._compress_no_dialog = False
             self.after(2000, self.destroy)

@@ -23,10 +23,14 @@ $ArchiveSmokeOutput = Join-Path $ArtifactsDir 'kaito-installed-archive-smoke.jso
 $ExtractKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
     "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract"
 }
+$TestKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
+    "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_test"
+}
 $CompressKeys = @(
     'HKCU:\Software\Classes\*\shell\kaito_compress',
     'HKCU:\Software\Classes\Directory\shell\kaito_compress'
 )
+$ContextKeys = @($ExtractKeys + $TestKeys + $CompressKeys)
 
 try {
     New-Item -ItemType Directory -Path $RunRoot -Force | Out-Null
@@ -95,11 +99,14 @@ try {
         throw "Installed archive smoke reported failures: $($ArchiveSmoke | ConvertTo-Json -Depth 8 -Compress)"
     }
 
-    foreach ($Key in ($ExtractKeys + $CompressKeys)) {
+    foreach ($Key in $ContextKeys) {
         if (-not (Test-Path $Key)) { throw "Context-menu key missing: $Key" }
     }
     if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_extract') {
         throw 'Extract action must not be registered for unsupported .txt files'
+    }
+    if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_test') {
+        throw 'Integrity-test action must not be registered for unsupported .txt files'
     }
 
     $Uninstaller = Join-Path $InstallDir 'unins000.exe'
@@ -118,7 +125,7 @@ try {
     }
     Start-Sleep -Seconds 2
 
-    foreach ($Key in ($ExtractKeys + $CompressKeys)) {
+    foreach ($Key in $ContextKeys) {
         if (Test-Path $Key) { throw "Context-menu key remained after uninstall: $Key" }
     }
     if (Test-Path $InstallDir) {
@@ -134,7 +141,7 @@ try {
     Write-Host "Archive smoke: $ArchiveSmokeOutput"
 }
 finally {
-    foreach ($Key in ($ExtractKeys + $CompressKeys)) {
+    foreach ($Key in $ContextKeys) {
         Remove-Item $Key -Recurse -Force -ErrorAction SilentlyContinue
     }
     Remove-Item $RunRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from kaito.archive.inspection import IntegrityCheckResult
 from kaito.archive.safety import (
     check_archive_safety,
     merge_staging_tree,
@@ -221,7 +222,7 @@ class SevenZipBackend:
         return extension.lower() in self.supported_extensions
 
     def supports_creation(self, extension: str) -> bool:
-        return extension.lower() == ".7z"
+        return extension.lower() in {".7z", ".zip"}
 
     def _set_current_process(self, process: Optional[subprocess.Popen[str]]) -> None:
         with self._process_lock:
@@ -516,9 +517,14 @@ class SevenZipBackend:
             prefix=".kaito_7z_", dir=output.parent
         ) as temporary:
             temporary_output = Path(temporary) / output.name
-            arguments = ["a", f"-mx={seven_zip_level}", str(temporary_output)]
-            if options.password:
+            arguments = ["a", f"-mx={seven_zip_level}"]
+            if extension == ".zip":
+                arguments.extend(
+                    ["-tzip", "-mem=AES256"] if options.password else ["-tzip"]
+                )
+            elif options.password:
                 arguments.append("-mhe=on")
+            arguments.append(str(temporary_output))
             arguments.extend(str(source) for source in options.sources)
             result = self._run_7z(arguments, password=options.password)
             if result.returncode != 0:
@@ -538,6 +544,22 @@ class SevenZipBackend:
                     archive_path=str(options.output_path),
                 )
             os.replace(temporary_output, output)
+
+    def test_archive(
+        self, path: Path, password: Optional[str] = None
+    ) -> IntegrityCheckResult:
+        """Run the 7-Zip test command without writing extracted files."""
+        self._check_cancelled()
+        info = self.list_archive(path, password=password)
+        result = self._run_7z(["t", str(path)], password=password, timeout=3600)
+        if result.returncode != 0:
+            self._raise_archive_error(path, password, result)
+        checked = sum(1 for entry in info.entries if entry.is_file)
+        return IntegrityCheckResult(
+            status="passed",
+            checked_entries=checked,
+            message=f"整合性検査に成功しました（{checked}ファイル、データエラーなし）",
+        )
 
     def read_entry(
         self,
