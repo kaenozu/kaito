@@ -139,6 +139,31 @@ def _extract_output_path(args: list[str]) -> tuple[list[str], Path | None]:
     return filtered, output_path
 
 
+def _existing_context_compression_output(args: list[str]) -> Path | None:
+    """Explorer圧縮の既定出力が既存ファイルと衝突する場合、そのパスを返す。"""
+    if len(args) < 2 or args[0] != "--compress":
+        return None
+    source = Path(args[1])
+    output = source.parent / f"{source.stem}.zip"
+    return output if output.exists() else None
+
+
+def _show_native_error(message: str) -> None:
+    """コンソールなしEXEでもユーザーへエラーを表示する。"""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, message, "kaito", 0x10)
+            return
+        except (AttributeError, OSError):
+            pass
+    stream = sys.stderr or sys.__stderr__
+    if stream is not None:
+        stream.write(f"kaito: {message}\n")
+        stream.flush()
+
+
 def _emit_output(text: str, output_path: Path | None) -> None:
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +208,14 @@ def main() -> None:
     if output_path is not None:
         _emit_output(
             "Error: --output is only valid with diagnostic commands\n", output_path
+        )
+        raise SystemExit(2)
+
+    existing_output = _existing_context_compression_output(args)
+    if existing_output is not None:
+        _show_native_error(
+            "圧縮先ファイルが既に存在するため、処理を開始しません。\n"
+            f"別名へ変更するか、既存ファイルを移動してください。\n\n{existing_output}"
         )
         raise SystemExit(2)
 
