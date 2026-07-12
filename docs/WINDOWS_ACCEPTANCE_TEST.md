@@ -16,24 +16,38 @@
 
 ## 検証対象
 
-GitHub Actions workflow run `29173588462` の成果物を使用します。
+PR #5の最新成功Windows CIから、`kaito-windows-verification` artifactをダウンロードして使用します。過去runの成果物やローカルで再ビルドしたファイルを混在させないでください。
 
-| ファイル | SHA-256 |
-|---|---|
-| `kaito.exe` | `aa794a0bade4f772a4e56735837453f86ec000219b176328c9e2bdc5308aaf66` |
-| `kaito-installer-0.10.0.dev0.exe` | `7ba857bd9c6f84b9bc5b1a68066a1e0f4c39781abe6e115cef216f8889fc38b3` |
+artifact展開後、次のファイルが同じ成果物内に存在することを確認します。
 
-インストール前に次を実行し、ハッシュが一致することを確認します。
+```text
+artifacts/release-sha256.txt
+dist/kaito.exe
+dist/kaito-installer-0.10.0.dev0.exe
+```
+
+`release-sha256.txt`には、EXEとインストーラーのSHA-256、ファイル名、サイズが記録されています。インストール前に次を実行し、両ファイルがマニフェストと一致することを確認します。
 
 ```powershell
-Get-FileHash .\kaito-installer-0.10.0.dev0.exe -Algorithm SHA256
+$ArtifactRoot = Resolve-Path .
+$Manifest = Join-Path $ArtifactRoot 'artifacts\release-sha256.txt'
+Get-Content $Manifest
+
+Get-FileHash (Join-Path $ArtifactRoot 'dist\kaito.exe') -Algorithm SHA256
+Get-FileHash (Join-Path $ArtifactRoot 'dist\kaito-installer-0.10.0.dev0.exe') -Algorithm SHA256
 ```
+
+ハッシュまたはサイズが一致しない場合はテストを開始せず、結果をBLOCKEDとします。
 
 ## テスト環境の記録
 
 結果報告に以下を記録します。
 
 ```text
+Workflow run ID:
+Artifact digest:
+EXE SHA-256:
+Installer SHA-256:
 Windows edition/build:
 CPU architecture:
 Display scaling:
@@ -230,6 +244,10 @@ Windows build:
 ## 最終報告
 
 ```text
+Workflow run ID:
+Artifact digest:
+EXE SHA-256:
+Installer SHA-256:
 必須項目: PASS __ / FAIL __ / BLOCKED __
 重大度Critical:
 重大度High:
