@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -21,6 +21,42 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+      - name: Repair stale project version in lockfile once
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: pwsh
+        run: |
+          $path = 'uv.lock'
+          $text = [System.IO.File]::ReadAllText($path)
+          $oldPattern = '(?m)(^\[\[package\]\]\r?\nname = "kaito"\r?\nversion = ")0\.9\.1\.dev0(")'
+          $currentPattern = '(?m)^\[\[package\]\]\r?\nname = "kaito"\r?\nversion = "0\.10\.0\.dev0"$'
+          $matches = [regex]::Matches($text, $oldPattern)
+          if ($matches.Count -eq 1) {
+            $updated = [regex]::Replace($text, $oldPattern, '${1}0.10.0.dev0${2}', 1)
+            [System.IO.File]::WriteAllText(
+              $path,
+              $updated,
+              [System.Text.UTF8Encoding]::new($false)
+            )
+          } elseif ($matches.Count -eq 0 -and [regex]::IsMatch($text, $currentPattern)) {
+            Write-Host 'uv.lock already contains kaito 0.10.0.dev0.'
+          } else {
+            throw "Expected exactly one stale kaito lock entry or one current entry; stale matches=$($matches.Count)"
+          }
+
+          if (git diff --quiet -- uv.lock) {
+            Write-Host 'No lockfile repair commit is needed.'
+            exit 0
+          }
+
+          git diff --check -- uv.lock
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add uv.lock
+          git commit -m 'chore: synchronize lockfile project version'
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -76,29 +112,29 @@ jobs:
           if ($failed) { throw 'Bundled 7-Zip checksum verification failed' }
 
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --frozen ruff check .
 
       - name: Format check
         shell: pwsh
         run: |
-          $output = & uv run ruff format --check --diff . 2>&1
+          $output = & uv run --frozen ruff format --check --diff . 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath artifacts/ruff-format.diff
           exit $code
 
       - name: Type check
-        run: uv run pyright
+        run: uv run --frozen pyright
 
       - name: Test
         shell: pwsh
         run: |
-          $output = & uv run pytest -ra --junitxml=artifacts/test-results.xml 2>&1
+          $output = & uv run --frozen pytest -ra --junitxml=artifacts/test-results.xml 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath artifacts/pytest-output.txt
           exit $code
 
       - name: Build executable
-        run: uv run pyinstaller --clean --noconfirm build.spec
+        run: uv run --frozen pyinstaller --clean --noconfirm build.spec
 
       - name: Smoke-test executable and bundled backend
         shell: pwsh
