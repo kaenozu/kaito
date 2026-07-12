@@ -36,8 +36,8 @@ if ($Branch -ne 'master') {
     Write-Warning "Release preflight is running from '$Branch', not master."
 }
 
-Write-Host "Release preflight passed."
+Write-Host 'Release preflight passed.'
 Write-Host "Repository: $Repository"
 Write-Host "Version: $ProjectVersion"
 Write-Host "Tag: $Tag"
-Write-Host 'Next step after CI and approval: git tag -a $Tag -m "kaito $ProjectVersion"; git push origin $Tag'
+Write-Host "Next step after CI and approval: git tag -a $Tag -m 'kaito $ProjectVersion'; git push origin $Tag"
