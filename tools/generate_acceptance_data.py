@@ -45,8 +45,7 @@ def _decode_uu(source: Path, destination: Path, expected_sha256: str) -> None:
     digest = hashlib.sha256(output).hexdigest()
     if digest != expected_sha256:
         raise RuntimeError(
-            f"RAR fixture hash mismatch: {source.name}: "
-            f"{digest} != {expected_sha256}"
+            f"RAR fixture hash mismatch: {source.name}: {digest} != {expected_sha256}"
         )
     destination.write_bytes(output)
 
@@ -86,7 +85,9 @@ def _write_random_file(path: Path, size_mib: int) -> None:
             stream.write(os.urandom(chunk_size))
 
 
-def generate(repo_root: Path, work_root: Path, large_file_size_mib: int) -> dict[str, object]:
+def generate(
+    repo_root: Path, work_root: Path, large_file_size_mib: int
+) -> dict[str, object]:
     source_root = work_root / "source-data"
     nested = source_root / "日本語 と空白" / "深い階層" / "level-3"
     empty_directory = source_root / "empty directory"
