@@ -69,7 +69,9 @@ def test_taskkill_suppresses_console_window(monkeypatch: pytest.MonkeyPatch) -> 
 
     def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
 
     monkeypatch.setattr(sevenzip_backend, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(
