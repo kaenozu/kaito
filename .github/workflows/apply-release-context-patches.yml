@@ -1,0 +1,83 @@
+name: Apply release and Explorer integration patches
+
+on:
+  push:
+    branches:
+      - agent/archive-productivity-suite
+    paths:
+      - .github/workflows/apply-release-context-patches.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Apply patches
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "src/kaito/gui/unzip_app.py",
+              '''        cmd_path = f"{key_path}\\\\command"\n        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:\n            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')\n\n    # 圧縮: ファイル・フォルダ\n''',
+              '''        cmd_path = f"{key_path}\\\\command"\n        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:\n            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')\n\n        test_key_path = f"{base}\\\\SystemFileAssociations\\\\{ext}\\\\shell\\\\kaito_test"\n        with CreateKeyEx(HKEY_CURRENT_USER, test_key_path, 0, KEY_SET_VALUE) as key:\n            SetValueEx(key, None, 0, REG_SZ, "kaitoで整合性を検査")\n        test_cmd_path = f"{test_key_path}\\\\command"\n        with CreateKeyEx(HKEY_CURRENT_USER, test_cmd_path, 0, KEY_SET_VALUE) as key:\n            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} --test-archive "%1"')\n\n    # 圧縮: ファイル・フォルダ\n''',
+          )
+          replace_once(
+              "src/kaito/gui/unzip_app.py",
+              '''    for ext in _CONTEXT_EXTENSIONS:\n        _delete_key_recursive(\n            HKEY_CURRENT_USER,\n            f"{base}\\\\SystemFileAssociations\\\\{ext}\\\\shell\\\\kaito_extract",\n        )\n\n    for shell_root in [f"{base}\\\\*", f"{base}\\\\Directory"]:\n''',
+              '''    for ext in _CONTEXT_EXTENSIONS:\n        _delete_key_recursive(\n            HKEY_CURRENT_USER,\n            f"{base}\\\\SystemFileAssociations\\\\{ext}\\\\shell\\\\kaito_extract",\n        )\n        _delete_key_recursive(\n            HKEY_CURRENT_USER,\n            f"{base}\\\\SystemFileAssociations\\\\{ext}\\\\shell\\\\kaito_test",\n        )\n\n    for shell_root in [f"{base}\\\\*", f"{base}\\\\Directory"]:\n''',
+          )
+
+          replace_once(
+              "tools/test_installer.ps1",
+              '''$CompressKeys = @(\n    'HKCU:\\Software\\Classes\\*\\shell\\kaito_compress',\n    'HKCU:\\Software\\Classes\\Directory\\shell\\kaito_compress'\n)\n''',
+              '''$TestKeys = @('.zip', '.rar', '.7z') | ForEach-Object {\n    "HKCU:\\Software\\Classes\\SystemFileAssociations\\$_\\shell\\kaito_test"\n}\n$CompressKeys = @(\n    'HKCU:\\Software\\Classes\\*\\shell\\kaito_compress',\n    'HKCU:\\Software\\Classes\\Directory\\shell\\kaito_compress'\n)\n''',
+          )
+          for old, new in [
+              ("($ExtractKeys + $CompressKeys)", "($ExtractKeys + $TestKeys + $CompressKeys)"),
+          ]:
+              target = Path("tools/test_installer.ps1")
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit("tools/test_installer.ps1: combined key expression missing")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace_once(
+              ".github/workflows/release.yml",
+              '''          if ($projectVersion -match '(dev|a|b|rc)') {\n            throw "Prerelease version cannot be published by the stable release workflow: $projectVersion"\n          }\n          "KAITO_VERSION=$projectVersion" | Out-File $env:GITHUB_ENV -Append\n''',
+              '''          if ($projectVersion -match '(dev|a|b|rc)') {\n            throw "Prerelease version cannot be published by the stable release workflow: $projectVersion"\n          }\n          if (-not (Select-String -Path CHANGELOG.md -Pattern ([regex]::Escape("[$projectVersion]")) -Quiet)) {\n            throw "CHANGELOG.md does not contain a [$projectVersion] section"\n          }\n          git fetch origin master --depth=1\n          $tagCommit = (git rev-parse HEAD).Trim()\n          $masterCommit = (git rev-parse origin/master).Trim()\n          if ($tagCommit -ne $masterCommit) {\n            throw "Stable tags must point to the current master head: tag=$tagCommit master=$masterCommit"\n          }\n          "KAITO_VERSION=$projectVersion" | Out-File $env:GITHUB_ENV -Append\n''',
+          )
+          replace_once(
+              ".github/workflows/release.yml",
+              '''      - name: Verify executable\n        shell: pwsh\n''',
+              '''      - name: Sign executable when a certificate is configured\n        shell: pwsh\n        env:\n          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}\n          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}\n        run: ./tools/sign_windows.ps1 -FilePath 'dist/kaito.exe'\n\n      - name: Verify executable\n        shell: pwsh\n''',
+          )
+          replace_once(
+              ".github/workflows/release.yml",
+              '''          "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append\n\n      - name: Test install, registry integration, and uninstall\n''',
+              '''          "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append\n\n      - name: Sign installer when a certificate is configured\n        shell: pwsh\n        env:\n          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}\n          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}\n        run: ./tools/sign_windows.ps1 -FilePath $env:KAITO_INSTALLER\n\n      - name: Test install, registry integration, and uninstall\n''',
+          )
+
+      - name: Commit patches
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/kaito/gui/unzip_app.py tools/test_installer.ps1 .github/workflows/release.yml
+          git commit -m "Add Explorer integrity action and release guards"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
