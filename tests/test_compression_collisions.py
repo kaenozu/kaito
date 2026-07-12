@@ -72,3 +72,18 @@ def test_same_root_directory_name_from_different_parents_is_rejected(
 
     names = {name.rstrip("/").casefold() for name, _ in collisions}
     assert "project/data.txt" in names
+
+
+@pytest.mark.parametrize("extension", [".zip", ".7z"])
+def test_existing_output_is_not_overwritten(tmp_path: Path, extension: str) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("new data", encoding="utf-8")
+    output = tmp_path / f"existing{extension}"
+    output.write_bytes(b"original archive bytes")
+
+    with pytest.raises(CompressionFailedError, match="既に存在"):
+        ArchiveService().create(
+            CompressionOptions(sources=[source], output_path=output)
+        )
+
+    assert output.read_bytes() == b"original archive bytes"
