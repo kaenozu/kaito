@@ -29,7 +29,7 @@ jobs:
       - name: Verify tag matches project version
         shell: pwsh
         run: |
-          $projectVersion = uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          $projectVersion = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
           $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
           if ($projectVersion -ne $tagVersion) {
             throw "Tag $tagVersion does not match pyproject version $projectVersion"
@@ -61,17 +61,17 @@ jobs:
       - name: Quality gates
         shell: pwsh
         run: |
-          uv run ruff check .
+          uv run --frozen ruff check .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run ruff format --check .
+          uv run --frozen ruff format --check .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run pyright
+          uv run --frozen pyright
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run pytest -ra --junitxml=artifacts/test-results.xml
+          uv run --frozen pytest -ra --junitxml=artifacts/test-results.xml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build executable
-        run: uv run pyinstaller --clean --noconfirm build.spec
+        run: uv run --frozen pyinstaller --clean --noconfirm build.spec
 
       - name: Verify executable
         shell: pwsh
@@ -130,6 +130,17 @@ jobs:
             "$hash  $([System.IO.Path]::GetFileName($file))"
           }
           $lines | Set-Content 'dist/SHA256SUMS' -Encoding ascii
+
+      - name: Verify tracked files remain unchanged
+        shell: pwsh
+        run: |
+          $status = @(& git status --porcelain --untracked-files=no)
+          $status | Set-Content artifacts/tracked-status.txt -Encoding utf8
+          & git diff -- . | Set-Content artifacts/tracked-diff.patch -Encoding utf8
+          if ($status.Count -gt 0) {
+            $status | ForEach-Object { Write-Error "Tracked file changed during release verification: $_" }
+            throw 'Release verification mutated tracked repository files.'
+          }
 
       - name: Upload verification artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
