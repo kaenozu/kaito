@@ -26,6 +26,7 @@ def test_authorization_job_is_trusted_secretless_and_single_use() -> None:
     authorize, sign = workflow.split("  sign-canary:\n", 1)
     assert "name: authorize-independent-production-signing" in authorize
     assert "issues: write" in authorize
+    assert "refs/heads/master" in authorize
     assert "ref: ${{ github.sha }}" in authorize
     assert "ref: ${{ inputs.target_commit }}" not in authorize
     assert "WINDOWS_CERTIFICATE_BASE64" not in authorize
@@ -35,11 +36,18 @@ def test_authorization_job_is_trusted_secretless_and_single_use() -> None:
     assert "name: sign-production-canary-after-independent-authorization" in sign
     assert "needs: authorize-production-signing" in sign
     assert "environment:\n      name: production" in sign
+    assert "Reconfirm authorized commit remains current master HEAD" in sign
+    assert "master advanced after authorization" in sign
     assert (
         "ref: ${{ needs.authorize-production-signing.outputs.target_commit }}" in sign
     )
-    assert "WINDOWS_CERTIFICATE_BASE64" in sign
-    assert "WINDOWS_CERTIFICATE_PASSWORD" in sign
+    before_signing_secrets, signing_step = sign.split(
+        "- name: Sign canary with production certificate and timestamp", 1
+    )
+    assert "WINDOWS_CERTIFICATE_BASE64" not in before_signing_secrets
+    assert "WINDOWS_CERTIFICATE_PASSWORD" not in before_signing_secrets
+    assert "WINDOWS_CERTIFICATE_BASE64" in signing_step
+    assert "WINDOWS_CERTIFICATE_PASSWORD" in signing_step
     assert "WINDOWS_TIMESTAMP_URL" in sign
     assert "issues: write" not in sign
     assert "contents: write" not in workflow
