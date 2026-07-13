@@ -137,7 +137,13 @@ def build_sbom(
     )["project"]
     project_name = str(project["name"])
     project_version = str(project["version"])
-    root_distribution = metadata.distribution(project_name)
+    try:
+        root_distribution = metadata.distribution(project_name)
+    except metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"Project {project_name!r} is not installed in the current environment. "
+            "Run 'uv sync' or install the project before generating the SBOM."
+        ) from exc
 
     distributions: dict[str, metadata.Distribution] = {}
     dependency_graph: dict[str, list[str]] = {}

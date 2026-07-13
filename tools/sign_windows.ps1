@@ -87,10 +87,17 @@ function Protect-SigningPfx {
         throw "icacls.exe was not found: $icacls"
     }
 
-    $aclOutput = @(
-        & $icacls $Path '/inheritance:r' '/grant:r' "*${sid}:F" '/Q' 2>&1
-    )
-    $aclExitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $aclOutput = @(
+            & $icacls $Path '/inheritance:r' '/grant:r' "*${sid}:F" '/Q' 2>&1
+        )
+        $aclExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($aclExitCode -ne 0) {
         $details = ($aclOutput | ForEach-Object { $_.ToString() }) -join "`n"
         throw "Unable to restrict the temporary signing PFX ACL (exit code ${aclExitCode}): $details"
@@ -239,8 +246,11 @@ try {
     }
 
     $signedFiles = @()
+    $resolvedPaths = @()
     foreach ($Candidate in $FilePath) {
-        $Resolved = (Resolve-Path $Candidate).Path
+        $resolvedPaths += @(Resolve-Path $Candidate | ForEach-Object { $_.Path })
+    }
+    foreach ($Resolved in $resolvedPaths) {
         $Arguments = @(
             'sign',
             '/fd', 'SHA256',
@@ -264,8 +274,15 @@ try {
             }
         }
         else {
-            $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $Resolved 2>&1)
-            $verifyExitCode = $LASTEXITCODE
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $Resolved 2>&1)
+                $verifyExitCode = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
             $verifyLines | ForEach-Object { Write-Host $_ }
             $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
             $verifyNormalized = $verifyText -replace '\s+', ' '

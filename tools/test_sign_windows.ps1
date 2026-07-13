@@ -83,9 +83,15 @@ try {
     }
 
     Write-Phase 'create ephemeral code-signing certificate'
-    $passwordText = [Convert]::ToBase64String(
-        [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24)
-    )
+    $randomBytes = [byte[]]::new(24)
+    $randomNumberGenerator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $randomNumberGenerator.GetBytes($randomBytes)
+    }
+    finally {
+        $randomNumberGenerator.Dispose()
+    }
+    $passwordText = [Convert]::ToBase64String($randomBytes)
     $securePassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `

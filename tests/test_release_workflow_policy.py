@@ -60,3 +60,32 @@ def test_release_workflow_validates_exact_asset_sets_fail_closed() -> None:
     assert "SHA256SUMS must contain exactly four entries" in workflow
     assert "Published SHA256SUMS file set is incorrect" in workflow
     assert "Published release metadata asset set is incorrect" in workflow
+
+
+def test_release_scripts_are_repeatable_and_windows_powershell_compatible() -> None:
+    build = (REPOSITORY_ROOT / "tools" / "build_release_rehearsal.ps1").read_text(
+        encoding="utf-8"
+    )
+    sign = (REPOSITORY_ROOT / "tools" / "sign_windows.ps1").read_text(encoding="utf-8")
+    sign_test = (REPOSITORY_ROOT / "tools" / "test_sign_windows.ps1").read_text(
+        encoding="utf-8"
+    )
+    verify = (REPOSITORY_ROOT / "tools" / "verify_release_rehearsal.ps1").read_text(
+        encoding="utf-8"
+    )
+    sbom = (REPOSITORY_ROOT / "tools" / "generate_sbom.py").read_text(encoding="utf-8")
+
+    assert "RandomNumberGenerator]::GetBytes(24)" not in build
+    assert "RandomNumberGenerator]::GetBytes(24)" not in sign_test
+    assert "RandomNumberGenerator]::Create()" in build
+    assert "RandomNumberGenerator]::Create()" in sign_test
+    assert "Add-Content (Join-Path $ArtifactsDir 'bundled-sha256.txt')" not in build
+    assert "Set-Content (Join-Path $ArtifactsDir 'bundled-sha256.txt')" in build
+    assert (
+        "Add-Content (Join-Path $ArtifactsDir 'redownloaded-sha256.txt')" not in verify
+    )
+    assert "Set-Content (Join-Path $ArtifactsDir 'redownloaded-sha256.txt')" in verify
+    assert "Resolve-Path $Candidate | ForEach-Object { $_.Path }" in sign
+    assert sign.count("$previousErrorActionPreference = $ErrorActionPreference") >= 2
+    assert "$previousErrorActionPreference = $ErrorActionPreference" in verify
+    assert "except metadata.PackageNotFoundError as exc:" in sbom

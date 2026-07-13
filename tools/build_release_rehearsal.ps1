@@ -103,6 +103,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($Commit)) { throw 'Rehearsal commit is required.' }
     if ($RehearsalTag -notmatch '^rehearsal-[0-9]+-[0-9]+$') { throw "Invalid rehearsal tag: $RehearsalTag" }
 
+    $bundledShaLines = @()
     Get-Content bundled/SHA256SUMS | ForEach-Object {
         if ($_ -notmatch '^([0-9a-f]{64})\s+(.+)$') { throw "Invalid bundled checksum line: $_" }
         $expected = $Matches[1]
@@ -111,12 +112,20 @@ try {
         if (-not (Test-Path $path -PathType Leaf)) { throw "Missing bundled file: $path" }
         $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $expected) { throw "Hash mismatch for ${path}: $actual" }
-        "$actual  $name" | Add-Content (Join-Path $ArtifactsDir 'bundled-sha256.txt') -Encoding ascii
+        $bundledShaLines += "$actual  $name"
     }
+    $bundledShaLines |
+        Set-Content (Join-Path $ArtifactsDir 'bundled-sha256.txt') -Encoding ascii
 
-    $password = [Convert]::ToBase64String(
-        [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24)
-    )
+    $randomBytes = [byte[]]::new(24)
+    $randomNumberGenerator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $randomNumberGenerator.GetBytes($randomBytes)
+    }
+    finally {
+        $randomNumberGenerator.Dispose()
+    }
+    $password = [Convert]::ToBase64String($randomBytes)
     $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
     $certificate = New-SelfSignedCertificate `
         -Type CodeSigningCert `

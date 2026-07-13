@@ -64,6 +64,7 @@ if ($nameDifference.Count -gt 0) {
     throw "Downloaded package file set differs from the build manifest: $($nameDifference | Out-String)"
 }
 
+$redownloadedShaLines = @()
 foreach ($entry in $expectedFiles) {
     $path = Join-Path $PackageDir $entry.name
     $item = Get-Item $path
@@ -71,9 +72,10 @@ foreach ($entry in $expectedFiles) {
     if ($actualHash -ne $entry.sha256 -or $item.Length -ne $entry.size) {
         throw "Downloaded artifact differs from the build output: $($entry.name)"
     }
-    "$actualHash  $($entry.name)  $($item.Length) bytes" |
-        Add-Content (Join-Path $ArtifactsDir 'redownloaded-sha256.txt') -Encoding ascii
+    $redownloadedShaLines += "$actualHash  $($entry.name)  $($item.Length) bytes"
 }
+$redownloadedShaLines |
+    Set-Content (Join-Path $ArtifactsDir 'redownloaded-sha256.txt') -Encoding ascii
 
 $checksumPath = Join-Path $PackageDir 'SHA256SUMS'
 $checksums = @{}
@@ -192,8 +194,15 @@ $signTool = Get-SignTool
 $signatureEvidence = @()
 foreach ($binaryName in @('kaito.exe', "kaito-installer-$Version.exe")) {
     $binaryPath = Join-Path $PackageDir $binaryName
-    $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $binaryPath 2>&1)
-    $verifyExitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $binaryPath 2>&1)
+        $verifyExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
     $verifyText | Set-Content (Join-Path $ArtifactsDir "signtool-$binaryName.txt") -Encoding utf8
     $verifyNormalized = $verifyText -replace '\s+', ' '
