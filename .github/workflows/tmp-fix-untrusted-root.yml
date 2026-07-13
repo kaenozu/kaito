@@ -31,49 +31,10 @@ jobs:
 
           path = Path('tools/sign_windows.ps1')
           text = path.read_text(encoding='utf-8')
-          helper = r'''function Test-IsExpectedUntrustedRootOutput {
-              param(
-                  [Parameter(Mandatory = $true)]
-                  [string]$Text
-              )
-
-              $normalized = $Text -replace '\s+', ' '
-              if ($normalized -match '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT)') {
-                  return $true
-              }
-
-              $chainTerminatedAtRoot = $normalized -match '(?i)terminated in a root'
-              $rootIsUntrusted = $normalized -match '(?i)(certificate which is not trusted by the trust provider|root certificate.*not trusted)'
-              return $chainTerminatedAtRoot -and $rootIsUntrusted
-          }
-
-          '''
-          anchor = 'function Protect-SigningPfx {'
-          if 'function Test-IsExpectedUntrustedRootOutput {' not in text:
-              if anchor not in text:
-                  raise SystemExit('Unable to locate helper insertion point.')
-              text = text.replace(anchor, helper + anchor, 1)
-
-          old = r'''            $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
-              $verifyNormalized = $verifyText -replace '\s+', ' '
-              if ($verifyExitCode -ne 0) {
-                  $untrustedRootPattern = '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root certificate which is not trusted|root certificate.*not trusted)'
-                  if ($verifyNormalized -notmatch $untrustedRootPattern) {
-                      throw "Self-signed signtool verification failed for ${Resolved} with an unexpected error (exit code ${verifyExitCode}): $verifyText"
-                  }
-                  $testUntrustedRootConfirmed = $true
-              }
-          '''
-          new = r'''            $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
-              if ($verifyExitCode -ne 0) {
-                  if (-not (Test-IsExpectedUntrustedRootOutput -Text $verifyText)) {
-                      throw "Self-signed signtool verification failed for ${Resolved} with an unexpected error (exit code ${verifyExitCode}): $verifyText"
-                  }
-                  $testUntrustedRootConfirmed = $true
-              }
-          '''
-          if old not in text:
-              raise SystemExit('Unable to locate the SignTool verification block.')
+          old = "$untrustedRootPattern = '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root certificate which is not trusted|root certificate.*not trusted)'"
+          new = "$untrustedRootPattern = '(?is)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root.*certificate which is not trusted by the trust provider|root certificate.*not trusted)'"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one SignTool pattern, found {text.count(old)}.')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           Path('.github/workflows/tmp-fix-untrusted-root.yml').unlink()
           PY
