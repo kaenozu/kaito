@@ -221,10 +221,24 @@ try {
             throw "signtool sign failed for $Resolved with exit code $LASTEXITCODE"
         }
 
+        $testUntrustedRootConfirmed = $false
         if ($VerificationMode -eq 'strict') {
             & $signTool 'verify' '/pa' '/all' '/v' $Resolved
             if ($LASTEXITCODE -ne 0) {
                 throw "signtool verify failed for $Resolved with exit code $LASTEXITCODE"
+            }
+        }
+        else {
+            $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $Resolved 2>&1)
+            $verifyExitCode = $LASTEXITCODE
+            $verifyLines | ForEach-Object { Write-Host $_ }
+            $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
+            if ($verifyExitCode -ne 0) {
+                $untrustedRootPattern = '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root certificate which is not trusted|root certificate.*not trusted)'
+                if ($verifyText -notmatch $untrustedRootPattern) {
+                    throw "Self-signed signtool verification failed for ${Resolved} with an unexpected error (exit code ${verifyExitCode}): $verifyText"
+                }
+                $testUntrustedRootConfirmed = $true
             }
         }
 
@@ -248,7 +262,12 @@ try {
                 throw "Authenticode verification failed for ${Resolved}: $signatureStatus"
             }
         }
-        elseif ($signatureStatus -notin @('Valid', 'NotTrusted')) {
+        elseif ($testUntrustedRootConfirmed) {
+            if ($signatureStatus -notin @('NotTrusted', 'UnknownError')) {
+                throw "Embedded Authenticode verification returned an unexpected status for ${Resolved}: $signatureStatus"
+            }
+        }
+        elseif ($signatureStatus -ne 'Valid') {
             throw "Embedded Authenticode verification failed for ${Resolved}: $signatureStatus"
         }
 
