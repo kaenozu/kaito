@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - "tools/__init__.py"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/generate_sbom.py"
@@ -15,6 +16,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - "tools/__init__.py"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/generate_sbom.py"
@@ -25,10 +27,14 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  group: release-hardening-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   signing-and-sbom:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
 
     steps:
       - name: Check out repository
@@ -44,13 +50,14 @@ jobs:
         run: uv sync --frozen
 
       - name: Test Windows signing modes and certificate validation
+        timeout-minutes: 4
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path artifacts -Force | Out-Null
-          $output = & pwsh -NoProfile -File ./tools/test_sign_windows.ps1 `
-            -ArtifactsDir artifacts/signing-tests 2>&1
+          & pwsh -NoProfile -File ./tools/test_sign_windows.ps1 `
+            -ArtifactsDir artifacts/signing-tests 2>&1 |
+            Tee-Object -FilePath artifacts/signing-test-output.txt
           $code = $LASTEXITCODE
-          $output | Tee-Object -FilePath artifacts/signing-test-output.txt
           if ($code -ne 0) { exit $code }
 
       - name: Test and generate CycloneDX SBOM
@@ -72,7 +79,7 @@ jobs:
         run: |
           $logPath = 'artifacts/signing-test-output.txt'
           $details = if (Test-Path $logPath) {
-            (Get-Content $logPath -Tail 60) -join "`n"
+            (Get-Content $logPath -Tail 80) -join "`n"
           }
           else {
             'The signing test did not produce a diagnostic output file.'
