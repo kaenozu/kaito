@@ -199,7 +199,7 @@ foreach ($binaryName in @('kaito.exe', "kaito-installer-$Version.exe")) {
     $verifyNormalized = $verifyText -replace '\s+', ' '
     $untrustedRootConfirmed = $false
     if ($verifyExitCode -ne 0) {
-        $untrustedRootPattern = '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root certificate which is not trusted|root certificate.*not trusted)'
+        $untrustedRootPattern = '(?is)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root.*certificate which is not trusted by the trust provider|root certificate.*not trusted)'
         if ($verifyNormalized -notmatch $untrustedRootPattern) {
             throw "SignTool verification failed with an unexpected error for ${binaryName}: $verifyText"
         }
