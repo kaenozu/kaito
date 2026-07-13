@@ -47,6 +47,11 @@ def test_draft_release_roundtrip_is_manual_draft_only_and_self_cleaning() -> Non
     assert "git/refs/tags" in workflow
     assert "if: always()" in workflow
     assert "Refusing to delete an unexpectedly public Release automatically" in workflow
+    assert (
+        "Refusing to delete the tag associated with an unexpectedly public Release"
+        in workflow
+    )
+    assert "git ls-remote" not in workflow
     assert "--draft=false" not in workflow
     assert "gh release edit" not in workflow
     assert "WINDOWS_CERTIFICATE_BASE64" not in workflow
