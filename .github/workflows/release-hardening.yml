@@ -6,21 +6,21 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
-      - "tools/__init__.py"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_release_workflow_policy.py"
   push:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
-      - "tools/__init__.py"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_release_workflow_policy.py"
 
 permissions:
   contents: read
@@ -60,14 +60,16 @@ jobs:
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
 
-      - name: Test and generate CycloneDX SBOM
+      - name: Test release policy and generate CycloneDX SBOM
         shell: pwsh
         run: |
-          uv run --frozen pytest -q tests/test_generate_sbom.py
+          uv run --frozen pytest -q tests/test_generate_sbom.py tests/test_release_workflow_policy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --frozen python tools/generate_sbom.py `
             --repository-root . `
             --output artifacts/kaito-sbom.cdx.json `
             --commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Content artifacts/kaito-sbom.cdx.json -Raw | ConvertFrom-Json | Out-Null
 
       - name: Report hardening failure on pull request
