@@ -4,7 +4,7 @@ This control is used when a private-repository `production` Environment cannot p
 
 ## Security objective
 
-The workflow requester must not be able to approve their own production-signing operation. Production secrets are exposed only to a second job after a separate human with `write`, `maintain`, or `admin` permission approves the exact current `master` commit.
+The workflow requester must not be able to approve their own production-signing operation. Production secrets are exposed only to a second job after a separate human with `write`, `maintain`, or `admin` permission approves the exact current `master` HEAD.
 
 ## Authorization issue
 
@@ -14,7 +14,7 @@ Create a normal open issue whose title begins with:
 [Production signing authorization]
 ```
 
-Record the operational reason, the exact current `master` SHA, and the intended canary run. Do not use a pull request as the authorization record.
+Record the operational reason, the exact current `master` HEAD SHA, and the intended canary run. Do not use a pull request as the authorization record.
 
 ## Approval comment
 
@@ -24,22 +24,22 @@ A human other than the eventual workflow requester must add an unedited comment 
 KAITO_PRODUCTION_SIGNING_APPROVAL_V1
 repository=kaenozu/kaito
 workflow=production-signing-canary
-target_commit=<40-character lowercase current master SHA>
+target_commit=<40-character lowercase current master HEAD SHA>
 nonce=<32-character lowercase hexadecimal nonce>
 expires_at=<UTC ISO-8601 timestamp no more than 30 minutes after comment creation>
 decision=APPROVE
 ```
 
-The approver must have `write`, `maintain`, or `admin` permission. Bot comments, self-approval, read-only reviewers, edited comments, expired approvals, reordered or extra fields, and approvals for a non-current `master` commit are rejected.
+The approver must have `write`, `maintain`, or `admin` permission. Bot comments, self-approval, read-only reviewers, edited comments, expired approvals, reordered or extra fields, and approvals for a non-current `master` HEAD are rejected.
 
 ## Workflow dispatch
 
-Run `Production signing canary` from the default branch and provide:
+Run `Production signing canary` from the `master` branch and provide:
 
 - confirmation: `SIGN_CANARY_WITH_PRODUCTION_CERT`
 - authorization issue number
 - approval comment ID
-- the exact approved current `master` SHA
+- the exact approved current `master` HEAD SHA
 - the exact approved nonce
 
 The authorization job executes the verifier from the trusted workflow commit, not from the input commit. It verifies repository state through the GitHub API and writes a consumption comment before the signing job is allowed to start.
@@ -56,7 +56,7 @@ The comment records the approval comment ID, nonce, target commit, requester, ap
 
 ## Secret boundary
 
-The authorization job has no production certificate, password, or timestamp variable. The Windows signing job is the only job attached to the `production` Environment. It checks out only the independently approved current `master` commit, signs a fresh canary executable, performs strict SignTool and Authenticode verification, deletes the signed binary, and uploads metadata-only evidence.
+The authorization job has no production certificate, password, or timestamp variable. The Windows signing job is the only job attached to the `production` Environment. Immediately before signing, it reconfirms that the approved SHA is still the live `master` HEAD. It then checks out only that independently approved commit, signs a fresh canary executable, performs strict SignTool and Authenticode verification, deletes the signed binary, and uploads metadata-only evidence.
 
 ## Remaining administrative requirements
 
