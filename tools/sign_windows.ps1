@@ -281,6 +281,8 @@ try {
         Write-Host "Signed and verified: $Resolved"
     }
 
+    # An accepted untrusted-root result is a successful test outcome and must not leak as the caller's native exit code.
+    $global:LASTEXITCODE = 0
     Write-SigningStatus @{
         schema_version = 1
         mode = $Mode
