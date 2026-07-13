@@ -85,9 +85,7 @@ def _bundled_backend_component(repository_root: Path) -> dict[str, Any]:
     for line_number, line in enumerate(lines, start=1):
         match = pattern.fullmatch(line.strip())
         if match is None:
-            raise RuntimeError(
-                f"Invalid bundled checksum line {line_number}: {line!r}"
-            )
+            raise RuntimeError(f"Invalid bundled checksum line {line_number}: {line!r}")
         digest, filename = match.groups()
         filename = filename.strip()
         if not filename:
