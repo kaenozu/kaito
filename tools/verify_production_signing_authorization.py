@@ -54,18 +54,19 @@ class GitHubApi:
         self._token = token
         self._api_url = api_url.rstrip("/")
 
-    def request(
+    def _request(
         self,
         method: str,
         path: str,
         *,
         payload: dict[str, Any] | None = None,
     ) -> Any:
+        url = f"{self._api_url}/{path.lstrip('/')}"
         data = None
         if payload is not None:
             data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
-            f"{self._api_url}/{path.lstrip('/')}",
+            url,
             data=data,
             method=method,
             headers={
@@ -85,13 +86,15 @@ class GitHubApi:
             ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"GitHub API {method} {path} failed: {exc}") from exc
-        return json.loads(raw.decode("utf-8")) if raw else None
+        if not raw:
+            return None
+        return json.loads(raw.decode("utf-8"))
 
     def get(self, path: str) -> Any:
-        return self.request("GET", path)
+        return self._request("GET", path)
 
     def post(self, path: str, payload: dict[str, Any]) -> Any:
-        return self.request("POST", path, payload=payload)
+        return self._request("POST", path, payload=payload)
 
     def list_issue_comments(
         self, repository: str, issue_number: int
@@ -99,14 +102,13 @@ class GitHubApi:
         comments: list[dict[str, Any]] = []
         page = 1
         while True:
-            result = self.get(
-                f"repos/{repository}/issues/{issue_number}/comments"
-                f"?per_page=100&page={page}"
+            page_items = self.get(
+                f"repos/{repository}/issues/{issue_number}/comments?per_page=100&page={page}"
             )
-            if not isinstance(result, list):
-                raise RuntimeError("Issue comments response was not a list.")
-            comments.extend(result)
-            if len(result) < 100:
+            if not isinstance(page_items, list):
+                raise RuntimeError("GitHub issue comments response was not a list.")
+            comments.extend(page_items)
+            if len(page_items) < 100:
                 return comments
             page += 1
 
@@ -129,7 +131,9 @@ def parse_record(body: str, marker: str) -> dict[str, str]:
     for line in lines[1:]:
         if "=" not in line:
             raise ValueError(f"Invalid authorization line: {line!r}")
-        key, value = (part.strip() for part in line.split("=", 1))
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
         if not key or not value:
             raise ValueError(f"Invalid authorization line: {line!r}")
         if key in record:
@@ -138,13 +142,10 @@ def parse_record(body: str, marker: str) -> dict[str, str]:
     return record
 
 
-def make_check(
-    condition: bool,
-    name: str,
-    pass_detail: str,
-    fail_detail: str,
-) -> Check:
-    return Check(name, "PASS" if condition else "FAIL", pass_detail if condition else fail_detail)
+def _check(condition: bool, name: str, pass_detail: str, fail_detail: str) -> Check:
+    return Check(
+        name, "PASS" if condition else "FAIL", pass_detail if condition else fail_detail
+    )
 
 
 def evaluate_snapshot(
@@ -154,14 +155,14 @@ def evaluate_snapshot(
     issue = snapshot["issue"]
     comment = snapshot["comment"]
     permission = snapshot["permission"]
+    consumption_comments = snapshot["consumption_comments"]
+    commit = snapshot["commit"]
     repository = snapshot["repository"]
     default_ref = snapshot["default_ref"]
-    commit = snapshot["commit"]
-    consumption_comments = snapshot["consumption_comments"]
     checks: list[Check] = []
 
     checks.append(
-        make_check(
+        _check(
             issue.get("state") == "open" and "pull_request" not in issue,
             "authorization_issue",
             "Authorization issue is open and is not a pull request.",
@@ -170,18 +171,17 @@ def evaluate_snapshot(
     )
     title = str(issue.get("title") or "")
     checks.append(
-        make_check(
+        _check(
             title.startswith("[Production signing authorization]"),
             "authorization_issue_title",
             "Authorization issue title has the required prefix.",
             "Authorization issue title must start with [Production signing authorization].",
         )
     )
+    expected_issue_suffix = f"/issues/{expectation.issue_number}"
     checks.append(
-        make_check(
-            str(comment.get("issue_url") or "").endswith(
-                f"/issues/{expectation.issue_number}"
-            ),
+        _check(
+            str(comment.get("issue_url") or "").endswith(expected_issue_suffix),
             "comment_issue_identity",
             "Approval comment belongs to the requested issue.",
             "Approval comment does not belong to the requested issue.",
@@ -191,7 +191,7 @@ def evaluate_snapshot(
     approver = str((comment.get("user") or {}).get("login") or "")
     approver_type = str((comment.get("user") or {}).get("type") or "")
     checks.append(
-        make_check(
+        _check(
             bool(approver)
             and approver.casefold() != expectation.requester.casefold()
             and approver_type == "User",
@@ -202,7 +202,7 @@ def evaluate_snapshot(
     )
     permission_name = str(permission.get("permission") or "").lower()
     checks.append(
-        make_check(
+        _check(
             permission_name in WRITE_PERMISSIONS,
             "approver_permission",
             f"Approver permission is {permission_name}.",
@@ -217,7 +217,7 @@ def evaluate_snapshot(
         record = {}
         record_error = str(exc)
     checks.append(
-        make_check(
+        _check(
             not record_error and tuple(record.keys()) == APPROVAL_KEYS,
             "approval_record_shape",
             "Approval record has the exact required fields and order.",
@@ -234,7 +234,7 @@ def evaluate_snapshot(
     }
     for key, expected in expected_values.items():
         checks.append(
-            make_check(
+            _check(
                 record.get(key) == expected,
                 f"approval_{key}",
                 f"Approval {key} matches the requested operation.",
@@ -243,7 +243,7 @@ def evaluate_snapshot(
         )
 
     checks.append(
-        make_check(
+        _check(
             SHA_PATTERN.fullmatch(expectation.target_commit) is not None,
             "target_commit_format",
             "Target commit is a lowercase 40-character SHA.",
@@ -251,7 +251,7 @@ def evaluate_snapshot(
         )
     )
     checks.append(
-        make_check(
+        _check(
             NONCE_PATTERN.fullmatch(expectation.nonce) is not None,
             "nonce_format",
             "Nonce is a lowercase 32-character hexadecimal value.",
@@ -259,17 +259,18 @@ def evaluate_snapshot(
         )
     )
     checks.append(
-        make_check(
+        _check(
             str(commit.get("sha") or "") == expectation.target_commit,
             "target_commit_exists",
             "Target commit exists and resolves exactly.",
             "Target commit could not be resolved exactly.",
         )
     )
+
     default_branch = str(repository.get("default_branch") or "")
     default_sha = str((default_ref.get("object") or {}).get("sha") or "")
     checks.append(
-        make_check(
+        _check(
             default_branch == "master",
             "default_branch_identity",
             "Repository default branch is master.",
@@ -277,7 +278,7 @@ def evaluate_snapshot(
         )
     )
     checks.append(
-        make_check(
+        _check(
             default_sha == expectation.target_commit,
             "target_is_current_default_head",
             "Target commit is the current default-branch HEAD.",
@@ -294,7 +295,7 @@ def evaluate_snapshot(
         created_at = updated_at = expires_at = now
         time_error = str(exc)
     checks.append(
-        make_check(
+        _check(
             not time_error and created_at == updated_at,
             "approval_not_edited",
             "Approval comment has not been edited.",
@@ -302,7 +303,7 @@ def evaluate_snapshot(
         )
     )
     checks.append(
-        make_check(
+        _check(
             not time_error and created_at <= now <= expires_at,
             "approval_current",
             "Approval is currently valid.",
@@ -310,7 +311,7 @@ def evaluate_snapshot(
         )
     )
     checks.append(
-        make_check(
+        _check(
             not time_error
             and expires_at
             <= created_at + timedelta(minutes=expectation.max_lifetime_minutes),
@@ -331,14 +332,13 @@ def evaluate_snapshot(
         except ValueError:
             continue
         if (
-            consumed.get("approval_comment_id")
-            == str(expectation.approval_comment_id)
+            consumed.get("approval_comment_id") == str(expectation.approval_comment_id)
             or consumed.get("nonce") == expectation.nonce
         ):
             reused = True
             break
     checks.append(
-        make_check(
+        _check(
             not reused,
             "authorization_not_consumed",
             "Approval comment and nonce have not been consumed.",
@@ -349,55 +349,49 @@ def evaluate_snapshot(
 
 
 def overall_status(checks: list[Check]) -> str:
-    return "PASS" if checks and all(check.status == "PASS" for check in checks) else "FAIL"
+    return (
+        "PASS" if checks and all(check.status == "PASS" for check in checks) else "FAIL"
+    )
 
 
-def consumption_body(
+def build_consumption_comment(
     expectation: Expectation, *, approver: str, consumed_at: datetime
 ) -> str:
     run_url = (
         f"https://github.com/{expectation.repository}/actions/runs/{expectation.run_id}"
     )
-    return "\n".join(
-        [
-            CONSUMED_MARKER,
-            f"approval_comment_id={expectation.approval_comment_id}",
-            f"nonce={expectation.nonce}",
-            f"target_commit={expectation.target_commit}",
-            f"requester={expectation.requester}",
-            f"approver={approver}",
-            f"workflow_run={run_url}",
-            f"run_attempt={expectation.run_attempt}",
-            f"consumed_at={consumed_at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}",
-        ]
-    )
+    lines = [
+        CONSUMED_MARKER,
+        f"approval_comment_id={expectation.approval_comment_id}",
+        f"nonce={expectation.nonce}",
+        f"target_commit={expectation.target_commit}",
+        f"requester={expectation.requester}",
+        f"approver={approver}",
+        f"workflow_run={run_url}",
+        f"run_attempt={expectation.run_attempt}",
+        f"consumed_at={consumed_at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}",
+    ]
+    return "\n".join(lines)
 
 
 def fetch_snapshot(api: GitHubApi, expectation: Expectation) -> dict[str, Any]:
     repository = api.get(f"repos/{expectation.repository}")
     default_branch = str(repository.get("default_branch") or "")
     default_ref = api.get(
-        f"repos/{expectation.repository}/git/ref/heads/"
-        f"{urllib.parse.quote(default_branch, safe='')}"
+        f"repos/{expectation.repository}/git/ref/heads/{urllib.parse.quote(default_branch, safe='')}"
     )
-    issue = api.get(
-        f"repos/{expectation.repository}/issues/{expectation.issue_number}"
-    )
+    issue = api.get(f"repos/{expectation.repository}/issues/{expectation.issue_number}")
     comment = api.get(
-        f"repos/{expectation.repository}/issues/comments/"
-        f"{expectation.approval_comment_id}"
+        f"repos/{expectation.repository}/issues/comments/{expectation.approval_comment_id}"
     )
     approver = str((comment.get("user") or {}).get("login") or "")
     permission = api.get(
-        f"repos/{expectation.repository}/collaborators/"
-        f"{urllib.parse.quote(approver, safe='')}/permission"
+        f"repos/{expectation.repository}/collaborators/{urllib.parse.quote(approver, safe='')}/permission"
     )
     commit = api.get(
         f"repos/{expectation.repository}/commits/{expectation.target_commit}"
     )
-    comments = api.list_issue_comments(
-        expectation.repository, expectation.issue_number
-    )
+    comments = api.list_issue_comments(expectation.repository, expectation.issue_number)
     return {
         "repository": repository,
         "default_ref": default_ref,
@@ -422,9 +416,7 @@ def write_evidence(
     evidence = {
         "schema_version": 1,
         "result": overall_status(checks),
-        "evaluated_at": evaluated_at.astimezone(UTC).isoformat().replace(
-            "+00:00", "Z"
-        ),
+        "evaluated_at": evaluated_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "repository": expectation.repository,
         "issue_number": expectation.issue_number,
         "approval_comment_id": expectation.approval_comment_id,
@@ -466,7 +458,7 @@ def main() -> int:
     parser.add_argument("--requester", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-attempt", required=True)
-    parser.add_argument("--evidence-path", required=True, type=Path)
+    parser.add_argument("--evidence-path", type=Path, required=True)
     parser.add_argument("--max-lifetime-minutes", type=int, default=30)
     args = parser.parse_args()
 
@@ -481,31 +473,28 @@ def main() -> int:
         run_attempt=args.run_attempt,
         max_lifetime_minutes=args.max_lifetime_minutes,
     )
-    evaluated_at = datetime.now(UTC)
+    now = datetime.now(UTC)
     api = GitHubApi(
         token=os.environ.get("GH_TOKEN", ""),
         api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
     )
     snapshot = fetch_snapshot(api, expectation)
-    checks = evaluate_snapshot(snapshot, expectation, now=evaluated_at)
+    checks = evaluate_snapshot(snapshot, expectation, now=now)
     status = overall_status(checks)
     consumption_comment_id: int | None = None
 
     if status == "PASS":
         approver = str((snapshot["comment"].get("user") or {}).get("login") or "")
+        body = build_consumption_comment(
+            expectation, approver=approver, consumed_at=now
+        )
         response = api.post(
             f"repos/{expectation.repository}/issues/{expectation.issue_number}/comments",
-            {
-                "body": consumption_body(
-                    expectation, approver=approver, consumed_at=evaluated_at
-                )
-            },
+            {"body": body},
         )
         consumption_comment_id = int(response["id"])
         append_outputs(
-            os.environ.get("GITHUB_OUTPUT"),
-            expectation=expectation,
-            approver=approver,
+            os.environ.get("GITHUB_OUTPUT"), expectation=expectation, approver=approver
         )
 
     write_evidence(
@@ -514,7 +503,7 @@ def main() -> int:
         checks=checks,
         snapshot=snapshot,
         consumption_comment_id=consumption_comment_id,
-        evaluated_at=evaluated_at,
+        evaluated_at=now,
     )
     for check in checks:
         print(f"[{check.status}] {check.name}: {check.detail}")
