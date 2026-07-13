@@ -8,7 +8,9 @@ param(
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [string]$StatusPath,
     [switch]$ValidateOnly,
-    [switch]$RequireSigning
+    [switch]$RequireSigning,
+    [ValidateSet('strict', 'test-untrusted')]
+    [string]$VerificationMode = 'strict'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +18,10 @@ Set-StrictMode -Version Latest
 
 if ($RequireSigning) {
     $Mode = 'required'
+}
+
+if ($VerificationMode -eq 'test-untrusted' -and $env:KAITO_SIGNING_TEST -ne '1') {
+    throw 'The test-untrusted verification mode is restricted to the signing integration test.'
 }
 
 function Write-SigningStatus {
@@ -159,6 +165,18 @@ try {
     }
 
     $certificate = $eligible[0]
+    if ($VerificationMode -eq 'test-untrusted') {
+        $testSubject = 'CN=kaito CI signing test'
+        $validityDays = ($certificate.NotAfter - $certificate.NotBefore).TotalDays
+        if (
+            $certificate.Subject -ne $testSubject -or
+            $certificate.Issuer -ne $certificate.Subject -or
+            $validityDays -gt 3
+        ) {
+            throw 'The test-untrusted verification mode only accepts the short-lived self-signed kaito CI test certificate.'
+        }
+    }
+
     $signTool = Get-SignTool
     $certificateInfo = @{
         subject = $certificate.Subject
@@ -203,14 +221,35 @@ try {
             throw "signtool sign failed for $Resolved with exit code $LASTEXITCODE"
         }
 
-        & $signTool 'verify' '/pa' '/all' '/v' $Resolved
-        if ($LASTEXITCODE -ne 0) {
-            throw "signtool verify failed for $Resolved with exit code $LASTEXITCODE"
+        if ($VerificationMode -eq 'strict') {
+            & $signTool 'verify' '/pa' '/all' '/v' $Resolved
+            if ($LASTEXITCODE -ne 0) {
+                throw "signtool verify failed for $Resolved with exit code $LASTEXITCODE"
+            }
         }
 
         $signature = Get-AuthenticodeSignature $Resolved
-        if ($signature.Status -ne 'Valid') {
-            throw "Authenticode verification failed for ${Resolved}: $($signature.Status)"
+        if ($null -eq $signature.SignerCertificate) {
+            throw "Authenticode verification found no embedded signer certificate for ${Resolved}."
+        }
+        if (
+            -not [string]::Equals(
+                $signature.SignerCertificate.Thumbprint,
+                $certificate.Thumbprint,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            throw "Authenticode signer certificate does not match the configured PFX for ${Resolved}."
+        }
+
+        $signatureStatus = $signature.Status.ToString()
+        if ($VerificationMode -eq 'strict') {
+            if ($signatureStatus -ne 'Valid') {
+                throw "Authenticode verification failed for ${Resolved}: $signatureStatus"
+            }
+        }
+        elseif ($signatureStatus -notin @('Valid', 'NotTrusted')) {
+            throw "Embedded Authenticode verification failed for ${Resolved}: $signatureStatus"
         }
 
         $item = Get-Item $Resolved
