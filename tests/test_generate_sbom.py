@@ -115,3 +115,18 @@ def test_bundled_backend_rejects_checksum_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Bundled file checksum mismatch"):
         bundled_backend_component(tmp_path)
+
+
+def test_bundled_backend_rejects_unsafe_filename(tmp_path: Path) -> None:
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    outside = tmp_path / "outside.exe"
+    outside.write_bytes(b"outside payload")
+    digest = hashlib.sha256(outside.read_bytes()).hexdigest()
+    (bundled / "SHA256SUMS").write_text(
+        f"{digest}  ../outside.exe\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Unsafe bundled checksum filename"):
+        bundled_backend_component(tmp_path)
