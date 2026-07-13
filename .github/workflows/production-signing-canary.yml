@@ -56,6 +56,10 @@ jobs:
           INPUT_NONCE: ${{ inputs.nonce }}
         run: |
           set -euo pipefail
+          [[ "$GITHUB_REF" == 'refs/heads/master' ]] || {
+            echo 'Production signing can only be dispatched from refs/heads/master.' >&2
+            exit 1
+          }
           [[ "$INPUT_CONFIRMATION" == 'SIGN_CANARY_WITH_PRODUCTION_CERT' ]] || {
             echo 'Confirmation must be exactly SIGN_CANARY_WITH_PRODUCTION_CERT.' >&2
             exit 1
