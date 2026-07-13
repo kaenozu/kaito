@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
+from typing import Any, Callable, cast
 
-from tools.generate_sbom import build_sbom, write_sbom
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = REPOSITORY_ROOT / "tools" / "generate_sbom.py"
+SPEC = importlib.util.spec_from_file_location("kaito_generate_sbom", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"Unable to load SBOM generator from {MODULE_PATH}")
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+BuildSbom = Callable[..., dict[str, Any]]
+WriteSbom = Callable[[dict[str, Any], Path], None]
+build_sbom = cast(BuildSbom, cast(ModuleType, MODULE).build_sbom)
+write_sbom = cast(WriteSbom, cast(ModuleType, MODULE).write_sbom)
 
 
 def test_sbom_contains_runtime_dependencies_and_bundled_backend() -> None:
-    repository_root = Path(__file__).resolve().parents[1]
     sbom = build_sbom(
-        repository_root,
+        REPOSITORY_ROOT,
         commit="0123456789abcdef",
         generated_at=datetime(2026, 7, 13, 0, 0, tzinfo=UTC),
     )
@@ -20,7 +33,7 @@ def test_sbom_contains_runtime_dependencies_and_bundled_backend() -> None:
     assert sbom["specVersion"] == "1.6"
     assert sbom["metadata"]["component"]["name"] == "kaito"
     project = tomllib.loads(
-        (repository_root / "pyproject.toml").read_text(encoding="utf-8")
+        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
     assert sbom["metadata"]["component"]["version"] == project["version"]
 
@@ -43,9 +56,8 @@ def test_sbom_contains_runtime_dependencies_and_bundled_backend() -> None:
 def test_write_sbom_produces_valid_json_without_repository_paths(
     tmp_path: Path,
 ) -> None:
-    repository_root = Path(__file__).resolve().parents[1]
     sbom = build_sbom(
-        repository_root,
+        REPOSITORY_ROOT,
         commit="fedcba9876543210",
         generated_at=datetime(2026, 7, 13, 0, 0, tzinfo=UTC),
     )
@@ -55,4 +67,4 @@ def test_write_sbom_produces_valid_json_without_repository_paths(
     loaded = json.loads(output.read_text(encoding="utf-8"))
     serialized = json.dumps(loaded, ensure_ascii=False)
     assert loaded["metadata"]["component"]["name"] == "kaito"
-    assert str(repository_root) not in serialized
+    assert str(REPOSITORY_ROOT) not in serialized
