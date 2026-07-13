@@ -1,16 +1,19 @@
 name: Review Fix Finalizer
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/full-source-review-fixes
+      - master
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   finalize:
-    if: github.event.head_commit.message == 'chore: run one-time review fixer'
+    if: >-
+      github.head_ref == 'agent/full-source-review-fixes' &&
+      github.actor != 'github-actions[bot]'
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -18,6 +21,7 @@ jobs:
       - name: Check out review branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Install uv
@@ -27,7 +31,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Apply deterministic source transformations
-        run: python tools/apply_review_fixes_once.py
+        run: uv run --python 3.12 python tools/apply_review_fixes_once.py
 
       - name: Refresh and verify lockfile
         run: |
@@ -71,4 +75,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add pyproject.toml uv.lock src tests tools
           git commit -m 'fix: finalize full source review remediation [skip ci]'
-          git push origin "HEAD:$env:GITHUB_REF_NAME"
+          git push origin "HEAD:$env:GITHUB_HEAD_REF"
