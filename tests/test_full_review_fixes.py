@@ -18,7 +18,7 @@ from kaito.diagnostics import _sanitize_error
 from kaito.domain.errors import CompressionFailedError
 from kaito.domain.models import CompressionOptions, SafetyLimits
 from kaito.gui.productivity import _ArchivePasswordDialog, ProductivityFeatures
-from kaito.update_checker import LATEST_RELEASE_API, check_for_update
+from kaito.update_checker import LATEST_RELEASE_API, _version_key, check_for_update
 
 
 class _Response:
@@ -82,6 +82,13 @@ def test_private_default_update_endpoint_has_actionable_error(
     assert "KAITO_UPDATE_ENDPOINT" in result.error
 
 
+def test_update_version_ordering_handles_prereleases_and_trailing_zeroes() -> None:
+    assert _version_key("1.2rc1") < _version_key("1.2.0")
+    assert _version_key("1.2.0-rc.2") > _version_key("1.2.0-rc.1")
+    assert _version_key("1.2") == _version_key("1.2.0")
+    assert _version_key("1.2-unexpected") < _version_key("1.2")
+
+
 def test_diagnostics_redact_split_passwords_and_forward_slash_paths() -> None:
     message = (
         "failed -p split-secret --password another-secret "
@@ -96,6 +103,22 @@ def test_diagnostics_redact_split_passwords_and_forward_slash_paths() -> None:
     assert sanitized.count("<path>") == 2
     assert "-p***" in sanitized
     assert "--password=***" in sanitized
+    assert "remaining" in sanitized
+
+
+def test_diagnostics_redact_complete_quoted_paths_with_spaces() -> None:
+    message = (
+        'failed "C:/Users/alice/My Private Archive.zip" and '
+        "'//server/share/Customer Backup.zip' remaining"
+    )
+
+    sanitized = _sanitize_error(message)
+
+    assert sanitized.count("<path>") == 2
+    assert "alice" not in sanitized
+    assert "Archive.zip" not in sanitized
+    assert "server" not in sanitized
+    assert "Backup.zip" not in sanitized
     assert "remaining" in sanitized
 
 
@@ -209,6 +232,8 @@ def test_release_and_ci_fail_closed_on_lock_and_signing() -> None:
     ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
+    assert 'branches: [master, "feature/**"]' in ci
+    assert '"agent/**"' not in ci
     assert "uv lock --check" in ci
     assert "uv lock --check" in release
     assert release.count("-RequireSigning") == 2
