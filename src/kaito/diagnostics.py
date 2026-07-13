@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 from kaito.archive.service import ArchiveService
 from kaito.version import __version__
+
+_PASSWORD_ARGUMENT = re.compile(
+    r"(?ix)"
+    r"(?<!\S)"
+    r"(?:"
+    r"(?P<long>--password)(?:\s*=\s*|\s+)"
+    r"|"
+    r"(?P<short>-p)(?:\s*=\s*|\s*)"
+    r")"
+    r"(?:\"[^\"]*\"|'[^']*'|\S+)"
+)
+_WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def build_diagnostic_report(
@@ -73,41 +86,25 @@ def build_diagnostic_report(
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+def _redact_password_argument(match: re.Match[str]) -> str:
+    return "--password=***" if match.group("long") else "-p***"
+
+
+def _looks_like_absolute_path(token: str) -> bool:
+    candidate = token.strip("\"'()[]{}<>,;:")
+    return bool(
+        _WINDOWS_ABSOLUTE_PATH.match(candidate)
+        or candidate.startswith(("/", "\\\\", "//"))
+        or candidate.lower().startswith("file://")
+    )
+
+
 def _sanitize_error(message: str) -> str:
     """Avoid copying likely file paths or command-line secrets into reports."""
-    pieces: list[str] = []
-    in_password = False
-    quote_character = ""
-
-    for token in message.replace("\r", " ").replace("\n", " ").split():
-        lower = token.lower()
-        if in_password:
-            if quote_character and token.endswith(quote_character):
-                in_password = False
-                quote_character = ""
-            continue
-
-        if lower.startswith("-p") and len(token) > 2:
-            value = token[2:]
-            pieces.append("-p***")
-            if value.startswith(('"', "'")):
-                quote_character = value[0]
-                if not (len(value) > 1 and value.endswith(quote_character)):
-                    in_password = True
-            continue
-
-        if lower.startswith("--password="):
-            value = token.split("=", 1)[1]
-            pieces.append("--password=***")
-            if value.startswith(('"', "'")):
-                quote_character = value[0]
-                if not (len(value) > 1 and value.endswith(quote_character)):
-                    in_password = True
-            continue
-
-        if ":\\" in token or token.startswith("/") or token.startswith("\\\\"):
-            pieces.append("<path>")
-        else:
-            pieces.append(token)
-
+    flattened = message.replace("\r", " ").replace("\n", " ")
+    redacted = _PASSWORD_ARGUMENT.sub(_redact_password_argument, flattened)
+    pieces = [
+        "<path>" if _looks_like_absolute_path(token) else token
+        for token in redacted.split()
+    ]
     return " ".join(pieces)[:1000]
