@@ -99,10 +99,22 @@ try {
     Write-Phase 'export PFX and trust test certificate'
     $pfxPath = Join-Path $WorkDir 'signing-test.pfx'
     $cerPath = Join-Path $WorkDir 'signing-test.cer'
+
+    Write-Phase 'before Export-PfxCertificate'
     Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $securePassword | Out-Null
+    Write-Phase 'after Export-PfxCertificate'
+
+    Write-Phase 'before Export-Certificate'
     Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
+    Write-Phase 'after Export-Certificate'
+
+    Write-Phase 'before CurrentUser\Root import'
     Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+    Write-Phase 'after CurrentUser\Root import'
+
+    Write-Phase 'before CurrentUser\TrustedPublisher import'
     Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
+    Write-Phase 'after CurrentUser\TrustedPublisher import'
 
     Write-Phase 'validate eligible signing certificate'
     $certificateBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfxPath))
