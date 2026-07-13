@@ -10,8 +10,6 @@ REHEARSAL_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "release-rehearsal.yml"
 )
 
-# Temporary CI trigger; removed in the next commit.
-
 
 def test_production_and_rehearsal_execute_the_same_verifier() -> None:
     release = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
