@@ -128,17 +128,39 @@ try {
             -CertificatePassword $wrongPassword
     }
 
-    Write-Phase 'copy executable for destructive signing test'
-    $sourceExecutable = Join-Path $PSHOME 'pwsh.exe'
-    if (-not (Test-Path $sourceExecutable -PathType Leaf)) {
-        $sourceExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    }
-    if (-not (Test-Path $sourceExecutable -PathType Leaf)) {
-        throw 'No executable was available for the signing integration test.'
+    Write-Phase 'compile a fresh unsigned executable for signing'
+    $compilerCandidates = @(
+        (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+        (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+    )
+    $compiler = $compilerCandidates |
+        Where-Object { Test-Path $_ -PathType Leaf } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($compiler)) {
+        throw 'The .NET Framework C# compiler was not available for the signing integration test.'
     }
 
+    $sourcePath = Join-Path $WorkDir 'SigningTestProgram.cs'
     $testExecutable = Join-Path $WorkDir 'kaito-signing-test.exe'
-    Copy-Item $sourceExecutable $testExecutable -Force
+    @'
+internal static class SigningTestProgram
+{
+    private static int Main()
+    {
+        return 0;
+    }
+}
+'@ | Set-Content $sourcePath -Encoding utf8
+
+    & $compiler '/nologo' '/target:exe' "/out:$testExecutable" $sourcePath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $testExecutable -PathType Leaf)) {
+        throw "Unable to compile the unsigned signing test executable: $LASTEXITCODE"
+    }
+    $unsignedSignature = Get-AuthenticodeSignature $testExecutable
+    if ($unsignedSignature.Status -ne 'NotSigned') {
+        throw "The freshly compiled signing target was unexpectedly signed: $($unsignedSignature.Status)"
+    }
+
     $signedStatus = Join-Path $ArtifactsDir 'required-signed.json'
     Write-Phase 'sign and verify embedded signature without trusting the test root'
     ./tools/sign_windows.ps1 `
@@ -189,6 +211,7 @@ try {
         'malformed-base64: rejected'
         'valid-certificate-preflight: passed'
         'wrong-password: rejected'
+        'fresh-unsigned-pe: passed'
         'sign-and-verify: passed'
         'embedded-signer-thumbprint: passed'
         'trust-store-modification: not required'
