@@ -13,17 +13,20 @@ on:
       - "src/**"
       - "bundled/**"
       - "tools/build_release_rehearsal.ps1"
+      - "tools/verify_release_package.ps1"
       - "tools/verify_release_rehearsal.ps1"
       - "tools/sign_windows.ps1"
       - "tools/generate_sbom.py"
       - "tools/test_installer.ps1"
+      - "tests/test_release_workflow_policy.py"
+      - "tests/test_release_verifier_policy.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-rehearsal-v2-${{ github.event.pull_request.number || github.ref }}
+  group: release-rehearsal-v3-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -132,10 +135,11 @@ jobs:
       - name: Verify redownloaded release package
         shell: pwsh
         run: |
-          ./tools/verify_release_rehearsal.ps1 `
+          ./tools/verify_release_package.ps1 `
+            -Profile rehearsal `
             -PackageDir downloaded `
             -Version '${{ needs.build-rehearsal-package.outputs.version }}' `
-            -RehearsalTag '${{ needs.build-rehearsal-package.outputs.rehearsal_tag }}' `
+            -Tag '${{ needs.build-rehearsal-package.outputs.rehearsal_tag }}' `
             -Commit '${{ needs.build-rehearsal-package.outputs.commit }}' `
             -ExpectedManifestBase64 '${{ needs.build-rehearsal-package.outputs.expected_manifest }}' `
             -ArtifactsDir artifacts

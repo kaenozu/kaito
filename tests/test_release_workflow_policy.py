@@ -24,11 +24,12 @@ def test_release_workflow_refuses_public_release_replay() -> None:
     post_upload_guard = workflow.index(
         "- name: Confirm Release remains draft before verification"
     )
-    verification = workflow.index("- name: Redownload and verify draft Release assets")
+    download = workflow.index("- name: Redownload draft Release assets")
+    verification = workflow.index("- name: Verify redownloaded draft Release package")
     publication = workflow.index("- name: Publish verified GitHub Release")
 
     assert early_guard < build < upload_guard < release_action
-    assert release_action < post_upload_guard < verification < publication
+    assert release_action < post_upload_guard < download < verification < publication
     assert workflow.count("Refusing to overwrite public assets") == 2
     assert "draft: true" in workflow
     assert "overwrite_files: true" in workflow
@@ -51,12 +52,21 @@ def test_release_workflow_rechecks_master_and_release_identity_before_publish() 
     assert "master advanced after release verification" in publication
 
 
-def test_release_workflow_validates_exact_asset_sets_fail_closed() -> None:
+def test_release_workflow_uses_shared_fail_closed_verifier() -> None:
     workflow = _workflow_text()
 
     assert "Invalid bundled checksum line" in workflow
     assert "Duplicate bundled checksum entry" in workflow
     assert "bundled/SHA256SUMS contains no checksum entries" in workflow
-    assert "SHA256SUMS must contain exactly four entries" in workflow
-    assert "Published SHA256SUMS file set is incorrect" in workflow
-    assert "Published release metadata asset set is incorrect" in workflow
+    assert "./tools/verify_release_package.ps1" in workflow
+    assert "-Profile production" in workflow
+    assert "-ReferenceChecksumsPath 'dist/SHA256SUMS'" in workflow
+    assert "-ArtifactsDir 'artifacts/publication'" in workflow
+
+
+def test_release_workflow_requires_production_environment() -> None:
+    workflow = _workflow_text()
+    job_header = workflow.split("steps:", maxsplit=1)[0]
+
+    assert "environment:" in job_header
+    assert "name: production" in job_header
