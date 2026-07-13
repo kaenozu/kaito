@@ -37,13 +37,15 @@ def test_sbom_contains_runtime_dependencies_and_bundled_backend() -> None:
     )["project"]
     assert sbom["metadata"]["component"]["version"] == project["version"]
 
-    component_names = {component["name"] for component in sbom["components"]}
+    component_names = {
+        str(component["name"]).casefold() for component in sbom["components"]
+    }
     assert {
         "customtkinter",
-        "Pillow",
+        "pillow",
         "platformdirs",
         "tkinterdnd2",
-        "7-Zip",
+        "7-zip",
     } <= component_names
 
     root_ref = sbom["metadata"]["component"]["bom-ref"]
