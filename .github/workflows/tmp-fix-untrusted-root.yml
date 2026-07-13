@@ -1,0 +1,85 @@
+name: Temporary SignTool output fix
+
+on:
+  push:
+    branches:
+      - agent/release-pipeline-hardening
+    paths:
+      - .github/workflows/tmp-fix-untrusted-root.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out release hardening branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: agent/release-pipeline-hardening
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Make untrusted-root detection order independent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/sign_windows.ps1')
+          text = path.read_text(encoding='utf-8')
+          helper = r'''function Test-IsExpectedUntrustedRootOutput {
+              param(
+                  [Parameter(Mandatory = $true)]
+                  [string]$Text
+              )
+
+              $normalized = $Text -replace '\s+', ' '
+              if ($normalized -match '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT)') {
+                  return $true
+              }
+
+              $chainTerminatedAtRoot = $normalized -match '(?i)terminated in a root'
+              $rootIsUntrusted = $normalized -match '(?i)(certificate which is not trusted by the trust provider|root certificate.*not trusted)'
+              return $chainTerminatedAtRoot -and $rootIsUntrusted
+          }
+
+          '''
+          anchor = 'function Protect-SigningPfx {'
+          if 'function Test-IsExpectedUntrustedRootOutput {' not in text:
+              if anchor not in text:
+                  raise SystemExit('Unable to locate helper insertion point.')
+              text = text.replace(anchor, helper + anchor, 1)
+
+          old = r'''            $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
+              $verifyNormalized = $verifyText -replace '\s+', ' '
+              if ($verifyExitCode -ne 0) {
+                  $untrustedRootPattern = '(?i)(0x800B0109|CERT_E_UNTRUSTEDROOT|terminated in a root certificate which is not trusted|root certificate.*not trusted)'
+                  if ($verifyNormalized -notmatch $untrustedRootPattern) {
+                      throw "Self-signed signtool verification failed for ${Resolved} with an unexpected error (exit code ${verifyExitCode}): $verifyText"
+                  }
+                  $testUntrustedRootConfirmed = $true
+              }
+          '''
+          new = r'''            $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
+              if ($verifyExitCode -ne 0) {
+                  if (-not (Test-IsExpectedUntrustedRootOutput -Text $verifyText)) {
+                      throw "Self-signed signtool verification failed for ${Resolved} with an unexpected error (exit code ${verifyExitCode}): $verifyText"
+                  }
+                  $testUntrustedRootConfirmed = $true
+              }
+          '''
+          if old not in text:
+              raise SystemExit('Unable to locate the SignTool verification block.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          Path('.github/workflows/tmp-fix-untrusted-root.yml').unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/sign_windows.ps1 .github/workflows/tmp-fix-untrusted-root.yml
+          git commit -m "Handle interleaved SignTool untrusted-root output"
+          git push origin HEAD:agent/release-pipeline-hardening
