@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  group: release-rehearsal-v2-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
