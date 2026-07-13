@@ -92,9 +92,12 @@ def _bundled_backend_component(repository_root: Path) -> dict[str, Any]:
             raise RuntimeError(
                 f"Bundled checksum filename is empty on line {line_number}."
             )
-        if filename in seen_filenames:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", filename) is None:
+            raise RuntimeError(f"Unsafe bundled checksum filename: {filename!r}")
+        canonical_filename = filename.casefold()
+        if canonical_filename in seen_filenames:
             raise RuntimeError(f"Duplicate bundled checksum entry: {filename}")
-        seen_filenames.add(filename)
+        seen_filenames.add(canonical_filename)
 
         bundled_path = repository_root / "bundled" / filename
         if not bundled_path.is_file():
