@@ -117,6 +117,9 @@ try {
     if ($ready.result -ne 'ready' -or -not $ready.configured) {
         throw 'A valid test certificate did not pass signing preflight.'
     }
+    if ($ready.pfx_file_acl -ne 'current-user-only') {
+        throw 'Signing preflight did not confirm the restricted temporary PFX ACL.'
+    }
 
     Write-Phase 'reject incorrect PFX password'
     $wrongPassword = [guid]::NewGuid().ToString('N')
@@ -178,6 +181,9 @@ internal static class SigningTestProgram
     if ($signed.result -ne 'signed' -or $signed.files.Count -ne 1) {
         throw 'The signing integration test did not produce a signed result.'
     }
+    if ($signed.pfx_file_acl -ne 'current-user-only') {
+        throw 'Signing did not confirm the restricted temporary PFX ACL.'
+    }
     if (
         -not [string]::Equals(
             [string]$signed.certificate.thumbprint,
@@ -214,6 +220,7 @@ internal static class SigningTestProgram
         'required-unconfigured: rejected'
         'malformed-base64: rejected'
         'valid-certificate-preflight: passed'
+        'temporary-pfx-acl: current-user-only'
         'wrong-password: rejected'
         'fresh-unsigned-pe: passed'
         'sign-and-verify: passed'
