@@ -35,7 +35,9 @@ def test_authorization_job_is_trusted_secretless_and_single_use() -> None:
     assert "name: sign-production-canary-after-independent-authorization" in sign
     assert "needs: authorize-production-signing" in sign
     assert "environment:\n      name: production" in sign
-    assert "ref: ${{ needs.authorize-production-signing.outputs.target_commit }}" in sign
+    assert (
+        "ref: ${{ needs.authorize-production-signing.outputs.target_commit }}" in sign
+    )
     assert "WINDOWS_CERTIFICATE_BASE64" in sign
     assert "WINDOWS_CERTIFICATE_PASSWORD" in sign
     assert "WINDOWS_TIMESTAMP_URL" in sign
