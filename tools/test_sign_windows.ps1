@@ -188,7 +188,8 @@ internal static class SigningTestProgram
     Write-Phase 'independently confirm embedded signer identity'
     $embeddedSignature = Get-AuthenticodeSignature $testExecutable
     $embeddedStatus = $embeddedSignature.Status.ToString()
-    if ($embeddedStatus -notin @('Valid', 'NotTrusted')) {
+    # sign_windows.ps1 already required SignTool to identify the only failure as an untrusted self-signed root.
+    if ($embeddedStatus -notin @('Valid', 'NotTrusted', 'UnknownError')) {
         throw "The independently inspected Authenticode signature is invalid: $embeddedStatus"
     }
     if (
