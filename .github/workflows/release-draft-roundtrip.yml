@@ -65,6 +65,18 @@ jobs:
         id: context
         shell: pwsh
         run: |
+          function Assert-ApiObjectAbsent {
+            param([Parameter(Mandatory = $true)][string]$ApiPath)
+            $output = @(& gh api $ApiPath 2>&1)
+            $code = $LASTEXITCODE
+            $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+            if ($code -eq 0) { throw "GitHub object already exists: $ApiPath" }
+            if ($text -notmatch '(?i)(HTTP 404|Not Found)') {
+              throw "Unable to prove GitHub object absence for ${ApiPath}: $text"
+            }
+            $global:LASTEXITCODE = 0
+          }
+
           $version = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw 'Unable to determine project version.'
@@ -79,11 +91,8 @@ jobs:
           "commit=$commit" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
 
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "Temporary tag already exists: $tag" }
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "Temporary Release already exists: $tag" }
-          $global:LASTEXITCODE = 0
+          Assert-ApiObjectAbsent -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          Assert-ApiObjectAbsent -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
 
       - name: Build signed rehearsal package
         shell: pwsh
@@ -119,10 +128,12 @@ jobs:
             --draft
           if ($LASTEXITCODE -ne 0) { throw 'Unable to create the temporary Draft Release.' }
 
-      - name: Assert temporary Release remains draft
+      - name: Assert temporary Release and tag identity
         shell: pwsh
         run: |
           $tag = '${{ steps.context.outputs.tag }}'
+          $commit = '${{ steps.context.outputs.commit }}'
+
           $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
           if ($LASTEXITCODE -ne 0) { throw 'Unable to read the temporary Release.' }
           $release = $releaseJson | ConvertFrom-Json
@@ -130,8 +141,16 @@ jobs:
           if (-not $release.draft -or $release.prerelease) {
             throw 'The roundtrip Release is not an ordinary draft.'
           }
-          if ($release.tag_name -ne $tag -or $release.target_commitish -ne '${{ steps.context.outputs.commit }}') {
-            throw 'The Draft Release identity does not match the requested roundtrip context.'
+          if ($release.tag_name -ne $tag) {
+            throw 'The Draft Release tag identity does not match the requested roundtrip context.'
+          }
+
+          $tagJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read the temporary tag.' }
+          $tagRef = $tagJson | ConvertFrom-Json
+          $tagJson | Set-Content artifacts/tag-ref.json -Encoding utf8
+          if ($tagRef.object.type -ne 'commit' -or $tagRef.object.sha -ne $commit) {
+            throw 'The temporary tag does not point to the checked-out commit.'
           }
 
       - name: Download Draft Release assets through GitHub Release API
@@ -161,41 +180,80 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          function Invoke-ApiLookup {
+            param([Parameter(Mandatory = $true)][string]$ApiPath)
+            $output = @(& gh api $ApiPath 2>&1)
+            $code = $LASTEXITCODE
+            $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+            $global:LASTEXITCODE = 0
+            return [ordered]@{ code = $code; text = $text }
+          }
+
           $tag = $env:ROUNDTRIP_TAG
           if ([string]::IsNullOrWhiteSpace($tag)) { throw 'Roundtrip tag was not recorded; cleanup cannot be proven.' }
           $cleanupFailed = $false
+          $publicReleaseDetected = $false
+          $releaseAbsent = $false
+          $tagAbsent = $false
 
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $release = $releaseJson | ConvertFrom-Json
+          $releaseLookup = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($releaseLookup.code -eq 0) {
+            $release = $releaseLookup.text | ConvertFrom-Json
             if (-not $release.draft) {
               Write-Error 'Refusing to delete an unexpectedly public Release automatically.'
+              $publicReleaseDetected = $true
               $cleanupFailed = $true
             }
             else {
               gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
               if ($LASTEXITCODE -ne 0) { $cleanupFailed = $true }
+              $global:LASTEXITCODE = 0
             }
           }
-          $global:LASTEXITCODE = 0
-
-          gh api "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" --method DELETE 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" 2>$null
-            if ($LASTEXITCODE -eq 0) { $cleanupFailed = $true }
+          elseif ($releaseLookup.text -notmatch '(?i)(HTTP 404|Not Found)') {
+            Write-Error "Unable to determine Release state: $($releaseLookup.text)"
+            $cleanupFailed = $true
           }
-          $global:LASTEXITCODE = 0
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-          if ($LASTEXITCODE -eq 0) { $cleanupFailed = $true }
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" 2>$null
-          if ($LASTEXITCODE -eq 0) { $cleanupFailed = $true }
-          $global:LASTEXITCODE = 0
+          $tagLookup = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($tagLookup.code -eq 0) {
+            if ($publicReleaseDetected) {
+              Write-Error 'Refusing to delete the tag associated with an unexpectedly public Release.'
+              $cleanupFailed = $true
+            }
+            else {
+              gh api "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" --method DELETE
+              if ($LASTEXITCODE -ne 0) { $cleanupFailed = $true }
+              $global:LASTEXITCODE = 0
+            }
+          }
+          elseif ($tagLookup.text -notmatch '(?i)(HTTP 404|Not Found)') {
+            Write-Error "Unable to determine tag state: $($tagLookup.text)"
+            $cleanupFailed = $true
+          }
+
+          $releaseProof = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($releaseProof.code -ne 0 -and $releaseProof.text -match '(?i)(HTTP 404|Not Found)') {
+            $releaseAbsent = $true
+          }
+          else {
+            $cleanupFailed = $true
+          }
+
+          $tagProof = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($tagProof.code -ne 0 -and $tagProof.text -match '(?i)(HTTP 404|Not Found)') {
+            $tagAbsent = $true
+          }
+          else {
+            $cleanupFailed = $true
+          }
 
           [ordered]@{
             schema_version = 1
             tag = $tag
-            release_absent = -not [bool](gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null)
+            release_absent = $releaseAbsent
+            tag_absent = $tagAbsent
+            public_release_detected = $publicReleaseDetected
             checked_at = [DateTimeOffset]::UtcNow.ToString('o')
             result = if ($cleanupFailed) { 'failed' } else { 'passed' }
           } | ConvertTo-Json | Set-Content artifacts/cleanup-summary.json -Encoding utf8
