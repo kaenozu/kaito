@@ -8,7 +8,7 @@ import stat
 import tempfile
 import threading
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, TypeVar
@@ -31,6 +31,7 @@ from kaito.domain.models import (
     ArchiveInfo,
     CompressionOptions,
     ExtractionOptions,
+    is_reparse_or_link,
 )
 
 _T = TypeVar("_T")
@@ -198,16 +199,48 @@ class ZipBackend:
                 f"ZIPファイルの展開に失敗: {exc}", archive_path=str(path)
             ) from exc
 
+    def _iter_source_items(self, source: Path) -> Iterator[Path]:
+        """Yield a directory tree without ever descending through a link/reparse point."""
+        self._check_cancelled()
+        if is_reparse_or_link(source):
+            raise CompressionFailedError(
+                f"リンクまたはreparse pointは圧縮できません: {source}"
+            )
+        if not source.is_dir():
+            return
+
+        stack = [source]
+        while stack:
+            directory = stack.pop()
+            try:
+                children = sorted(
+                    directory.iterdir(), key=lambda item: item.name.casefold(), reverse=True
+                )
+            except OSError as exc:
+                raise CompressionFailedError(
+                    f"圧縮対象を列挙できません: {directory}: {exc}"
+                ) from exc
+            for item in children:
+                self._check_cancelled()
+                if is_reparse_or_link(item):
+                    raise CompressionFailedError(
+                        f"リンクまたはreparse pointは圧縮できません: {item}"
+                    )
+                yield item
+                if item.is_dir():
+                    stack.append(item)
+
     def _count_files(self, sources: list[Path]) -> int:
         total = 0
         for source in sources:
             self._check_cancelled()
             if source.is_dir():
-                for item in source.rglob("*"):
-                    self._check_cancelled()
-                    if item.is_file():
-                        total += 1
+                total += sum(1 for item in self._iter_source_items(source) if item.is_file())
             else:
+                if is_reparse_or_link(source):
+                    raise CompressionFailedError(
+                        f"リンクまたはreparse pointは圧縮できません: {source}"
+                    )
                 total += 1
         return total
 
@@ -230,6 +263,14 @@ class ZipBackend:
                 self._check_cancelled()
                 output_stream.write(chunk)
         self._check_cancelled()
+
+    @staticmethod
+    def _write_directory(
+        archive: zipfile.ZipFile, source: Path, archive_name: str
+    ) -> None:
+        name = archive_name.rstrip("/") + "/"
+        info = zipfile.ZipInfo.from_file(source, arcname=name)
+        archive.writestr(info, b"")
 
     def _verify_archive(self, path: Path) -> None:
         with zipfile.ZipFile(path, "r") as verification:
@@ -285,17 +326,13 @@ class ZipBackend:
             ) as archive:
                 for source in options.sources:
                     self._check_cancelled()
-                    if source.is_symlink():
+                    if is_reparse_or_link(source):
                         raise CompressionFailedError(
-                            f"シンボリックリンクは圧縮できません: {source}"
+                            f"リンクまたはreparse pointは圧縮できません: {source}"
                         )
                     if source.is_dir():
-                        for item in source.rglob("*"):
-                            self._check_cancelled()
-                            if item.is_symlink():
-                                raise CompressionFailedError(
-                                    f"シンボリックリンクは圧縮できません: {item}"
-                                )
+                        self._write_directory(archive, source, source.name)
+                        for item in self._iter_source_items(source):
                             archive_name = item.relative_to(source.parent).as_posix()
                             if item.is_file():
                                 self._write_file(
@@ -309,9 +346,7 @@ class ZipBackend:
                                     options.on_progress(done, total_files, item.name)
                                 self._check_cancelled()
                             elif item.is_dir():
-                                archive.writestr(
-                                    zipfile.ZipInfo(archive_name.rstrip("/") + "/"), b""
-                                )
+                                self._write_directory(archive, item, archive_name)
                     else:
                         self._write_file(
                             archive,
