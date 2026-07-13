@@ -7,18 +7,121 @@ on:
         description: Type SIGN_CANARY_WITH_PRODUCTION_CERT exactly
         required: true
         type: string
+      authorization_issue:
+        description: Open issue titled [Production signing authorization] ...
+        required: true
+        type: string
+      approval_comment_id:
+        description: Independent approval comment ID
+        required: true
+        type: string
+      target_commit:
+        description: Exact current master HEAD approved for signing
+        required: true
+        type: string
+      nonce:
+        description: Fresh lowercase 32-character hexadecimal nonce
+        required: true
+        type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: production-signing-canary
   cancel-in-progress: false
 
 jobs:
+  authorize-production-signing:
+    name: authorize-independent-production-signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      target_commit: ${{ steps.authorization.outputs.target_commit }}
+      authorization_issue: ${{ steps.authorization.outputs.authorization_issue }}
+      approver: ${{ steps.authorization.outputs.approver }}
+      approval_comment_id: ${{ steps.authorization.outputs.approval_comment_id }}
+      nonce: ${{ steps.authorization.outputs.nonce }}
+
+    steps:
+      - name: Validate dispatch inputs before repository checkout
+        shell: bash
+        env:
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          INPUT_AUTHORIZATION_ISSUE: ${{ inputs.authorization_issue }}
+          INPUT_APPROVAL_COMMENT_ID: ${{ inputs.approval_comment_id }}
+          INPUT_TARGET_COMMIT: ${{ inputs.target_commit }}
+          INPUT_NONCE: ${{ inputs.nonce }}
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_CONFIRMATION" == 'SIGN_CANARY_WITH_PRODUCTION_CERT' ]] || {
+            echo 'Confirmation must be exactly SIGN_CANARY_WITH_PRODUCTION_CERT.' >&2
+            exit 1
+          }
+          [[ "$INPUT_AUTHORIZATION_ISSUE" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'authorization_issue must be a positive integer.' >&2
+            exit 1
+          }
+          [[ "$INPUT_APPROVAL_COMMENT_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'approval_comment_id must be a positive integer.' >&2
+            exit 1
+          }
+          [[ "$INPUT_TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'target_commit must be a lowercase 40-character SHA.' >&2
+            exit 1
+          }
+          [[ "$INPUT_NONCE" =~ ^[0-9a-f]{32}$ ]] || {
+            echo 'nonce must be a lowercase 32-character hexadecimal value.' >&2
+            exit 1
+          }
+
+      - name: Check out trusted workflow commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify and consume independent authorization
+        id: authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORIZATION_ISSUE: ${{ inputs.authorization_issue }}
+          APPROVAL_COMMENT_ID: ${{ inputs.approval_comment_id }}
+          TARGET_COMMIT: ${{ inputs.target_commit }}
+          AUTHORIZATION_NONCE: ${{ inputs.nonce }}
+          REQUESTER: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python tools/verify_production_signing_authorization.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --authorization-issue "$AUTHORIZATION_ISSUE" \
+            --approval-comment-id "$APPROVAL_COMMENT_ID" \
+            --target-commit "$TARGET_COMMIT" \
+            --nonce "$AUTHORIZATION_NONCE" \
+            --requester "$REQUESTER" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --evidence-path artifacts/production-signing-authorization.json
+
+      - name: Upload authorization evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-production-signing-authorization-evidence
+          retention-days: 30
+          if-no-files-found: warn
+          path: artifacts/production-signing-authorization.json
+
   sign-canary:
+    name: sign-production-canary-after-independent-authorization
+    needs: authorize-production-signing
     runs-on: windows-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     environment:
       name: production
     env:
@@ -28,12 +131,9 @@ jobs:
       WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
 
     steps:
-      - name: Require explicit production-secret confirmation
+      - name: Require configured production signing material
         shell: pwsh
         run: |
-          if ('${{ inputs.confirmation }}' -cne 'SIGN_CANARY_WITH_PRODUCTION_CERT') {
-            throw 'Confirmation must be exactly SIGN_CANARY_WITH_PRODUCTION_CERT.'
-          }
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
             throw 'The production Environment certificate secret is not configured.'
           }
@@ -44,15 +144,36 @@ jobs:
             throw 'WINDOWS_TIMESTAMP_URL must be an HTTPS timestamp service URL.'
           }
 
-      - name: Check out repository
+      - name: Check out exact independently authorized commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ needs.authorize-production-signing.outputs.target_commit }}
           persist-credentials: false
+
+      - name: Record consumed authorization identity
+        shell: pwsh
+        env:
+          AUTHORIZATION_ISSUE: ${{ needs.authorize-production-signing.outputs.authorization_issue }}
+          APPROVER: ${{ needs.authorize-production-signing.outputs.approver }}
+          APPROVAL_COMMENT_ID: ${{ needs.authorize-production-signing.outputs.approval_comment_id }}
+          AUTHORIZATION_NONCE: ${{ needs.authorize-production-signing.outputs.nonce }}
+          TARGET_COMMIT: ${{ needs.authorize-production-signing.outputs.target_commit }}
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          [ordered]@{
+            schema_version = 1
+            authorization_issue = $env:AUTHORIZATION_ISSUE
+            approval_comment_id = $env:APPROVAL_COMMENT_ID
+            approver = $env:APPROVER
+            requester = '${{ github.actor }}'
+            nonce = $env:AUTHORIZATION_NONCE
+            target_commit = $env:TARGET_COMMIT
+            workflow_run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content artifacts/production-signing-authorization-identity.json -Encoding utf8
 
       - name: Create fresh unsigned canary executable
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
           New-Item -ItemType Directory -Path canary -Force | Out-Null
           $compilerCandidates = @(
             (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'),
@@ -172,6 +293,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kaito-production-signing-canary-evidence
-          retention-days: 14
+          retention-days: 30
           if-no-files-found: error
           path: artifacts/
