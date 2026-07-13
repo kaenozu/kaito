@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import inspect
 import io
-import json
 import urllib.error
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -151,7 +149,11 @@ def test_safety_block_remains_applied_after_ui_reenable() -> None:
     features._safety_report = _blocked_report()
     features._selected_button = MagicMock()
     extract_button = MagicMock()
-    features.app = SimpleNamespace(_extract_btn=extract_button)
+    features.app = SimpleNamespace(
+        _extract_btn=extract_button,
+        _current_archive_path=Path("sample.zip"),
+        _entries=[object()],
+    )
 
     features._apply_safety_controls(enabled=True)
 
