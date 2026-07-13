@@ -6,6 +6,33 @@
 
 ## [Unreleased]
 
+### Changed
+
+- コンソールスクリプトを診断CLIとExplorerガードを持つ`kaito.__main__:main`へ統一
+- 更新確認先を`KAITO_UPDATE_ENDPOINT`で差し替え可能にし、非公開GitHub Releasesでは実行時の`KAITO_GITHUB_TOKEN`を使用可能に変更
+- CIとRelease workflowで`uv lock --check`を必須化
+- 安定版Release workflowでEXEとインストーラーのAuthenticode署名を必須化
+
+### Fixed
+
+- `pyproject.toml`と`uv.lock`でkaitoのバージョンが一致していなかった問題
+- 暗号化アーカイブの展開パスワード入力がマスクされていなかった問題
+- 診断レポートで分離形式のパスワード引数と`C:/`形式の個人パスを除外できない問題
+- 安全診断が拒否した後にGUI操作を挟むと解凍ボタンが再有効化される問題
+- 安全診断が拒否したアーカイブで選択解凍を開始できる問題
+- 最近のファイルメニューの「履歴を削除」が動作しない問題
+- 7z／RARプレビューがTkイベントスレッドを停止させる問題
+- 画像プレビューの画素数上限が適用されていなかった問題
+- 完全に空の選択フォルダーをZIPへ保存できない問題
+- ZIP作成時にWindows reparse pointを共通安全判定で拒否していなかった問題
+- コンテキストメニュー登録・削除実装がGUIモジュールと専用モジュールへ二重化していた問題
+
+### Security
+
+- 署名PFXをBase64、パスワード、秘密鍵、Code Signing EKU、有効期間の順に検証し、一時PFXのACLを現在のWindowsユーザーだけへ制限
+- 署名後にSignTool、Authenticode状態、構成済み証明書のThumbprint一致を検証
+- 巨大画像の画素数を完全デコード前に拒否し、PillowのDecompressionBomb警告を失敗として扱う
+
 ## [0.11.0] - 2026-07-12
 
 ### Added
