@@ -41,10 +41,7 @@ class GitHubClient:
         self._api_url = api_url.rstrip("/")
 
     def _request(
-        self,
-        method: str,
-        url: str,
-        body: dict[str, Any] | None = None,
+        self, method: str, url: str, body: dict[str, Any] | None = None
     ) -> Any:
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
@@ -63,9 +60,7 @@ class GitHubClient:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"GitHub API {exc.code} for {url}: {detail}"
-            ) from exc
+            raise RuntimeError(f"GitHub API {exc.code} for {url}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(
                 f"GitHub API request failed for {url}: {exc.reason}"
@@ -89,23 +84,13 @@ class GitHubClient:
         return data["data"]
 
 
-def _check(
-    name: str,
-    condition: bool,
-    pass_detail: str,
-    fail_detail: str,
-) -> Check:
+def _check(name: str, condition: bool, pass_detail: str, fail_detail: str) -> Check:
     return Check(
-        name,
-        "PASS" if condition else "FAIL",
-        pass_detail if condition else fail_detail,
+        name, "PASS" if condition else "FAIL", pass_detail if condition else fail_detail
     )
 
 
-def evaluate_snapshot(
-    snapshot: dict[str, Any],
-    expected: Expectation,
-) -> list[Check]:
+def evaluate_snapshot(snapshot: dict[str, Any], expected: Expectation) -> list[Check]:
     pr = snapshot["pr"]
     compare = snapshot["compare"]
     checks: list[Check] = []
@@ -147,10 +132,7 @@ def evaluate_snapshot(
             "current_base_sha",
             snapshot["base_sha"] == expected.expected_base_sha,
             f"Current base SHA is {expected.expected_base_sha}.",
-            (
-                f"Current base SHA is {snapshot['base_sha']}, "
-                f"expected {expected.expected_base_sha}."
-            ),
+            f"Current base SHA is {snapshot['base_sha']}, expected {expected.expected_base_sha}.",
         )
     )
     checks.append(
@@ -158,10 +140,7 @@ def evaluate_snapshot(
             "ahead",
             compare["ahead_by"] == expected.expected_ahead,
             f"Ahead count is {expected.expected_ahead}.",
-            (
-                f"Ahead count is {compare['ahead_by']}, "
-                f"expected {expected.expected_ahead}."
-            ),
+            f"Ahead count is {compare['ahead_by']}, expected {expected.expected_ahead}.",
         )
     )
     checks.append(
@@ -169,10 +148,7 @@ def evaluate_snapshot(
             "behind",
             compare["behind_by"] == expected.expected_behind,
             f"Behind count is {expected.expected_behind}.",
-            (
-                f"Behind count is {compare['behind_by']}, "
-                f"expected {expected.expected_behind}."
-            ),
+            f"Behind count is {compare['behind_by']}, expected {expected.expected_behind}.",
         )
     )
 
@@ -240,36 +216,33 @@ def evaluate_snapshot(
         permission = snapshot["reviewer_permissions"].get(author)
         if permission in WRITE_PERMISSIONS:
             approvals.append(author)
+    approval_detail = (
+        f"Independent approval on fixed HEAD by: {sorted(set(approvals))}."
+    )
     checks.append(
         Check(
             "independent_approval",
             "PASS" if approvals else "BLOCKED",
-            (
-                f"Independent approval on fixed HEAD by: "
-                f"{sorted(set(approvals))}."
-                if approvals
-                else "No independent write-capable reviewer approved the fixed HEAD."
-            ),
+            approval_detail
+            if approvals
+            else "No independent write-capable reviewer approved the fixed HEAD.",
         )
     )
     return checks
 
 
-def collect_snapshot(
-    client: GitHubClient,
-    expected: Expectation,
-) -> dict[str, Any]:
+def collect_snapshot(client: GitHubClient, expected: Expectation) -> dict[str, Any]:
     owner, repo = expected.repository.split("/", maxsplit=1)
     root = f"/repos/{owner}/{repo}"
     pr = client.get(f"{root}/pulls/{expected.pr_number}")
-    encoded_base = urllib.parse.quote(expected.expected_base_ref, safe="")
-    base_ref = client.get(f"{root}/git/ref/heads/{encoded_base}")
+    base_ref = client.get(
+        f"{root}/git/ref/heads/{urllib.parse.quote(expected.expected_base_ref, safe='')}"
+    )
     compare = client.get(
         f"{root}/compare/{expected.expected_base_sha}...{expected.expected_head}"
     )
     reviews = client.get(
-        f"{root}/pulls/{expected.pr_number}/reviews",
-        {"per_page": "100"},
+        f"{root}/pulls/{expected.pr_number}/reviews", {"per_page": "100"}
     )
     runs = client.get(
         f"{root}/actions/runs",
@@ -305,11 +278,7 @@ def collect_snapshot(
     reviewer_permissions: dict[str, str] = {}
     for review in reviews:
         login = review.get("user", {}).get("login")
-        if (
-            not login
-            or login == pr["user"]["login"]
-            or login in reviewer_permissions
-        ):
+        if not login or login == pr["user"]["login"] or login in reviewer_permissions:
             continue
         permission = client.get(f"{root}/collaborators/{login}/permission")[
             "permission"
@@ -337,8 +306,7 @@ def _split_csv(value: str) -> frozenset[str]:
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
 
@@ -354,14 +322,10 @@ def main() -> int:
     parser.add_argument("--expected-ahead", type=int, required=True)
     parser.add_argument("--expected-behind", type=int, default=0)
     parser.add_argument(
-        "--expected-files",
-        required=True,
-        help="Comma-separated exact file paths.",
+        "--expected-files", required=True, help="Comma-separated exact file paths."
     )
     parser.add_argument(
-        "--required-workflows",
-        required=True,
-        help="Comma-separated workflow names.",
+        "--required-workflows", required=True, help="Comma-separated workflow names."
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -382,18 +346,21 @@ def main() -> int:
         required_workflows=_split_csv(args.required_workflows),
     )
     try:
-        client = GitHubClient(
-            token,
-            os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        snapshot = collect_snapshot(
+            GitHubClient(
+                token, os.environ.get("GITHUB_API_URL", "https://api.github.com")
+            ),
+            expected,
         )
-        snapshot = collect_snapshot(client, expected)
         checks = evaluate_snapshot(snapshot, expected)
-        if all(check.status == "PASS" for check in checks):
-            overall = "PASS"
-        elif any(check.status == "FAIL" for check in checks):
-            overall = "FAIL"
-        else:
-            overall = "BLOCKED"
+        overall = (
+            "PASS"
+            if all(check.status == "PASS" for check in checks)
+            else "BLOCKED"
+            if any(check.status == "BLOCKED" for check in checks)
+            and all(check.status in {"PASS", "BLOCKED"} for check in checks)
+            else "FAIL"
+        )
         payload = {
             "schema_version": 1,
             "overall": overall,
