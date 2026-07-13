@@ -118,7 +118,10 @@ def test_production_authorization_is_fail_closed_and_single_use() -> None:
     assert "approval_lifetime" in authorization
     assert "authorization_not_consumed" in authorization
     assert "target_is_current_default_head" in authorization
-    assert "issues/{expectation.issue_number}/comments" in authorization
+    assert "allow_404=True" in authorization
+    assert "build_consumption_comment" in authorization
+    assert "api.post(" in authorization
+    assert "consumption_comment_id" in authorization
     assert "cancel-in-progress: false" in workflow
     assert "30 minutes" in documentation
     assert "current `master` HEAD" in documentation
