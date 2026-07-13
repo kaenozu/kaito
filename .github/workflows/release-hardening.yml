@@ -93,13 +93,15 @@ jobs:
       - name: Test release policy and generate CycloneDX SBOM
         shell: pwsh
         run: |
-          uv run --frozen pytest -q `
+          & uv run --frozen pytest -q `
             tests/test_generate_sbom.py `
             tests/test_pr_approval_gate.py `
             tests/test_release_workflow_policy.py `
             tests/test_release_verifier_policy.py `
-            tests/test_release_operations_policy.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            tests/test_release_operations_policy.py 2>&1 |
+            Tee-Object -FilePath artifacts/release-policy-test-output.txt
+          $testCode = $LASTEXITCODE
+          if ($testCode -ne 0) { exit $testCode }
           uv run --frozen python tools/generate_sbom.py `
             --repository-root . `
             --output artifacts/kaito-sbom.cdx.json `
@@ -117,7 +119,8 @@ jobs:
           $outputs = @()
           foreach ($logPath in @(
             'artifacts/signing-test-output.txt',
-            'artifacts/release-verifier-test-output.txt'
+            'artifacts/release-verifier-test-output.txt',
+            'artifacts/release-policy-test-output.txt'
           )) {
             if (Test-Path $logPath) {
               $outputs += "### $logPath"
