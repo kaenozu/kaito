@@ -26,6 +26,9 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Verify lockfile is current
+        run: uv lock --check
+
       - name: Install locked dependencies
         run: uv sync --frozen
 
@@ -86,12 +89,12 @@ jobs:
       - name: Build executable
         run: uv run --frozen pyinstaller --clean --noconfirm build.spec
 
-      - name: Sign executable when configured
+      - name: Sign executable
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath 'dist/kaito.exe'
+        run: ./tools/sign_windows.ps1 -FilePath 'dist/kaito.exe' -RequireSigning
 
       - name: Verify executable
         shell: pwsh
@@ -102,6 +105,11 @@ jobs:
           $backendFile = (Resolve-Path artifacts).Path + '\release-backend.json'
           $archiveSmokeFile = (Resolve-Path artifacts).Path + '\release-archive-smoke.json'
           $diagnosticsFile = (Resolve-Path artifacts).Path + '\release-diagnostics.json'
+
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+            throw "Release executable is not validly signed: $($signature.Status)"
+          }
 
           $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $versionFile) -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Version process failed: $($process.ExitCode)" }
@@ -155,12 +163,20 @@ jobs:
           if ($null -eq $installer) { throw 'Installer output not found' }
           "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
 
-      - name: Sign installer when configured
+      - name: Sign installer
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath $env:KAITO_INSTALLER
+        run: ./tools/sign_windows.ps1 -FilePath $env:KAITO_INSTALLER -RequireSigning
+
+      - name: Verify installer signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature $env:KAITO_INSTALLER
+          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+            throw "Release installer is not validly signed: $($signature.Status)"
+          }
 
       - name: Test install, registry integration, and uninstall
         shell: pwsh
