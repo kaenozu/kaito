@@ -1,0 +1,107 @@
+name: Release hardening checks
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-hardening.yml"
+      - "tools/sign_windows.ps1"
+      - "tools/test_sign_windows.ps1"
+      - "tools/generate_sbom.py"
+      - "tests/test_generate_sbom.py"
+      - "tests/test_release_workflow_policy.py"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-hardening.yml"
+      - "tools/sign_windows.ps1"
+      - "tools/test_sign_windows.ps1"
+      - "tools/generate_sbom.py"
+      - "tests/test_generate_sbom.py"
+      - "tests/test_release_workflow_policy.py"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-hardening-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signing-and-sbom:
+    runs-on: windows-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Test Windows signing modes and certificate validation
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          & pwsh -NoProfile -File ./tools/test_sign_windows.ps1 `
+            -ArtifactsDir artifacts/signing-tests 2>&1 |
+            Tee-Object -FilePath artifacts/signing-test-output.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+      - name: Test release policy and generate CycloneDX SBOM
+        shell: pwsh
+        run: |
+          uv run --frozen pytest -q tests/test_generate_sbom.py tests/test_release_workflow_policy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --frozen python tools/generate_sbom.py `
+            --repository-root . `
+            --output artifacts/kaito-sbom.cdx.json `
+            --commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content artifacts/kaito-sbom.cdx.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Report hardening failure on pull request
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $logPath = 'artifacts/signing-test-output.txt'
+          $details = if (Test-Path $logPath) {
+            (Get-Content $logPath -Tail 80) -join "`n"
+          }
+          else {
+            'The signing test did not produce a diagnostic output file.'
+          }
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $body = @"
+          ## Release hardening check failed
+
+          ```text
+          $details
+          ```
+
+          Workflow: $runUrl
+          "@
+          gh pr comment ${{ github.event.pull_request.number }} --repo $env:GITHUB_REPOSITORY --body $body
+
+      - name: Upload hardening evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-hardening-evidence
+          if-no-files-found: warn
+          path: artifacts/

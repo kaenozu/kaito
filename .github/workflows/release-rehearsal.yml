@@ -1,0 +1,150 @@
+name: Release rehearsal
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/release-rehearsal.yml"
+      - ".github/workflows/release.yml"
+      - "build.spec"
+      - "installer/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - "bundled/**"
+      - "tools/build_release_rehearsal.ps1"
+      - "tools/verify_release_rehearsal.ps1"
+      - "tools/sign_windows.ps1"
+      - "tools/generate_sbom.py"
+      - "tools/test_installer.ps1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rehearsal-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-rehearsal-package:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    outputs:
+      version: ${{ steps.context.outputs.version }}
+      rehearsal_tag: ${{ steps.context.outputs.rehearsal_tag }}
+      commit: ${{ steps.context.outputs.commit }}
+      expected_manifest: ${{ steps.manifest.outputs.expected_manifest }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Prepare rehearsal context
+        id: context
+        shell: pwsh
+        run: |
+          $version = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw 'Unable to determine project version.'
+          }
+          $tag = "rehearsal-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          "rehearsal_tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
+          "commit=$env:GITHUB_SHA" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc -PathType Leaf)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed: $LASTEXITCODE" }
+          }
+          if (-not (Test-Path $iscc -PathType Leaf)) { throw "ISCC.exe not found: $iscc" }
+
+      - name: Build and sign actual release package
+        shell: pwsh
+        run: |
+          ./tools/build_release_rehearsal.ps1 `
+            -Version '${{ steps.context.outputs.version }}' `
+            -RehearsalTag '${{ steps.context.outputs.rehearsal_tag }}' `
+            -Commit '${{ steps.context.outputs.commit }}' `
+            -ArtifactsDir artifacts `
+            -DistDir dist
+
+      - name: Export expected package manifest
+        id: manifest
+        shell: pwsh
+        run: |
+          $manifestPath = 'artifacts/rehearsal-expected-manifest.json'
+          if (-not (Test-Path $manifestPath -PathType Leaf)) { throw 'Expected package manifest is missing.' }
+          $manifestJson = Get-Content $manifestPath -Raw
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manifestJson))
+          "expected_manifest=$encoded" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Upload rehearsal package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-rehearsal-package
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/kaito.exe
+            dist/kaito-installer-*.exe
+            dist/kaito-sbom.cdx.json
+            dist/RELEASE-METADATA.json
+            dist/SHA256SUMS
+
+      - name: Upload rehearsal build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-rehearsal-build-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: artifacts/
+
+  verify-redownloaded-package:
+    needs: build-rehearsal-package
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download rehearsal package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: kaito-release-rehearsal-package
+          path: downloaded
+
+      - name: Verify redownloaded release package
+        shell: pwsh
+        run: |
+          ./tools/verify_release_rehearsal.ps1 `
+            -PackageDir downloaded `
+            -Version '${{ needs.build-rehearsal-package.outputs.version }}' `
+            -RehearsalTag '${{ needs.build-rehearsal-package.outputs.rehearsal_tag }}' `
+            -Commit '${{ needs.build-rehearsal-package.outputs.commit }}' `
+            -ExpectedManifestBase64 '${{ needs.build-rehearsal-package.outputs.expected_manifest }}' `
+            -ArtifactsDir artifacts
+
+      - name: Upload rehearsal verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-rehearsal-verification-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: artifacts/
