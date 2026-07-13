@@ -1,0 +1,177 @@
+name: Production signing canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type SIGN_CANARY_WITH_PRODUCTION_CERT exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-signing-canary
+  cancel-in-progress: false
+
+jobs:
+  sign-canary:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    env:
+      WINDOWS_SIGNING_MODE: required
+      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+
+    steps:
+      - name: Require explicit production-secret confirmation
+        shell: pwsh
+        run: |
+          if ('${{ inputs.confirmation }}' -cne 'SIGN_CANARY_WITH_PRODUCTION_CERT') {
+            throw 'Confirmation must be exactly SIGN_CANARY_WITH_PRODUCTION_CERT.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            throw 'The production Environment certificate secret is not configured.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw 'The production Environment certificate password is not configured.'
+          }
+          if ($env:WINDOWS_TIMESTAMP_URL -notmatch '^https://') {
+            throw 'WINDOWS_TIMESTAMP_URL must be an HTTPS timestamp service URL.'
+          }
+
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Create fresh unsigned canary executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          New-Item -ItemType Directory -Path canary -Force | Out-Null
+          $compilerCandidates = @(
+            (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'),
+            (Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe')
+          )
+          $compiler = $compilerCandidates |
+            Where-Object { Test-Path $_ -PathType Leaf } |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($compiler)) {
+            throw 'The .NET Framework C# compiler is unavailable.'
+          }
+          @'
+          internal static class KaitoProductionSigningCanary
+          {
+              private static int Main()
+              {
+                  return 0;
+              }
+          }
+          '@ | Set-Content canary/KaitoProductionSigningCanary.cs -Encoding utf8
+          & $compiler '/nologo' '/target:exe' '/out:canary/kaito-production-signing-canary.exe' canary/KaitoProductionSigningCanary.cs
+          if ($LASTEXITCODE -ne 0) { throw "Canary compilation failed: $LASTEXITCODE" }
+          $before = Get-AuthenticodeSignature canary/kaito-production-signing-canary.exe
+          if ($before.Status -ne 'NotSigned') {
+            throw "Fresh canary executable was unexpectedly signed: $($before.Status)"
+          }
+          [ordered]@{
+            schema_version = 1
+            sha256 = (Get-FileHash canary/kaito-production-signing-canary.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            authenticode_status = $before.Status.ToString()
+            created_at = [DateTimeOffset]::UtcNow.ToString('o')
+          } | ConvertTo-Json | Set-Content artifacts/canary-before-signing.json -Encoding utf8
+
+      - name: Sign canary with production certificate and timestamp
+        shell: pwsh
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode required `
+            -FilePath canary/kaito-production-signing-canary.exe `
+            -TimestampUrl $env:WINDOWS_TIMESTAMP_URL `
+            -VerificationMode strict `
+            -StatusPath artifacts/production-signing-status.json
+
+      - name: Independently verify trusted signature and identity
+        shell: pwsh
+        run: |
+          $path = 'canary/kaito-production-signing-canary.exe'
+          $statusRecord = Get-Content artifacts/production-signing-status.json -Raw | ConvertFrom-Json
+          if ($statusRecord.result -ne 'signed' -or $statusRecord.mode -ne 'required') {
+            throw 'Production signing status did not record a signed required-mode result.'
+          }
+          if ($statusRecord.timestamp_url -ne $env:WINDOWS_TIMESTAMP_URL) {
+            throw 'Production signing status does not record the required timestamp URL.'
+          }
+          if ($statusRecord.certificate.subject -eq 'CN=kaito CI signing test') {
+            throw 'The CI self-signed test certificate is forbidden in the production canary.'
+          }
+
+          $signatureResults = @(Get-AuthenticodeSignature -FilePath $path)
+          if ($signatureResults.Count -ne 1) {
+            throw "Authenticode returned $($signatureResults.Count) results; exactly one is required."
+          }
+          $signature = $signatureResults[0]
+          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+            throw "Production Authenticode verification failed: $($signature.Status)"
+          }
+          if (-not [string]::Equals(
+            $signature.SignerCertificate.Thumbprint,
+            [string]$statusRecord.certificate.thumbprint,
+            [System.StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw 'Production canary signer thumbprint does not match the signing status.'
+          }
+
+          $signToolRoot = "${env:ProgramFiles(x86)}/Windows Kits/10/bin"
+          $signTool = @(
+            (Join-Path $signToolRoot 'x64/signtool.exe'),
+            (Get-ChildItem $signToolRoot -Directory -ErrorAction SilentlyContinue |
+              ForEach-Object { Join-Path $_.FullName 'x64/signtool.exe' } |
+              Where-Object { Test-Path $_ -PathType Leaf })
+          ) | Where-Object { Test-Path $_ -PathType Leaf } | Sort-Object -Descending | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($signTool)) { throw 'SignTool was not found for independent verification.' }
+          $verifyLines = @(& $signTool verify /pa /all /v $path 2>&1)
+          $verifyExitCode = $LASTEXITCODE
+          $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
+          $verifyText | Set-Content artifacts/production-signtool-verify.txt -Encoding utf8
+          if ($verifyExitCode -ne 0) {
+            throw "Independent production SignTool verification failed: $verifyText"
+          }
+
+          [ordered]@{
+            schema_version = 1
+            result = 'passed'
+            authenticode_status = $signature.Status.ToString()
+            signer_subject = $signature.SignerCertificate.Subject
+            signer_issuer = $signature.SignerCertificate.Issuer
+            signer_thumbprint = $signature.SignerCertificate.Thumbprint
+            signer_not_before = $signature.SignerCertificate.NotBefore.ToUniversalTime().ToString('o')
+            signer_not_after = $signature.SignerCertificate.NotAfter.ToUniversalTime().ToString('o')
+            timestamp_url = $env:WINDOWS_TIMESTAMP_URL
+            signed_sha256 = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            verified_at = [DateTimeOffset]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 6 | Set-Content artifacts/production-canary-summary.json -Encoding utf8
+          $global:LASTEXITCODE = 0
+
+      - name: Remove signed binary before evidence upload
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item canary -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path canary/kaito-production-signing-canary.exe -PathType Leaf) {
+            throw 'The signed canary binary was not removed.'
+          }
+
+      - name: Upload metadata-only signing evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-production-signing-canary-evidence
+          retention-days: 14
+          if-no-files-found: error
+          path: artifacts/
