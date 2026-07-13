@@ -214,7 +214,9 @@ class ZipBackend:
             directory = stack.pop()
             try:
                 children = sorted(
-                    directory.iterdir(), key=lambda item: item.name.casefold(), reverse=True
+                    directory.iterdir(),
+                    key=lambda item: item.name.casefold(),
+                    reverse=True,
                 )
             except OSError as exc:
                 raise CompressionFailedError(
@@ -235,7 +237,9 @@ class ZipBackend:
         for source in sources:
             self._check_cancelled()
             if source.is_dir():
-                total += sum(1 for item in self._iter_source_items(source) if item.is_file())
+                total += sum(
+                    1 for item in self._iter_source_items(source) if item.is_file()
+                )
             else:
                 if is_reparse_or_link(source):
                     raise CompressionFailedError(

@@ -277,7 +277,9 @@ class ProductivityFeatures:
         app.after(1500, lambda: self.check_updates(True))
 
     def ask_password(self, archive_name: str) -> str | None:
-        return _ArchivePasswordDialog(self.app, archive_name, retry=False).get_password()
+        return _ArchivePasswordDialog(
+            self.app, archive_name, retry=False
+        ).get_password()
 
     def show_password_error(self, archive_name: str) -> str | None:
         return _ArchivePasswordDialog(self.app, archive_name, retry=True).get_password()
@@ -313,8 +315,15 @@ class ProductivityFeatures:
             )
 
     def _apply_safety_controls(self, enabled: bool = True) -> None:
-        blocked = self._safety_report is not None and not self._safety_report.can_extract
-        extraction_state = "normal" if enabled and not blocked else "disabled"
+        has_archive = self.app._current_archive_path is not None and bool(
+            self.app._entries
+        )
+        blocked = (
+            self._safety_report is not None and not self._safety_report.can_extract
+        )
+        extraction_state = (
+            "normal" if enabled and has_archive and not blocked else "disabled"
+        )
         self.app._extract_btn.configure(state=extraction_state)
         self._selected_button.configure(state=extraction_state)
 
@@ -365,7 +374,9 @@ class ProductivityFeatures:
         if not values or len(values) < 2:
             return
         entry_name = str(values[1])
-        entry = next((item for item in self.app._entries if item.name == entry_name), None)
+        entry = next(
+            (item for item in self.app._entries if item.name == entry_name), None
+        )
         if entry is None:
             return
 
