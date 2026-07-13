@@ -322,19 +322,70 @@ jobs:
           }
 
           $releaseMetadata = Get-Content (Join-Path $published 'RELEASE-METADATA.json') -Raw | ConvertFrom-Json
-          if ($releaseMetadata.version -ne $env:KAITO_VERSION -or $releaseMetadata.commit -ne $env:GITHUB_SHA) {
+          if (
+            $releaseMetadata.version -ne $env:KAITO_VERSION -or
+            $releaseMetadata.tag -ne $env:GITHUB_REF_NAME -or
+            $releaseMetadata.commit -ne $env:GITHUB_SHA
+          ) {
             throw 'Published release metadata does not match the tag target.'
           }
-          Get-Content (Join-Path $published 'kaito-sbom.cdx.json') -Raw | ConvertFrom-Json | Out-Null
+
+          $sbom = Get-Content (Join-Path $published 'kaito-sbom.cdx.json') -Raw | ConvertFrom-Json
+          if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.specVersion -ne '1.6') {
+            throw 'Published SBOM is not CycloneDX 1.6.'
+          }
+          $sbomRoot = $sbom.metadata.component
+          if ($sbomRoot.name -ne 'kaito' -or $sbomRoot.version -ne $env:KAITO_VERSION) {
+            throw 'Published SBOM root component does not match the release version.'
+          }
+          $sourceCommit = @($sbomRoot.properties | Where-Object { $_.name -eq 'kaito:source-commit' })
+          if ($sourceCommit.Count -ne 1 -or $sourceCommit[0].value -ne $env:GITHUB_SHA) {
+            throw 'Published SBOM source commit does not match the tag target.'
+          }
+
+          $sevenZip = @($sbom.components | Where-Object { $_.name -eq '7-Zip' -and $_.version -eq '26.02' })
+          if ($sevenZip.Count -ne 1) {
+            throw 'Published SBOM does not contain the expected bundled 7-Zip 26.02 component.'
+          }
+          Get-Content bundled/SHA256SUMS | ForEach-Object {
+            if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
+              $expectedHash = $Matches[1]
+              $bundledName = $Matches[2].Trim()
+              $propertyName = "kaito:bundled-file:${bundledName}:sha256"
+              $property = @($sevenZip[0].properties | Where-Object { $_.name -eq $propertyName })
+              if ($property.Count -ne 1 -or $property[0].value -ne $expectedHash) {
+                throw "Published SBOM checksum mismatch for bundled file: $bundledName"
+              }
+            }
+          }
 
           foreach ($binaryName in @('kaito.exe', "kaito-installer-$env:KAITO_VERSION.exe")) {
             $binaryPath = Join-Path $published $binaryName
             $signature = Get-AuthenticodeSignature $binaryPath
-            if ($releaseMetadata.signing.result -eq 'signed' -and $signature.Status -ne 'Valid') {
-              throw "Published signed asset failed Authenticode verification: $binaryName $($signature.Status)"
+            if ($releaseMetadata.signing.result -eq 'signed') {
+              if ($signature.Status -ne 'Valid') {
+                throw "Published signed asset failed Authenticode verification: $binaryName $($signature.Status)"
+              }
+              $expectedThumbprint = [string]$releaseMetadata.signing.certificate.thumbprint
+              if (
+                [string]::IsNullOrWhiteSpace($expectedThumbprint) -or
+                $null -eq $signature.SignerCertificate -or
+                -not [string]::Equals(
+                  $signature.SignerCertificate.Thumbprint,
+                  $expectedThumbprint,
+                  [System.StringComparison]::OrdinalIgnoreCase
+                )
+              ) {
+                throw "Published signed asset certificate does not match release metadata: $binaryName"
+              }
             }
-            if ($releaseMetadata.signing.result -eq 'unsigned' -and $signature.Status -ne 'NotSigned') {
-              throw "Published unsigned asset has an unexpected signature state: $binaryName $($signature.Status)"
+            elseif ($releaseMetadata.signing.result -eq 'unsigned') {
+              if ($signature.Status -ne 'NotSigned') {
+                throw "Published unsigned asset has an unexpected signature state: $binaryName $($signature.Status)"
+              }
+            }
+            else {
+              throw "Published release metadata has an unsupported signing result: $($releaseMetadata.signing.result)"
             }
           }
 
