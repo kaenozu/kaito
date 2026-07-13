@@ -71,6 +71,32 @@ function Get-SignTool {
     return $tool.FullName
 }
 
+function Protect-SigningPfx {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($null -eq $identity.User) {
+        throw 'Unable to determine the current Windows user SID for PFX protection.'
+    }
+    $sid = $identity.User.Value
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    if (-not (Test-Path $icacls -PathType Leaf)) {
+        throw "icacls.exe was not found: $icacls"
+    }
+
+    $aclOutput = @(
+        & $icacls $Path '/inheritance:r' '/grant:r' "*${sid}:F" '/Q' 2>&1
+    )
+    $aclExitCode = $LASTEXITCODE
+    if ($aclExitCode -ne 0) {
+        $details = ($aclOutput | ForEach-Object { $_.ToString() }) -join "`n"
+        throw "Unable to restrict the temporary signing PFX ACL (exit code ${aclExitCode}): $details"
+    }
+}
+
 $hasCertificate = -not [string]::IsNullOrWhiteSpace($CertificateBase64)
 $hasPassword = -not [string]::IsNullOrWhiteSpace($CertificatePassword)
 
@@ -127,7 +153,15 @@ try {
     if ($pfxBytes.Length -eq 0) {
         throw 'WINDOWS_CERTIFICATE_BASE64 decoded to an empty PFX file.'
     }
-    [IO.File]::WriteAllBytes($PfxPath, $pfxBytes)
+    try {
+        [IO.File]::WriteAllBytes($PfxPath, $pfxBytes)
+        Protect-SigningPfx -Path $PfxPath
+    }
+    finally {
+        if ($null -ne $pfxBytes) {
+            [Array]::Clear($pfxBytes, 0, $pfxBytes.Length)
+        }
+    }
 
     $collection = [System.Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()
     try {
@@ -194,6 +228,7 @@ try {
             reason = 'Signing certificate and SignTool validation succeeded.'
             certificate = $certificateInfo
             timestamp_url = $TimestampUrl
+            pfx_file_acl = 'current-user-only'
             files = @()
         }
         return
@@ -291,6 +326,7 @@ try {
         reason = 'All requested files were signed and verified.'
         certificate = $certificateInfo
         timestamp_url = $TimestampUrl
+        pfx_file_acl = 'current-user-only'
         files = $signedFiles
     }
 }
