@@ -11,6 +11,11 @@ New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
 $WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ('kaito-signing-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
 
+function Write-Phase {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    Write-Host "[signing-test] $Name"
+}
+
 function Invoke-ExpectedFailure {
     param(
         [Parameter(Mandatory = $true)]
@@ -36,6 +41,7 @@ function Invoke-ExpectedFailure {
 
 $createdThumbprint = $null
 try {
+    Write-Phase 'disabled mode ignores configured values'
     $ignoredSecret = [guid]::NewGuid().ToString('N')
     $disabledStatus = Join-Path $ArtifactsDir 'disabled.json'
     ./tools/sign_windows.ps1 `
@@ -49,6 +55,7 @@ try {
         throw 'Disabled signing mode did not produce the expected unsigned status.'
     }
 
+    Write-Phase 'optional mode permits no certificate'
     $optionalStatus = Join-Path $ArtifactsDir 'optional-unconfigured.json'
     ./tools/sign_windows.ps1 `
         -Mode optional `
@@ -61,6 +68,7 @@ try {
         throw 'Optional unconfigured signing mode did not produce the expected unsigned status.'
     }
 
+    Write-Phase 'reject incomplete, required-missing, and malformed configurations'
     Invoke-ExpectedFailure -MessagePattern 'configuration is incomplete' -Action {
         ./tools/sign_windows.ps1 -Mode optional -ValidateOnly -CertificateBase64 'Zm9v' -CertificatePassword ''
     }
@@ -72,6 +80,7 @@ try {
         ./tools/sign_windows.ps1 -Mode required -ValidateOnly -CertificateBase64 'not-base64' -CertificatePassword $malformedPfxSecret
     }
 
+    Write-Phase 'create ephemeral code-signing certificate'
     $passwordText = [Convert]::ToBase64String(
         [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24)
     )
@@ -87,6 +96,7 @@ try {
         -NotAfter (Get-Date).AddDays(2)
     $createdThumbprint = $certificate.Thumbprint
 
+    Write-Phase 'export PFX and trust test certificate'
     $pfxPath = Join-Path $WorkDir 'signing-test.pfx'
     $cerPath = Join-Path $WorkDir 'signing-test.cer'
     Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $securePassword | Out-Null
@@ -94,6 +104,7 @@ try {
     Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
     Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
 
+    Write-Phase 'validate eligible signing certificate'
     $certificateBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfxPath))
     $readyStatus = Join-Path $ArtifactsDir 'required-ready.json'
     ./tools/sign_windows.ps1 `
@@ -107,6 +118,7 @@ try {
         throw 'A valid test certificate did not pass signing preflight.'
     }
 
+    Write-Phase 'reject incorrect PFX password'
     $wrongPassword = [guid]::NewGuid().ToString('N')
     Invoke-ExpectedFailure -MessagePattern 'could not be opened' -Action {
         ./tools/sign_windows.ps1 `
@@ -116,6 +128,7 @@ try {
             -CertificatePassword $wrongPassword
     }
 
+    Write-Phase 'copy executable for destructive signing test'
     $sourceExecutable = Join-Path $PSHOME 'pwsh.exe'
     if (-not (Test-Path $sourceExecutable -PathType Leaf)) {
         $sourceExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -127,6 +140,7 @@ try {
     $testExecutable = Join-Path $WorkDir 'kaito-signing-test.exe'
     Copy-Item $sourceExecutable $testExecutable -Force
     $signedStatus = Join-Path $ArtifactsDir 'required-signed.json'
+    Write-Phase 'sign and verify executable'
     ./tools/sign_windows.ps1 `
         -Mode required `
         -FilePath $testExecutable `
@@ -139,6 +153,7 @@ try {
         throw 'The signing integration test did not produce a signed result.'
     }
 
+    Write-Phase 'all signing checks passed'
     @(
         'disabled: passed'
         'optional-unconfigured: passed'
@@ -151,6 +166,7 @@ try {
     ) | Set-Content (Join-Path $ArtifactsDir 'summary.txt') -Encoding utf8
 }
 finally {
+    Write-Phase 'cleanup test certificate and temporary files'
     if (-not [string]::IsNullOrWhiteSpace($createdThumbprint)) {
         foreach ($storeName in @('My', 'Root', 'TrustedPublisher')) {
             Get-ChildItem "Cert:\CurrentUser\$storeName\$createdThumbprint" -ErrorAction SilentlyContinue |
