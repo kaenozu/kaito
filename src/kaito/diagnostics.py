@@ -22,6 +22,13 @@ _PASSWORD_ARGUMENT = re.compile(
     r")"
     r"(?:\"[^\"]*\"|'[^']*'|\S+)"
 )
+_QUOTED_ABSOLUTE_PATH = re.compile(
+    r"(?P<quote>[\"'])"
+    r"(?:[A-Za-z]:[\\/]|/|\\\\|//|file://)"
+    r".*?"
+    r"(?P=quote)",
+    re.IGNORECASE,
+)
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 
 
@@ -103,6 +110,7 @@ def _sanitize_error(message: str) -> str:
     """Avoid copying likely file paths or command-line secrets into reports."""
     flattened = message.replace("\r", " ").replace("\n", " ")
     redacted = _PASSWORD_ARGUMENT.sub(_redact_password_argument, flattened)
+    redacted = _QUOTED_ABSOLUTE_PATH.sub("<path>", redacted)
     pieces = [
         "<path>" if _looks_like_absolute_path(token) else token
         for token in redacted.split()
