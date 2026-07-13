@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, "feature/**"]
+    branches: [master, "feature/**", "agent/**"]
   pull_request:
     branches: [master]
 
@@ -27,6 +27,9 @@ jobs:
 
       - name: Set up Python 3.12
         run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
 
       - name: Install locked dependencies
         run: uv sync --frozen
