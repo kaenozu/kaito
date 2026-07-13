@@ -14,6 +14,7 @@ APPROVAL_GATE_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "release-approval-gate.yml"
 )
 OPERATIONS_DOC_PATH = REPOSITORY_ROOT / "docs" / "RELEASE_OPERATIONS.md"
+SIGNING_AUTH_DOC_PATH = REPOSITORY_ROOT / "docs" / "PRODUCTION_SIGNING_AUTHORIZATION.md"
 
 
 def _text(path: Path) -> str:
@@ -62,13 +63,22 @@ def test_draft_release_roundtrip_is_manual_draft_only_and_self_cleaning() -> Non
     assert "WINDOWS_CERTIFICATE_PASSWORD" not in workflow
 
 
-def test_production_signing_canary_is_manual_read_only_and_metadata_only() -> None:
+def test_production_signing_canary_requires_consumed_independent_authorization() -> None:
     workflow = _text(PRODUCTION_CANARY_PATH)
 
     _assert_manual_only(workflow)
     _assert_actions_are_commit_pinned(workflow)
     assert "SIGN_CANARY_WITH_PRODUCTION_CERT" in workflow
-    assert "permissions:\n  contents: read" in workflow
+    assert "authorization_issue:" in workflow
+    assert "approval_comment_id:" in workflow
+    assert "target_commit:" in workflow
+    assert "nonce:" in workflow
+    assert "permissions: {}" in workflow
+    assert "name: authorize-independent-production-signing" in workflow
+    assert "issues: write" in workflow
+    assert "verify_production_signing_authorization.py" in workflow
+    assert "name: sign-production-canary-after-independent-authorization" in workflow
+    assert "needs: authorize-production-signing" in workflow
     assert "environment:\n      name: production" in workflow
     assert "WINDOWS_CERTIFICATE_BASE64" in workflow
     assert "WINDOWS_CERTIFICATE_PASSWORD" in workflow
@@ -82,6 +92,34 @@ def test_production_signing_canary_is_manual_read_only_and_metadata_only() -> No
     assert "gh release" not in workflow
     assert "git/refs/tags" not in workflow
     assert "contents: write" not in workflow
+
+    authorize_section, sign_section = workflow.split("  sign-canary:\n", 1)
+    assert "ref: ${{ github.sha }}" in authorize_section
+    assert "ref: ${{ inputs.target_commit }}" not in authorize_section
+    assert "WINDOWS_CERTIFICATE_BASE64" not in authorize_section
+    assert "WINDOWS_CERTIFICATE_PASSWORD" not in authorize_section
+    assert "issues: write" not in sign_section
+
+
+def test_production_authorization_is_fail_closed_and_single_use() -> None:
+    workflow = _text(PRODUCTION_CANARY_PATH)
+    authorization = _text(
+        REPOSITORY_ROOT / "tools" / "verify_production_signing_authorization.py"
+    )
+    documentation = _text(SIGNING_AUTH_DOC_PATH)
+
+    assert "KAITO_PRODUCTION_SIGNING_APPROVAL_V1" in authorization
+    assert "KAITO_PRODUCTION_SIGNING_AUTHORIZATION_CONSUMED_V1" in authorization
+    assert "WRITE_PERMISSIONS" in authorization
+    assert "independent_human_approver" in authorization
+    assert "approval_not_edited" in authorization
+    assert "approval_lifetime" in authorization
+    assert "authorization_not_consumed" in authorization
+    assert "target_is_current_default_head" in authorization
+    assert "issues/{expectation.issue_number}/comments" in authorization
+    assert "cancel-in-progress: false" in workflow
+    assert "30 minutes" in documentation
+    assert "current `master` HEAD" in documentation
 
 
 def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
@@ -105,14 +143,22 @@ def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
     assert "git/refs/tags" not in workflow
 
 
-def test_repository_protection_is_required_before_first_merge() -> None:
+def test_repository_protection_and_bootstrap_order_are_explicit() -> None:
     operations = _text(OPERATIONS_DOC_PATH)
 
     protection = operations.index("Protect `master` before merging PR #11")
     first_merge = operations.index("Merge PR #11")
     assert protection < first_merge
     assert "Do not substitute self-approval" in operations
-    assert "required reviewers are unavailable" in operations
+    assert "Required Reviewers are unavailable" in operations
+    assert "explicit bootstrap set" in operations
+    assert "PR #11, PR #12, and PR #15" in operations
+    assert "verify-windows" in operations
+    assert "signing-and-sbom" in operations
+    assert "build-rehearsal-package" in operations
+    assert "verify-redownloaded-package" in operations
+    assert "workflow_dispatch" in operations
+    assert "default branch" in operations
 
 
 def test_operational_workflows_use_distinct_concurrency_groups() -> None:
