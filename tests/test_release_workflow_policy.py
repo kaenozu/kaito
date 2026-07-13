@@ -18,7 +18,9 @@ def test_release_workflow_refuses_public_release_replay() -> None:
     upload_guard = workflow.index(
         "- name: Reconfirm Release is absent or still draft before asset upload"
     )
-    release_action = workflow.index("- name: Create draft GitHub Release with verified assets")
+    release_action = workflow.index(
+        "- name: Create draft GitHub Release with verified assets"
+    )
     post_upload_guard = workflow.index(
         "- name: Confirm Release remains draft before verification"
     )
@@ -35,7 +37,9 @@ def test_release_workflow_refuses_public_release_replay() -> None:
 
 def test_release_workflow_rechecks_master_and_release_identity_before_publish() -> None:
     workflow = _workflow_text()
-    publication = workflow.split("- name: Publish verified GitHub Release", maxsplit=1)[1]
+    publication = workflow.split("- name: Publish verified GitHub Release", maxsplit=1)[
+        1
+    ]
 
     master_lookup = publication.index("git/ref/heads/master")
     release_lookup = publication.index("releases/tags/$env:GITHUB_REF_NAME")
