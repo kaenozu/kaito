@@ -6,15 +6,18 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-approval-gate.yml"
       - ".github/workflows/release-draft-roundtrip.yml"
       - ".github/workflows/production-signing-canary.yml"
       - "docs/RELEASE_OPERATIONS.md"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
+      - "tools/verify_pr_approval_gate.py"
       - "tools/verify_release_package.ps1"
       - "tools/test_verify_release_package.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_pr_approval_gate.py"
       - "tests/test_release_workflow_policy.py"
       - "tests/test_release_verifier_policy.py"
       - "tests/test_release_operations_policy.py"
@@ -23,15 +26,18 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-approval-gate.yml"
       - ".github/workflows/release-draft-roundtrip.yml"
       - ".github/workflows/production-signing-canary.yml"
       - "docs/RELEASE_OPERATIONS.md"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
+      - "tools/verify_pr_approval_gate.py"
       - "tools/verify_release_package.ps1"
       - "tools/test_verify_release_package.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_pr_approval_gate.py"
       - "tests/test_release_workflow_policy.py"
       - "tests/test_release_verifier_policy.py"
       - "tests/test_release_operations_policy.py"
@@ -89,6 +95,7 @@ jobs:
         run: |
           uv run --frozen pytest -q `
             tests/test_generate_sbom.py `
+            tests/test_pr_approval_gate.py `
             tests/test_release_workflow_policy.py `
             tests/test_release_verifier_policy.py `
             tests/test_release_operations_policy.py
