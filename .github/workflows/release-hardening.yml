@@ -6,6 +6,9 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-draft-roundtrip.yml"
+      - ".github/workflows/production-signing-canary.yml"
+      - "docs/RELEASE_OPERATIONS.md"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/verify_release_package.ps1"
@@ -14,11 +17,15 @@ on:
       - "tests/test_generate_sbom.py"
       - "tests/test_release_workflow_policy.py"
       - "tests/test_release_verifier_policy.py"
+      - "tests/test_release_operations_policy.py"
   push:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-draft-roundtrip.yml"
+      - ".github/workflows/production-signing-canary.yml"
+      - "docs/RELEASE_OPERATIONS.md"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/verify_release_package.ps1"
@@ -27,6 +34,7 @@ on:
       - "tests/test_generate_sbom.py"
       - "tests/test_release_workflow_policy.py"
       - "tests/test_release_verifier_policy.py"
+      - "tests/test_release_operations_policy.py"
 
 permissions:
   contents: read
@@ -82,7 +90,8 @@ jobs:
           uv run --frozen pytest -q `
             tests/test_generate_sbom.py `
             tests/test_release_workflow_policy.py `
-            tests/test_release_verifier_policy.py
+            tests/test_release_verifier_policy.py `
+            tests/test_release_operations_policy.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --frozen python tools/generate_sbom.py `
             --repository-root . `
