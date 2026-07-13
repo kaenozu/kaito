@@ -10,6 +10,10 @@ ROUNDTRIP_PATH = (
 PRODUCTION_CANARY_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "production-signing-canary.yml"
 )
+APPROVAL_GATE_PATH = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "release-approval-gate.yml"
+)
+OPERATIONS_DOC_PATH = REPOSITORY_ROOT / "docs" / "RELEASE_OPERATIONS.md"
 
 
 def _text(path: Path) -> str:
@@ -80,11 +84,45 @@ def test_production_signing_canary_is_manual_read_only_and_metadata_only() -> No
     assert "contents: write" not in workflow
 
 
-def test_roundtrip_and_production_canary_use_distinct_concurrency_groups() -> None:
+def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
+    workflow = _text(APPROVAL_GATE_PATH)
+
+    _assert_manual_only(workflow)
+    _assert_actions_are_commit_pinned(workflow)
+    assert "VERIFY_FIXED_PR_GATE" in workflow
+    assert (
+        "permissions:\n  actions: read\n  contents: read\n  pull-requests: read"
+        in workflow
+    )
+    assert "--expected-head" in workflow
+    assert "--expected-base-sha" in workflow
+    assert "--expected-files" in workflow
+    assert "--required-workflows" in workflow
+    assert "contents: write" not in workflow
+    assert "issues: write" not in workflow
+    assert "pull-requests: write" not in workflow
+    assert "gh release" not in workflow
+    assert "git/refs/tags" not in workflow
+
+
+def test_repository_protection_is_required_before_first_merge() -> None:
+    operations = _text(OPERATIONS_DOC_PATH)
+
+    protection = operations.index("Protect `master` before merging PR #11")
+    first_merge = operations.index("Merge PR #11")
+    assert protection < first_merge
+    assert "Do not substitute self-approval" in operations
+    assert "required reviewers are unavailable" in operations
+
+
+def test_operational_workflows_use_distinct_concurrency_groups() -> None:
     roundtrip = _text(ROUNDTRIP_PATH)
     production = _text(PRODUCTION_CANARY_PATH)
+    approval = _text(APPROVAL_GATE_PATH)
 
     assert "group: draft-release-roundtrip" in roundtrip
     assert "group: production-signing-canary" in production
+    assert "group: release-pr-approval-gate-${{ inputs.pr_number }}" in approval
     assert "cancel-in-progress: false" in roundtrip
     assert "cancel-in-progress: false" in production
+    assert "cancel-in-progress: false" in approval
