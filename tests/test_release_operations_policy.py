@@ -63,7 +63,9 @@ def test_draft_release_roundtrip_is_manual_draft_only_and_self_cleaning() -> Non
     assert "WINDOWS_CERTIFICATE_PASSWORD" not in workflow
 
 
-def test_production_signing_canary_requires_consumed_independent_authorization() -> None:
+def test_production_signing_canary_requires_consumed_independent_authorization() -> (
+    None
+):
     workflow = _text(PRODUCTION_CANARY_PATH)
 
     _assert_manual_only(workflow)
