@@ -171,6 +171,9 @@ internal static class SigningTestProgram
         -TimestampUrl '' `
         -StatusPath $signedStatus `
         -VerificationMode test-untrusted
+    if ($LASTEXITCODE -ne 0) {
+        throw "Successful test-untrusted signing leaked a native exit code: $LASTEXITCODE"
+    }
     $signed = Get-Content $signedStatus -Raw | ConvertFrom-Json
     if ($signed.result -ne 'signed' -or $signed.files.Count -ne 1) {
         throw 'The signing integration test did not produce a signed result.'
@@ -214,6 +217,7 @@ internal static class SigningTestProgram
         'wrong-password: rejected'
         'fresh-unsigned-pe: passed'
         'sign-and-verify: passed'
+        'successful-exit-code: passed'
         'embedded-signer-thumbprint: passed'
         'trust-store-modification: not required'
     ) | Set-Content (Join-Path $ArtifactsDir 'summary.txt') -Encoding utf8
