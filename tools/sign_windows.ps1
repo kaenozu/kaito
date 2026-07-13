@@ -37,8 +37,26 @@ function Write-SigningStatus {
 
 function Get-SignTool {
     $root = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
-    $tool = Get-ChildItem $root -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+    if (-not (Test-Path $root -PathType Container)) {
+        throw "Windows SDK bin directory was not found: $root"
+    }
+
+    $candidates = @()
+    $direct = Join-Path $root 'x64\signtool.exe'
+    if (Test-Path $direct -PathType Leaf) {
+        $candidates += Get-Item $direct
+    }
+    $candidates += @(
+        Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $candidate = Join-Path $_.FullName 'x64\signtool.exe'
+                if (Test-Path $candidate -PathType Leaf) {
+                    Get-Item $candidate
+                }
+            }
+    )
+
+    $tool = $candidates |
         Sort-Object FullName -Descending |
         Select-Object -First 1
     if ($null -eq $tool) {
