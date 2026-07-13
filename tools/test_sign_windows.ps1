@@ -40,6 +40,8 @@ function Invoke-ExpectedFailure {
 }
 
 $createdThumbprint = $null
+$previousSigningTestFlag = $env:KAITO_SIGNING_TEST
+$env:KAITO_SIGNING_TEST = '1'
 try {
     Write-Phase 'disabled mode ignores configured values'
     $ignoredSecret = [guid]::NewGuid().ToString('N')
@@ -96,25 +98,11 @@ try {
         -NotAfter (Get-Date).AddDays(2)
     $createdThumbprint = $certificate.Thumbprint
 
-    Write-Phase 'export PFX and trust test certificate'
+    Write-Phase 'export PFX without modifying trust stores'
     $pfxPath = Join-Path $WorkDir 'signing-test.pfx'
-    $cerPath = Join-Path $WorkDir 'signing-test.cer'
-
     Write-Phase 'before Export-PfxCertificate'
     Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $securePassword | Out-Null
     Write-Phase 'after Export-PfxCertificate'
-
-    Write-Phase 'before Export-Certificate'
-    Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
-    Write-Phase 'after Export-Certificate'
-
-    Write-Phase 'before CurrentUser\Root import'
-    Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-    Write-Phase 'after CurrentUser\Root import'
-
-    Write-Phase 'before CurrentUser\TrustedPublisher import'
-    Import-Certificate -FilePath $cerPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
-    Write-Phase 'after CurrentUser\TrustedPublisher import'
 
     Write-Phase 'validate eligible signing certificate'
     $certificateBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfxPath))
@@ -152,17 +140,44 @@ try {
     $testExecutable = Join-Path $WorkDir 'kaito-signing-test.exe'
     Copy-Item $sourceExecutable $testExecutable -Force
     $signedStatus = Join-Path $ArtifactsDir 'required-signed.json'
-    Write-Phase 'sign and verify executable'
+    Write-Phase 'sign and verify embedded signature without trusting the test root'
     ./tools/sign_windows.ps1 `
         -Mode required `
         -FilePath $testExecutable `
         -CertificateBase64 $certificateBase64 `
         -CertificatePassword $passwordText `
         -TimestampUrl '' `
-        -StatusPath $signedStatus
+        -StatusPath $signedStatus `
+        -VerificationMode test-untrusted
     $signed = Get-Content $signedStatus -Raw | ConvertFrom-Json
     if ($signed.result -ne 'signed' -or $signed.files.Count -ne 1) {
         throw 'The signing integration test did not produce a signed result.'
+    }
+    if (
+        -not [string]::Equals(
+            [string]$signed.certificate.thumbprint,
+            $createdThumbprint,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw 'The signed status certificate does not match the generated test certificate.'
+    }
+
+    Write-Phase 'independently confirm embedded signer identity'
+    $embeddedSignature = Get-AuthenticodeSignature $testExecutable
+    $embeddedStatus = $embeddedSignature.Status.ToString()
+    if ($embeddedStatus -notin @('Valid', 'NotTrusted')) {
+        throw "The independently inspected Authenticode signature is invalid: $embeddedStatus"
+    }
+    if (
+        $null -eq $embeddedSignature.SignerCertificate -or
+        -not [string]::Equals(
+            $embeddedSignature.SignerCertificate.Thumbprint,
+            $createdThumbprint,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw 'The independently inspected signer certificate does not match the generated test certificate.'
     }
 
     Write-Phase 'all signing checks passed'
@@ -175,15 +190,16 @@ try {
         'valid-certificate-preflight: passed'
         'wrong-password: rejected'
         'sign-and-verify: passed'
+        'embedded-signer-thumbprint: passed'
+        'trust-store-modification: not required'
     ) | Set-Content (Join-Path $ArtifactsDir 'summary.txt') -Encoding utf8
 }
 finally {
     Write-Phase 'cleanup test certificate and temporary files'
+    $env:KAITO_SIGNING_TEST = $previousSigningTestFlag
     if (-not [string]::IsNullOrWhiteSpace($createdThumbprint)) {
-        foreach ($storeName in @('My', 'Root', 'TrustedPublisher')) {
-            Get-ChildItem "Cert:\CurrentUser\$storeName\$createdThumbprint" -ErrorAction SilentlyContinue |
-                Remove-Item -Force -ErrorAction SilentlyContinue
-        }
+        Get-ChildItem "Cert:\CurrentUser\My\$createdThumbprint" -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
     }
     Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 }
