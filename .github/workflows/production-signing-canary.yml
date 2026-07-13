@@ -129,23 +129,22 @@ jobs:
     environment:
       name: production
     env:
-      WINDOWS_SIGNING_MODE: required
-      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
 
     steps:
-      - name: Require configured production signing material
+      - name: Reconfirm authorized commit remains current master HEAD
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_COMMIT: ${{ needs.authorize-production-signing.outputs.target_commit }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            throw 'The production Environment certificate secret is not configured.'
+          $masterCommit = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($masterCommit)) {
+            throw "Unable to inspect master before production signing: $LASTEXITCODE"
           }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
-            throw 'The production Environment certificate password is not configured.'
-          }
-          if ($env:WINDOWS_TIMESTAMP_URL -notmatch '^https://') {
-            throw 'WINDOWS_TIMESTAMP_URL must be an HTTPS timestamp service URL.'
+          $masterCommit = $masterCommit.Trim()
+          if ($masterCommit -ne $env:TARGET_COMMIT) {
+            throw "master advanced after authorization; refusing production signing: approved=$env:TARGET_COMMIT current=$masterCommit"
           }
 
       - name: Check out exact independently authorized commit
@@ -213,7 +212,20 @@ jobs:
 
       - name: Sign canary with production certificate and timestamp
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_MODE: required
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            throw 'The production Environment certificate secret is not configured.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw 'The production Environment certificate password is not configured.'
+          }
+          if ($env:WINDOWS_TIMESTAMP_URL -notmatch '^https://') {
+            throw 'WINDOWS_TIMESTAMP_URL must be an HTTPS timestamp service URL.'
+          }
           ./tools/sign_windows.ps1 `
             -Mode required `
             -FilePath canary/kaito-production-signing-canary.exe `
