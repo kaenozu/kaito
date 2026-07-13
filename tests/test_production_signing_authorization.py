@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
-from datetime import UTC, datetime, timedelta
+import urllib.error
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+UTC = timezone.utc
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "tools"
@@ -22,6 +27,7 @@ SPEC.loader.exec_module(MODULE)
 APPROVAL_MARKER = MODULE.APPROVAL_MARKER
 CONSUMED_MARKER = MODULE.CONSUMED_MARKER
 Expectation = MODULE.Expectation
+GitHubApi = MODULE.GitHubApi
 evaluate_snapshot = MODULE.evaluate_snapshot
 overall_status = MODULE.overall_status
 
@@ -163,3 +169,50 @@ def test_non_default_branch_target_fails() -> None:
     statuses = _statuses(snapshot)
 
     assert statuses["target_is_current_default_head"] == "FAIL"
+
+
+def test_missing_snapshot_values_fail_without_exception() -> None:
+    checks = evaluate_snapshot({}, _expectation(), now=NOW)
+
+    assert overall_status(checks) == "FAIL"
+    statuses = {check.name: check.status for check in checks}
+    assert statuses["authorization_issue"] == "FAIL"
+    assert statuses["approver_permission"] == "FAIL"
+    assert statuses["target_commit_exists"] == "FAIL"
+
+
+def test_allow_404_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = urllib.error.HTTPError(
+        "https://api.github.test/missing",
+        404,
+        "Not Found",
+        hdrs=None,
+        fp=io.BytesIO(b'{"message":"Not Found"}'),
+    )
+
+    def raise_404(*_args: Any, **_kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(MODULE.urllib.request, "urlopen", raise_404)
+    api = GitHubApi(token="test-token", api_url="https://api.github.test")
+
+    assert api.get("missing", allow_404=True) is None
+
+
+def test_non_404_remains_operational_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = urllib.error.HTTPError(
+        "https://api.github.test/failure",
+        500,
+        "Server Error",
+        hdrs=None,
+        fp=io.BytesIO(b'{"message":"failure"}'),
+    )
+
+    def raise_500(*_args: Any, **_kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(MODULE.urllib.request, "urlopen", raise_500)
+    api = GitHubApi(token="test-token", api_url="https://api.github.test")
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        api.get("failure", allow_404=True)
