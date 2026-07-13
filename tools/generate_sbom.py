@@ -75,18 +75,45 @@ def _component_for_distribution(distribution: metadata.Distribution) -> dict[str
 
 def _bundled_backend_component(repository_root: Path) -> dict[str, Any]:
     checksum_path = repository_root / "bundled" / "SHA256SUMS"
-    properties = []
+    properties: list[dict[str, str]] = []
+    seen_filenames: set[str] = set()
     pattern = re.compile(r"^([0-9a-fA-F]{64})\s+(.+)$")
-    for line in checksum_path.read_text(encoding="utf-8").splitlines():
-        match = pattern.match(line.strip())
-        if match:
-            digest, filename = match.groups()
-            properties.append(
-                {
-                    "name": f"kaito:bundled-file:{filename}:sha256",
-                    "value": digest.lower(),
-                }
+    lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise RuntimeError("bundled/SHA256SUMS contains no checksum entries.")
+
+    for line_number, line in enumerate(lines, start=1):
+        match = pattern.fullmatch(line.strip())
+        if match is None:
+            raise RuntimeError(
+                f"Invalid bundled checksum line {line_number}: {line!r}"
             )
+        digest, filename = match.groups()
+        filename = filename.strip()
+        if not filename:
+            raise RuntimeError(
+                f"Bundled checksum filename is empty on line {line_number}."
+            )
+        if filename in seen_filenames:
+            raise RuntimeError(f"Duplicate bundled checksum entry: {filename}")
+        seen_filenames.add(filename)
+
+        bundled_path = repository_root / "bundled" / filename
+        if not bundled_path.is_file():
+            raise RuntimeError(f"Bundled file is missing: {bundled_path}")
+        expected_digest = digest.lower()
+        actual_digest = hashlib.sha256(bundled_path.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                f"Bundled file checksum mismatch for {filename}: {actual_digest}"
+            )
+        properties.append(
+            {
+                "name": f"kaito:bundled-file:{filename}:sha256",
+                "value": expected_digest,
+            }
+        )
+
     return {
         "type": "application",
         "bom-ref": "pkg:generic/7-Zip@26.02",
