@@ -99,7 +99,7 @@ jobs:
             echo '## ruff format check'
             uv run --frozen ruff format --check .
             echo '## pyright'
-            uv run --frozen pyright
+            uv run --frozen pyright --pythonplatform Windows
             echo '## pytest'
             uv run --frozen pytest -ra
           } 2>&1 | tee artifacts/personal-app-cleanup/validation.log
