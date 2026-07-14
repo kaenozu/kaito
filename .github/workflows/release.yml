@@ -62,28 +62,29 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 
-      - name: Reject an existing public Release
+      - name: Require immutable create-only Release policy
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_IMMUTABILITY_ENABLED: ${{ vars.RELEASE_IMMUTABILITY_ENABLED }}
         run: |
+          if ($env:RELEASE_IMMUTABILITY_ENABLED -cne 'true') {
+            throw 'Release immutability must be enabled in repository settings and RELEASE_IMMUTABILITY_ENABLED must be set to true before a stable tag is created.'
+          }
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
             Accept = 'application/vnd.github+json'
             'X-GitHub-Api-Version' = '2022-11-28'
           }
           $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
-          $existing = $null
           try {
             $existing = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+            throw "Release $env:GITHUB_REF_NAME already exists with id $($existing.id). Stable release workflows are create-only and never reuse an existing Draft or public Release."
           }
           catch {
             if ($null -eq $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) {
               throw
             }
-          }
-          if ($null -ne $existing -and -not [bool]$existing.draft) {
-            throw "Release $env:GITHUB_REF_NAME is already public. Refusing to overwrite public assets during a workflow re-run."
           }
 
       - name: Validate Windows signing configuration
@@ -308,7 +309,7 @@ jobs:
             dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Reconfirm Release is absent or still draft before asset upload
+      - name: Reconfirm Release absence before create-only Draft creation
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -319,59 +320,196 @@ jobs:
             'X-GitHub-Api-Version' = '2022-11-28'
           }
           $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
-          $existing = $null
           try {
             $existing = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+            throw "Release $env:GITHUB_REF_NAME appeared before Draft creation with id $($existing.id). Refusing to reuse it."
           }
           catch {
             if ($null -eq $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) {
               throw
             }
           }
-          if ($null -ne $existing -and -not [bool]$existing.draft) {
-            throw "Release $env:GITHUB_REF_NAME became public before asset upload. Refusing to overwrite public assets."
-          }
 
-      - name: Create draft GitHub Release with verified assets
-        id: draft_release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          name: kaito v${{ env.KAITO_VERSION }}
-          draft: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          preserve_order: true
-          overwrite_files: true
-          files: |
-            dist/kaito.exe
-            dist/kaito-installer-*.exe
-            dist/kaito-sbom.cdx.json
-            dist/RELEASE-METADATA.json
-            dist/SHA256SUMS
-
-      - name: Confirm Release remains draft before verification
+      - name: Create a new Draft Release and upload assets by Release ID
+        id: create_draft_release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
-          if ($LASTEXITCODE -ne 0) { throw "Unable to inspect draft Release: $LASTEXITCODE" }
-          $release = $releaseJson | ConvertFrom-Json
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $installerPaths = @(Resolve-Path 'dist/kaito-installer-*.exe' | ForEach-Object { $_.Path })
+          if ($installerPaths.Count -ne 1) {
+            throw "Expected exactly one installer asset, found $($installerPaths.Count)."
+          }
+          $assetItems = @(
+            Get-Item (Resolve-Path 'dist/kaito.exe').Path
+            Get-Item $installerPaths[0]
+            Get-Item (Resolve-Path 'dist/kaito-sbom.cdx.json').Path
+            Get-Item (Resolve-Path 'dist/RELEASE-METADATA.json').Path
+            Get-Item (Resolve-Path 'dist/SHA256SUMS').Path
+          )
+          $expectedNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $actualNames = @($assetItems | ForEach-Object { $_.Name } | Sort-Object)
+          $assetDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($assetDifference.Count -gt 0) {
+            throw "Local Release asset set is incorrect: $($assetDifference | Out-String)"
+          }
+
+          $createUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases"
+          $createBody = @{
+            tag_name = $env:GITHUB_REF_NAME
+            target_commitish = $env:GITHUB_SHA
+            name = "kaito v$env:KAITO_VERSION"
+            draft = $true
+            prerelease = $false
+            generate_release_notes = $true
+          } | ConvertTo-Json
+          try {
+            $created = Invoke-RestMethod -Method Post -Uri $createUri -Headers $headers -ContentType 'application/json' -Body $createBody
+          }
+          catch {
+            throw "Create-only Draft Release request failed. An existing or concurrently created Release is never reused. $($_.Exception.Message)"
+          }
+          $releaseId = [string]$created.id
+          if (
+            [string]::IsNullOrWhiteSpace($releaseId) -or
+            -not [bool]$created.draft -or
+            [string]$created.tag_name -ne $env:GITHUB_REF_NAME -or
+            [string]$created.target_commitish -ne $env:GITHUB_SHA
+          ) {
+            throw 'Create Release API returned an unexpected Draft Release identity.'
+          }
+          "release_id=$releaseId" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          $uploadedNames = @()
+          foreach ($asset in $assetItems) {
+            $currentUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+            $current = Invoke-RestMethod -Method Get -Uri $currentUri -Headers $headers
+            if (
+              [string]$current.id -ne $releaseId -or
+              -not [bool]$current.draft -or
+              [string]$current.tag_name -ne $env:GITHUB_REF_NAME -or
+              [string]$current.target_commitish -ne $env:GITHUB_SHA
+            ) {
+              throw "Draft Release identity or state changed before uploading $($asset.Name)."
+            }
+            $currentNames = @($current.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+            $expectedCurrentNames = @($uploadedNames | Sort-Object)
+            $currentDifference = @(Compare-Object -ReferenceObject $expectedCurrentNames -DifferenceObject $currentNames)
+            if ($currentDifference.Count -gt 0) {
+              throw "Draft Release assets changed outside this workflow before uploading $($asset.Name): $($currentDifference | Out-String)"
+            }
+            $uploadBase = ([string]$current.upload_url).Split('{')[0]
+            if ([string]::IsNullOrWhiteSpace($uploadBase)) {
+              throw 'Draft Release upload URL is missing.'
+            }
+            $uploadUri = "${uploadBase}?name=$([Uri]::EscapeDataString($asset.Name))"
+            $uploaded = Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType 'application/octet-stream' -InFile $asset.FullName
+            if ([string]$uploaded.name -ne $asset.Name) {
+              throw "Uploaded asset identity mismatch: expected=$($asset.Name) actual=$($uploaded.name)"
+            }
+            $uploadedNames += $asset.Name
+          }
+
+          $finalUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+          $final = Invoke-RestMethod -Method Get -Uri $finalUri -Headers $headers
+          $finalNames = @($final.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $finalDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $finalNames)
+          if (
+            [string]$final.id -ne $releaseId -or
+            -not [bool]$final.draft -or
+            [string]$final.tag_name -ne $env:GITHUB_REF_NAME -or
+            [string]$final.target_commitish -ne $env:GITHUB_SHA -or
+            $finalDifference.Count -gt 0
+          ) {
+            throw 'Draft Release identity, state, or exact asset set changed after upload.'
+          }
+          [ordered]@{
+            schema_version = 1
+            release_id = $releaseId
+            tag = $final.tag_name
+            target_commitish = $final.target_commitish
+            draft = [bool]$final.draft
+            assets = @($final.assets | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size } })
+          } | ConvertTo-Json -Depth 6 | Set-Content artifacts/draft-release-created.json -Encoding utf8
+
+      - name: Confirm Release remains the same Draft before verification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $release = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -Headers $headers
           if (-not [bool]$release.draft) { throw 'Release became public before publication verification completed.' }
-          if ([string]$release.id -ne '${{ steps.draft_release.outputs.id }}') {
-            throw "Release identity changed unexpectedly: api=$($release.id) action=${{ steps.draft_release.outputs.id }}"
+          if (
+            [string]$release.id -ne $releaseId -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME -or
+            [string]$release.target_commitish -ne $env:GITHUB_SHA
+          ) {
+            throw 'Release identity changed unexpectedly before verification.'
           }
 
-      - name: Redownload and verify draft Release assets
+      - name: Redownload and verify Draft Release assets by Release ID
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $release = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -Headers $headers
+          if (
+            [string]$release.id -ne $releaseId -or
+            -not [bool]$release.draft -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME -or
+            [string]$release.target_commitish -ne $env:GITHUB_SHA
+          ) {
+            throw 'Draft Release identity or state changed before redownload.'
+          }
+          $expectedReleaseNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $releaseNames = @($release.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $releaseDifference = @(Compare-Object -ReferenceObject $expectedReleaseNames -DifferenceObject $releaseNames)
+          if ($releaseDifference.Count -gt 0) {
+            throw "Draft Release asset set changed before redownload: $($releaseDifference | Out-String)"
+          }
+
           $published = Join-Path $env:RUNNER_TEMP 'kaito-published-assets'
           Remove-Item $published -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $published -Force | Out-Null
-          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir $published
-          if ($LASTEXITCODE -ne 0) { throw "Unable to download draft release assets: $LASTEXITCODE" }
+          foreach ($asset in @($release.assets)) {
+            $assetHeaders = @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            }
+            $assetUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
+            $destination = Join-Path $published ([string]$asset.name)
+            Invoke-WebRequest -Method Get -Uri $assetUri -Headers $assetHeaders -OutFile $destination
+          }
 
           $localSums = (Get-FileHash 'dist/SHA256SUMS' -Algorithm SHA256).Hash.ToLowerInvariant()
           $publishedSumsPath = Join-Path $published 'SHA256SUMS'
@@ -510,33 +648,67 @@ jobs:
         with:
           name: kaito-release-publication-evidence
           path: |
+            artifacts/draft-release-created.json
             artifacts/published-sha256.txt
             dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Publish verified GitHub Release
+      - name: Publish verified immutable GitHub Release by Release ID
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $masterCommit = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha'
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($masterCommit)) {
-            throw "Unable to inspect master immediately before publication: $LASTEXITCODE"
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
           }
-          $masterCommit = $masterCommit.Trim()
-          if ($env:GITHUB_SHA -ne $masterCommit) {
-            throw "master advanced after release verification; leaving the Release in draft state: tag=$env:GITHUB_SHA master=$masterCommit"
+          $masterCommit = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" -Headers $headers
+          $masterSha = [string]$masterCommit.object.sha
+          if ([string]::IsNullOrWhiteSpace($masterSha)) {
+            throw 'Unable to inspect master immediately before publication.'
+          }
+          if ($env:GITHUB_SHA -ne $masterSha) {
+            throw "master advanced after release verification; leaving the Release in draft state: tag=$env:GITHUB_SHA master=$masterSha"
           }
 
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
-          if ($LASTEXITCODE -ne 0) { throw "Unable to inspect draft Release before publication: $LASTEXITCODE" }
-          $release = $releaseJson | ConvertFrom-Json
-          if (-not [bool]$release.draft) { throw 'Release is no longer a draft immediately before publication.' }
-          if ([string]$release.id -ne '${{ steps.draft_release.outputs.id }}') {
-            throw 'Release identity changed before publication.'
+          $releaseUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+          $release = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+          if (
+            [string]$release.id -ne $releaseId -or
+            -not [bool]$release.draft -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME -or
+            [string]$release.target_commitish -ne $env:GITHUB_SHA
+          ) {
+            throw 'Release identity or Draft state changed immediately before publication.'
           }
-          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
-          if ($LASTEXITCODE -ne 0) { throw "Unable to publish verified release: $LASTEXITCODE" }
+          $expectedNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $actualNames = @($release.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $assetDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($assetDifference.Count -gt 0) {
+            throw "Release assets changed immediately before publication: $($assetDifference | Out-String)"
+          }
+
+          $publishBody = @{ draft = $false } | ConvertTo-Json
+          $published = Invoke-RestMethod -Method Patch -Uri $releaseUri -Headers $headers -ContentType 'application/json' -Body $publishBody
+          if (
+            [string]$published.id -ne $releaseId -or
+            [bool]$published.draft -or
+            [string]$published.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Published Release identity or state is incorrect.'
+          }
+          $confirmed = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+          if ($null -eq $confirmed.PSObject.Properties['immutable'] -or -not [bool]$confirmed.immutable) {
+            throw 'The Release was published but GitHub did not report it as immutable. Treat this as a repository-settings failure.'
+          }
 
       - name: Record completed release
         continue-on-error: true
@@ -550,7 +722,7 @@ jobs:
           $body = @"
           ## v$env:KAITO_VERSION release completed
 
-          Stable tag and GitHub Release were published after the assets were downloaded again and verified.
+          A create-only Draft Release was uploaded and verified by immutable Release ID, then published after GitHub Release immutability had been explicitly required.
 
           Signing mode: ``$($releaseMetadata.signing.mode)``
           Signing result: ``$($releaseMetadata.signing.result)``
@@ -574,7 +746,7 @@ jobs:
           $body = @"
           ## v$env:KAITO_VERSION release workflow failed
 
-          The release was not promoted from draft to public by this workflow. Existing public releases are never overwritten, and existing tags are never moved or reused.
+          Existing Draft or public Releases are never reused, existing assets are never deleted or overwritten, and every post-creation operation is pinned to the Release ID returned by the create request.
 
           Signing mode: ``$env:WINDOWS_SIGNING_MODE``
           Workflow: $runUrl
