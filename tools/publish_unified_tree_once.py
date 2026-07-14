@@ -11,7 +11,6 @@ from typing import Any
 
 REPOSITORY = os.environ["GITHUB_REPOSITORY"]
 BRANCH = "agent/unified-review-release-fixes"
-PR_NUMBER = 25
 TOKEN = os.environ["GITHUB_TOKEN"]
 API_ROOT = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 ROOT = Path(__file__).resolve().parents[1]
@@ -129,29 +128,13 @@ def publish() -> str:
     return str(new_commit["sha"])
 
 
-def report_failure(message: str) -> None:
-    try:
-        api(
-            "POST",
-            f"/issues/{PR_NUMBER}/comments",
-            {
-                "body": (
-                    "## Unified finalizer publication failed\n\n"
-                    "All formatting, lint, type checking, and tests completed successfully, "
-                    "but the atomic Git Data API publication step failed.\n\n"
-                    f"```text\n{message[:5000]}\n```"
-                )
-            },
-        )
-    except Exception as report_error:
-        print(f"Unable to post failure details: {report_error}")
-
-
 def main() -> None:
     try:
         commit_sha = publish()
     except Exception as exc:
-        report_failure(str(exc))
+        evidence = ROOT / "artifacts" / "publisher-error.txt"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
         raise
     print(f"Published unified commit {commit_sha}")
 
