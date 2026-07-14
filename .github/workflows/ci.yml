@@ -212,6 +212,33 @@ jobs:
             -EvidenceRoot $evidence `
             -WorkRoot $work
 
+      - name: Download previous stable installer for upgrade E2E
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'kaito-previous-release'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          gh release download 'v0.11.0' `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern 'kaito-installer-0.11.0.exe' `
+            --dir $root
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download v0.11.0 for upgrade E2E.' }
+          $previous = @(Get-ChildItem $root -File -Filter 'kaito-installer-0.11.0.exe')
+          if ($previous.Count -ne 1) { throw "Expected one previous installer, found $($previous.Count)" }
+          "KAITO_PREVIOUS_INSTALLER=$($previous[0].FullName)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Test in-place upgrade from v0.11.0
+        shell: pwsh
+        run: |
+          ./tools/test_upgrade.ps1 `
+            -PreviousInstallerPath $env:KAITO_PREVIOUS_INSTALLER `
+            -CurrentInstallerPath $env:KAITO_INSTALLER `
+            -ExpectedPreviousVersion '0.11.0' `
+            -ExpectedCurrentVersion '0.12.0' `
+            -ArtifactsDir artifacts
+
       - name: Test install, registry integration, and uninstall
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
