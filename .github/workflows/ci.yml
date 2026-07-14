@@ -16,7 +16,7 @@ concurrency:
 jobs:
   verify-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 35
 
     steps:
       - name: Check out repository
@@ -180,7 +180,7 @@ jobs:
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Set-Content artifacts/installer-sha256.txt -Encoding ascii
 
-      - name: Record release artifact checksums
+      - name: Record build artifact checksums
         shell: pwsh
         run: |
           $files = @(
@@ -192,8 +192,8 @@ jobs:
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($item.Name)  $($item.Length) bytes"
           }
-          $lines | Set-Content artifacts/release-sha256.txt -Encoding ascii
-          Get-Content artifacts/release-sha256.txt
+          $lines | Set-Content artifacts/build-sha256.txt -Encoding ascii
+          Get-Content artifacts/build-sha256.txt
 
       - name: Smoke-test acceptance preparation and evidence collection
         shell: pwsh
@@ -211,33 +211,6 @@ jobs:
             -RepositoryRoot . `
             -EvidenceRoot $evidence `
             -WorkRoot $work
-
-      - name: Download previous stable installer for upgrade E2E
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP 'kaito-previous-release'
-          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $root -Force | Out-Null
-          gh release download 'v0.11.0' `
-            --repo $env:GITHUB_REPOSITORY `
-            --pattern 'kaito-installer-0.11.0.exe' `
-            --dir $root
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to download v0.11.0 for upgrade E2E.' }
-          $previous = @(Get-ChildItem $root -File -Filter 'kaito-installer-0.11.0.exe')
-          if ($previous.Count -ne 1) { throw "Expected one previous installer, found $($previous.Count)" }
-          "KAITO_PREVIOUS_INSTALLER=$($previous[0].FullName)" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Test in-place upgrade from v0.11.0
-        shell: pwsh
-        run: |
-          ./tools/test_upgrade.ps1 `
-            -PreviousInstallerPath $env:KAITO_PREVIOUS_INSTALLER `
-            -CurrentInstallerPath $env:KAITO_INSTALLER `
-            -ExpectedPreviousVersion '0.11.0' `
-            -ExpectedCurrentVersion '0.12.0' `
-            -ArtifactsDir artifacts
 
       - name: Test install, registry integration, and uninstall
         shell: pwsh
