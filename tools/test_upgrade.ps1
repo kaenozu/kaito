@@ -29,7 +29,7 @@ $CurrentVersionOutput = Join-Path $ArtifactsDir 'kaito-upgrade-current-version.t
 $CurrentSelfTestOutput = Join-Path $ArtifactsDir 'kaito-upgrade-current-self-test.txt'
 $SettingsPath = Join-Path $env:APPDATA 'kaito\settings.json'
 $SettingsBackup = Join-Path $RunRoot 'settings.backup.json'
-$SettingsExisted = Test-Path $SettingsPath -PathType Leaf
+$SettingsExisted = Test-Path -LiteralPath $SettingsPath -PathType Leaf
 $SentinelRecent = 'C:\kaito-upgrade-sentinel.zip'
 
 $ContextKeys = @(
@@ -60,14 +60,14 @@ function Invoke-Installer([string]$Path, [string]$LogPath) {
 
 function Assert-Version([string]$Expected, [string]$OutputPath) {
     $exe = Join-Path $InstallDir 'kaito.exe'
-    if (-not (Test-Path $exe -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw "Installed executable missing: $exe"
     }
     $process = Start-Process -FilePath $exe -ArgumentList @('--version', '--output', $OutputPath) -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         throw "Installed --version failed: $($process.ExitCode)"
     }
-    $actual = (Get-Content $OutputPath -Raw).Trim()
+    $actual = (Get-Content -LiteralPath $OutputPath -Raw).Trim()
     if ($actual -cne "kaito $Expected") {
         throw "Installed version mismatch: expected=kaito $Expected actual=$actual"
     }
@@ -75,14 +75,14 @@ function Assert-Version([string]$Expected, [string]$OutputPath) {
 
 function Assert-ContextCommands() {
     foreach ($key in $ContextKeys) {
-        if (-not (Test-Path $key)) {
+        if (-not (Test-Path -LiteralPath $key)) {
             throw "Context-menu key missing after upgrade: $key"
         }
         $commandKey = Join-Path $key 'command'
-        if (-not (Test-Path $commandKey)) {
+        if (-not (Test-Path -LiteralPath $commandKey)) {
             throw "Context-menu command missing: $commandKey"
         }
-        $command = [string](Get-Item $commandKey).GetValue('')
+        $command = [string](Get-Item -LiteralPath $commandKey).GetValue('')
         if ([string]::IsNullOrWhiteSpace($command) -or $command -notlike "*$InstallDir*") {
             throw "Context-menu command does not target upgraded install: $command"
         }
@@ -92,7 +92,7 @@ function Assert-ContextCommands() {
 try {
     New-Item -ItemType Directory -Path $RunRoot -Force | Out-Null
     if ($SettingsExisted) {
-        Copy-Item $SettingsPath $SettingsBackup -Force
+        Copy-Item -LiteralPath $SettingsPath -Destination $SettingsBackup -Force
     }
     New-Item -ItemType Directory -Path (Split-Path $SettingsPath) -Force | Out-Null
     @{
@@ -100,7 +100,7 @@ try {
         language = '日本語'
         recent_files = @($SentinelRecent)
         check_updates = $false
-    } | ConvertTo-Json | Set-Content $SettingsPath -Encoding utf8
+    } | ConvertTo-Json | Set-Content -LiteralPath $SettingsPath -Encoding utf8
 
     Invoke-Installer $PreviousInstallerPath $PreviousLog
     Assert-Version $ExpectedPreviousVersion $PreviousVersionOutput
@@ -109,7 +109,7 @@ try {
     Assert-Version $ExpectedCurrentVersion $CurrentVersionOutput
     Assert-ContextCommands
 
-    $settings = Get-Content $SettingsPath -Raw | ConvertFrom-Json
+    $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
     if ([string]$settings.theme -cne 'dark') {
         throw 'Theme setting was not preserved across upgrade.'
     }
@@ -122,12 +122,12 @@ try {
     if ($selfTest.ExitCode -ne 0) {
         throw "Upgraded self-test failed: $($selfTest.ExitCode)"
     }
-    if ((Get-Content $CurrentSelfTestOutput -Raw) -notmatch 'All checks passed') {
+    if ((Get-Content -LiteralPath $CurrentSelfTestOutput -Raw) -notmatch 'All checks passed') {
         throw 'Upgraded self-test did not report success.'
     }
 
     $uninstaller = Join-Path $InstallDir 'unins000.exe'
-    if (-not (Test-Path $uninstaller -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
         throw 'Upgraded uninstaller is missing.'
     }
     $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
@@ -142,11 +142,11 @@ try {
     Start-Sleep -Seconds 2
 
     foreach ($key in $ContextKeys) {
-        if (Test-Path $key) {
+        if (Test-Path -LiteralPath $key) {
             throw "Context-menu key remained after upgraded uninstall: $key"
         }
     }
-    if (-not (Test-Path $SettingsPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $SettingsPath -PathType Leaf)) {
         throw 'User settings were unexpectedly deleted by uninstall.'
     }
 
@@ -154,14 +154,14 @@ try {
 }
 finally {
     foreach ($key in $ContextKeys) {
-        Remove-Item $key -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue
     }
-    if ($SettingsExisted -and (Test-Path $SettingsBackup -PathType Leaf)) {
+    if ($SettingsExisted -and (Test-Path -LiteralPath $SettingsBackup -PathType Leaf)) {
         New-Item -ItemType Directory -Path (Split-Path $SettingsPath) -Force | Out-Null
-        Copy-Item $SettingsBackup $SettingsPath -Force
+        Copy-Item -LiteralPath $SettingsBackup -Destination $SettingsPath -Force
     }
     elseif (-not $SettingsExisted) {
-        Remove-Item $SettingsPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $SettingsPath -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item $RunRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $RunRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
