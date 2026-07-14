@@ -69,14 +69,14 @@ $EvidenceRoot = Get-FullPath $EvidenceRoot
 New-Item -ItemType Directory -Path $EvidenceRoot -Force | Out-Null
 Reset-WorkRoot $WorkRoot
 
-$manifestPath = Join-Path $ArtifactRoot 'artifacts/release-sha256.txt'
+$manifestPath = Join-Path $ArtifactRoot 'artifacts/build-sha256.txt'
 $exePath = Join-Path $ArtifactRoot 'dist/kaito.exe'
 $installerCandidates = @(
     Get-ChildItem -LiteralPath (Join-Path $ArtifactRoot 'dist') -Filter 'kaito-installer-*.exe' -File
 )
 
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-    throw "Release checksum manifest is missing: $manifestPath"
+    throw "Build checksum manifest is missing: $manifestPath"
 }
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "kaito.exe is missing: $exePath"
@@ -93,7 +93,7 @@ $artifactFiles[$installerCandidates[0].Name] = $installerPath
 $verification = @()
 foreach ($line in Get-Content -LiteralPath $manifestPath -Encoding utf8) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+(.+?)\s+(\d+)\s+bytes$') {
-        throw "Invalid release manifest line: $line"
+        throw "Invalid build manifest line: $line"
     }
 
     $expectedHash = $Matches[1].ToLowerInvariant()
@@ -117,7 +117,7 @@ foreach ($line in Get-Content -LiteralPath $manifestPath -Encoding utf8) {
         ok = $ok
     }
     if (-not $ok) {
-        throw "Release artifact verification failed for $name"
+        throw "Build artifact verification failed for $name"
     }
 }
 
