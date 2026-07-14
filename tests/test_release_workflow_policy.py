@@ -71,7 +71,10 @@ def test_release_workflow_checks_exact_assets_before_sensitive_phases() -> None:
 
     assert "Local Release asset set is incorrect" in workflow
     assert "Draft Release assets changed outside this workflow" in workflow
-    assert "Draft Release identity, state, or exact asset set changed after upload" in workflow
+    assert (
+        "Draft Release identity, state, or exact asset set changed after upload"
+        in workflow
+    )
     assert "Draft Release asset set changed before redownload" in workflow
     assert "Release assets changed immediately before publication" in workflow
     assert workflow.count("kaito-installer-$env:KAITO_VERSION.exe") >= 4
