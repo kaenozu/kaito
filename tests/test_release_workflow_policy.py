@@ -10,45 +10,71 @@ def _workflow_text() -> str:
     return WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
-def test_release_workflow_refuses_public_release_replay() -> None:
+def test_release_workflow_is_create_only_and_pins_release_id() -> None:
     workflow = _workflow_text()
 
-    early_guard = workflow.index("- name: Reject an existing public Release")
+    early_guard = workflow.index("- name: Require immutable create-only Release policy")
     build = workflow.index("- name: Build executable")
-    upload_guard = workflow.index(
-        "- name: Reconfirm Release is absent or still draft before asset upload"
+    create_guard = workflow.index(
+        "- name: Reconfirm Release absence before create-only Draft creation"
     )
-    release_action = workflow.index(
-        "- name: Create draft GitHub Release with verified assets"
+    create_release = workflow.index(
+        "- name: Create a new Draft Release and upload assets by Release ID"
     )
     post_upload_guard = workflow.index(
-        "- name: Confirm Release remains draft before verification"
+        "- name: Confirm Release remains the same Draft before verification"
     )
-    verification = workflow.index("- name: Redownload and verify draft Release assets")
-    publication = workflow.index("- name: Publish verified GitHub Release")
+    verification = workflow.index(
+        "- name: Redownload and verify Draft Release assets by Release ID"
+    )
+    publication = workflow.index(
+        "- name: Publish verified immutable GitHub Release by Release ID"
+    )
 
-    assert early_guard < build < upload_guard < release_action
-    assert release_action < post_upload_guard < verification < publication
-    assert workflow.count("Refusing to overwrite public assets") == 2
-    assert "draft: true" in workflow
-    assert "overwrite_files: true" in workflow
+    assert early_guard < build < create_guard < create_release
+    assert create_release < post_upload_guard < verification < publication
+    assert "RELEASE_IMMUTABILITY_ENABLED" in workflow
+    assert "Release immutability must be enabled" in workflow
+    assert "Invoke-RestMethod -Method Post -Uri $createUri" in workflow
+    assert "release_id=$releaseId" in workflow
+    assert "steps.create_draft_release.outputs.release_id" in workflow
+    assert "current.upload_url" in workflow
+    assert "An existing or concurrently created Release is never reused" in workflow
+    assert "softprops/action-gh-release" not in workflow
+    assert "overwrite_files" not in workflow
     assert "cancel-in-progress: false" in workflow
 
 
-def test_release_workflow_rechecks_master_and_release_identity_before_publish() -> None:
+def test_release_workflow_rechecks_master_and_release_id_before_publish() -> None:
     workflow = _workflow_text()
-    publication = workflow.split("- name: Publish verified GitHub Release", maxsplit=1)[
-        1
-    ]
+    publication = workflow.split(
+        "- name: Publish verified immutable GitHub Release by Release ID", maxsplit=1
+    )[1]
 
     master_lookup = publication.index("git/ref/heads/master")
-    release_lookup = publication.index("releases/tags/$env:GITHUB_REF_NAME")
-    identity_check = publication.index("Release identity changed before publication")
-    publish_command = publication.index("gh release edit")
+    release_lookup = publication.index("releases/$releaseId")
+    identity_check = publication.index(
+        "Release identity or Draft state changed immediately before publication"
+    )
+    publish_command = publication.index("Invoke-RestMethod -Method Patch")
+    immutable_check = publication.index("GitHub did not report it as immutable")
 
     assert master_lookup < release_lookup < identity_check < publish_command
-    assert "steps.draft_release.outputs.id" in publication
+    assert publish_command < immutable_check
+    assert "steps.create_draft_release.outputs.release_id" in publication
     assert "master advanced after release verification" in publication
+    assert "releases/tags/$env:GITHUB_REF_NAME" not in publication
+
+
+def test_release_workflow_checks_exact_assets_before_sensitive_phases() -> None:
+    workflow = _workflow_text()
+
+    assert "Local Release asset set is incorrect" in workflow
+    assert "Draft Release assets changed outside this workflow" in workflow
+    assert "Draft Release identity, state, or exact asset set changed after upload" in workflow
+    assert "Draft Release asset set changed before redownload" in workflow
+    assert "Release assets changed immediately before publication" in workflow
+    assert workflow.count("kaito-installer-$env:KAITO_VERSION.exe") >= 4
 
 
 def test_release_workflow_validates_exact_asset_sets_fail_closed() -> None:
