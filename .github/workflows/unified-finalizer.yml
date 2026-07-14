@@ -51,14 +51,7 @@ jobs:
           uv run --frozen pytest -ra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Commit clean unified tree
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if ((git status --porcelain).Count -eq 0) { throw 'Unified finalizer produced no changes.' }
-          git commit -m "refactor: unify release governance and application fixes"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git push origin HEAD:agent/unified-review-release-fixes
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish clean unified tree atomically
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/publish_unified_tree_once.py
