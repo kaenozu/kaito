@@ -1,0 +1,270 @@
+name: Draft Release roundtrip canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type CREATE_AND_DELETE_DRAFT exactly
+        required: true
+        type: string
+      source_ref:
+        description: Ref to build; normally master after the release PRs merge
+        required: true
+        default: master
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: draft-release-roundtrip
+  cancel-in-progress: false
+
+jobs:
+  roundtrip:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Require explicit destructive-test confirmation
+        shell: pwsh
+        run: |
+          if ('${{ inputs.confirmation }}' -cne 'CREATE_AND_DELETE_DRAFT') {
+            throw 'Confirmation must be exactly CREATE_AND_DELETE_DRAFT.'
+          }
+
+      - name: Check out requested source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc -PathType Leaf)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed: $LASTEXITCODE" }
+          }
+          if (-not (Test-Path $iscc -PathType Leaf)) { throw "ISCC.exe not found: $iscc" }
+
+      - name: Prepare unique roundtrip context
+        id: context
+        shell: pwsh
+        run: |
+          function Assert-ApiObjectAbsent {
+            param([Parameter(Mandatory = $true)][string]$ApiPath)
+            $output = @(& gh api $ApiPath 2>&1)
+            $code = $LASTEXITCODE
+            $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+            if ($code -eq 0) { throw "GitHub object already exists: $ApiPath" }
+            if ($text -notmatch '(?i)(HTTP 404|Not Found)') {
+              throw "Unable to prove GitHub object absence for ${ApiPath}: $text"
+            }
+            $global:LASTEXITCODE = 0
+          }
+
+          $version = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw 'Unable to determine project version.'
+          }
+          $commit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+            throw 'Unable to determine the checked-out commit.'
+          }
+          $tag = "draft-roundtrip-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "ROUNDTRIP_TAG=$tag" | Out-File $env:GITHUB_ENV -Append
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          "commit=$commit" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
+
+          Assert-ApiObjectAbsent -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          Assert-ApiObjectAbsent -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+
+      - name: Build signed rehearsal package
+        shell: pwsh
+        run: |
+          ./tools/build_release_rehearsal.ps1 `
+            -Version '${{ steps.context.outputs.version }}' `
+            -RehearsalTag '${{ steps.context.outputs.tag }}' `
+            -Commit '${{ steps.context.outputs.commit }}' `
+            -ArtifactsDir artifacts/build `
+            -DistDir dist
+
+      - name: Create temporary tag and Draft Release
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.context.outputs.tag }}'
+          $commit = '${{ steps.context.outputs.commit }}'
+          gh api "repos/$env:GITHUB_REPOSITORY/git/refs" `
+            --method POST `
+            -f ref="refs/tags/$tag" `
+            -f sha="$commit" | Out-File artifacts/tag-create.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to create the temporary tag.' }
+
+          gh release create $tag `
+            dist/kaito.exe `
+            "dist/kaito-installer-${{ steps.context.outputs.version }}.exe" `
+            dist/SHA256SUMS `
+            dist/RELEASE-METADATA.json `
+            dist/kaito-sbom.cdx.json `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $commit `
+            --title "kaito Draft Release roundtrip $tag" `
+            --notes 'Automated non-public roundtrip canary. This Release must remain draft and is deleted in cleanup.' `
+            --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to create the temporary Draft Release.' }
+
+      - name: Assert temporary Release and tag identity
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.context.outputs.tag }}'
+          $commit = '${{ steps.context.outputs.commit }}'
+
+          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read the temporary Release.' }
+          $release = $releaseJson | ConvertFrom-Json
+          $releaseJson | Set-Content artifacts/draft-release.json -Encoding utf8
+          if (-not $release.draft -or $release.prerelease) {
+            throw 'The roundtrip Release is not an ordinary draft.'
+          }
+          if ($release.tag_name -ne $tag) {
+            throw 'The Draft Release tag identity does not match the requested roundtrip context.'
+          }
+
+          $tagJson = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read the temporary tag.' }
+          $tagRef = $tagJson | ConvertFrom-Json
+          $tagJson | Set-Content artifacts/tag-ref.json -Encoding utf8
+          if ($tagRef.object.type -ne 'commit' -or $tagRef.object.sha -ne $commit) {
+            throw 'The temporary tag does not point to the checked-out commit.'
+          }
+
+      - name: Download Draft Release assets through GitHub Release API
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path downloaded -Force | Out-Null
+          gh release download '${{ steps.context.outputs.tag }}' `
+            --repo $env:GITHUB_REPOSITORY `
+            --dir downloaded
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download Draft Release assets.' }
+
+      - name: Verify downloaded Draft Release package
+        shell: pwsh
+        run: |
+          $manifestJson = Get-Content artifacts/build/rehearsal-expected-manifest.json -Raw
+          $manifestBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manifestJson))
+          ./tools/verify_release_package.ps1 `
+            -Profile rehearsal `
+            -PackageDir downloaded `
+            -Version '${{ steps.context.outputs.version }}' `
+            -Tag '${{ steps.context.outputs.tag }}' `
+            -Commit '${{ steps.context.outputs.commit }}' `
+            -ExpectedManifestBase64 $manifestBase64 `
+            -ArtifactsDir artifacts/verification
+
+      - name: Delete only the temporary Draft Release and tag
+        if: always()
+        shell: pwsh
+        run: |
+          function Invoke-ApiLookup {
+            param([Parameter(Mandatory = $true)][string]$ApiPath)
+            $output = @(& gh api $ApiPath 2>&1)
+            $code = $LASTEXITCODE
+            $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+            $global:LASTEXITCODE = 0
+            return [ordered]@{ code = $code; text = $text }
+          }
+
+          $tag = $env:ROUNDTRIP_TAG
+          if ([string]::IsNullOrWhiteSpace($tag)) { throw 'Roundtrip tag was not recorded; cleanup cannot be proven.' }
+          $cleanupFailed = $false
+          $publicReleaseDetected = $false
+          $releaseAbsent = $false
+          $tagAbsent = $false
+
+          $releaseLookup = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($releaseLookup.code -eq 0) {
+            $release = $releaseLookup.text | ConvertFrom-Json
+            if (-not $release.draft) {
+              Write-Error 'Refusing to delete an unexpectedly public Release automatically.'
+              $publicReleaseDetected = $true
+              $cleanupFailed = $true
+            }
+            else {
+              gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
+              if ($LASTEXITCODE -ne 0) { $cleanupFailed = $true }
+              $global:LASTEXITCODE = 0
+            }
+          }
+          elseif ($releaseLookup.text -notmatch '(?i)(HTTP 404|Not Found)') {
+            Write-Error "Unable to determine Release state: $($releaseLookup.text)"
+            $cleanupFailed = $true
+          }
+
+          $tagLookup = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($tagLookup.code -eq 0) {
+            if ($publicReleaseDetected) {
+              Write-Error 'Refusing to delete the tag associated with an unexpectedly public Release.'
+              $cleanupFailed = $true
+            }
+            else {
+              gh api "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" --method DELETE
+              if ($LASTEXITCODE -ne 0) { $cleanupFailed = $true }
+              $global:LASTEXITCODE = 0
+            }
+          }
+          elseif ($tagLookup.text -notmatch '(?i)(HTTP 404|Not Found)') {
+            Write-Error "Unable to determine tag state: $($tagLookup.text)"
+            $cleanupFailed = $true
+          }
+
+          $releaseProof = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($releaseProof.code -ne 0 -and $releaseProof.text -match '(?i)(HTTP 404|Not Found)') {
+            $releaseAbsent = $true
+          }
+          else {
+            $cleanupFailed = $true
+          }
+
+          $tagProof = Invoke-ApiLookup -ApiPath "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if ($tagProof.code -ne 0 -and $tagProof.text -match '(?i)(HTTP 404|Not Found)') {
+            $tagAbsent = $true
+          }
+          else {
+            $cleanupFailed = $true
+          }
+
+          [ordered]@{
+            schema_version = 1
+            tag = $tag
+            release_absent = $releaseAbsent
+            tag_absent = $tagAbsent
+            public_release_detected = $publicReleaseDetected
+            checked_at = [DateTimeOffset]::UtcNow.ToString('o')
+            result = if ($cleanupFailed) { 'failed' } else { 'passed' }
+          } | ConvertTo-Json | Set-Content artifacts/cleanup-summary.json -Encoding utf8
+          if ($cleanupFailed) { throw 'Draft Release roundtrip cleanup could not be proven complete.' }
+          $global:LASTEXITCODE = 0
+
+      - name: Upload roundtrip evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-draft-release-roundtrip-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: artifacts/
