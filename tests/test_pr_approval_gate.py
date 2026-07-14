@@ -21,7 +21,7 @@ evaluate_snapshot = MODULE.evaluate_snapshot
 def _expectation() -> Any:
     return Expectation(
         repository="kaenozu/kaito",
-        pr_number=11,
+        pr_number=20,
         expected_head="a" * 40,
         expected_base_ref="master",
         expected_base_sha="b" * 40,
@@ -49,13 +49,6 @@ def _snapshot() -> dict[str, Any]:
             "behind_by": 0,
             "files": [{"filename": "one"}, {"filename": "two"}],
         },
-        "reviews": [
-            {
-                "state": "APPROVED",
-                "commit_id": expected.expected_head,
-                "user": {"login": "reviewer"},
-            }
-        ],
         "workflow_runs": [
             {"name": "CI", "status": "completed", "conclusion": "success"},
             {
@@ -64,36 +57,38 @@ def _snapshot() -> dict[str, Any]:
                 "conclusion": "success",
             },
         ],
-        "reviewer_permissions": {"reviewer": "write"},
         "unresolved_threads": 0,
         "auto_merge_enabled": False,
     }
 
 
-def test_fixed_head_gate_passes_complete_snapshot() -> None:
+def test_fixed_head_gate_passes_without_external_approval() -> None:
     checks = evaluate_snapshot(_snapshot(), _expectation())
+    statuses = {check.name: check.status for check in checks}
 
-    assert {check.status for check in checks} == {"PASS"}
-
-
-def test_fixed_head_gate_blocks_without_independent_approval() -> None:
-    snapshot = _snapshot()
-    snapshot["reviews"] = []
-
-    checks = evaluate_snapshot(snapshot, _expectation())
-    approval = next(check for check in checks if check.name == "independent_approval")
-
-    assert approval.status == "BLOCKED"
+    assert set(statuses.values()) == {"PASS"}
+    assert statuses["solo_maintainer_policy"] == "PASS"
+    assert "independent_approval" not in statuses
 
 
-def test_fixed_head_gate_fails_unexpected_file_and_stale_approval() -> None:
-    expected = _expectation()
+def test_fixed_head_gate_fails_unexpected_file() -> None:
     snapshot = _snapshot()
     snapshot["compare"]["files"].append({"filename": "unexpected"})
-    snapshot["reviews"][0]["commit_id"] = "c" * 40
 
-    checks = evaluate_snapshot(snapshot, expected)
+    checks = evaluate_snapshot(snapshot, _expectation())
     statuses = {check.name: check.status for check in checks}
 
     assert statuses["exact_files"] == "FAIL"
-    assert statuses["independent_approval"] == "BLOCKED"
+    assert statuses["solo_maintainer_policy"] == "PASS"
+
+
+def test_fixed_head_gate_fails_draft_or_missing_workflow() -> None:
+    snapshot = _snapshot()
+    snapshot["pr"]["draft"] = True
+    snapshot["workflow_runs"] = []
+
+    checks = evaluate_snapshot(snapshot, _expectation())
+    statuses = {check.name: check.status for check in checks}
+
+    assert statuses["ready_for_review"] == "FAIL"
+    assert statuses["required_workflows"] == "FAIL"
