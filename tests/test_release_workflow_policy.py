@@ -131,5 +131,6 @@ def test_publication_occurs_only_after_reverification_and_live_recheck() -> None
     assert "master changed before publication" in workflow
     assert "Build run identity changed" in workflow
     assert "Draft Release identity or asset set changed" in workflow
-    assert "-f draft=false" in workflow
+    assert "-F draft=false" in workflow
+    assert "-f draft=false" not in workflow
     assert "gh release edit" not in workflow
