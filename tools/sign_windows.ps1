@@ -97,11 +97,11 @@ function Protect-SigningPfx {
     }
 }
 
-$hasCertificate = -not [string]::IsNullOrWhiteSpace($CertificateBase64)
-$hasPassword = -not [string]::IsNullOrWhiteSpace($CertificatePassword)
+$certificateConfigured = -not [string]::IsNullOrWhiteSpace($CertificateBase64)
+$credentialConfigured = -not [string]::IsNullOrWhiteSpace($CertificatePassword)
 
 if ($Mode -eq 'disabled') {
-    if ($hasCertificate -or $hasPassword) {
+    if ($certificateConfigured -or $credentialConfigured) {
         Write-Warning 'Windows signing is disabled; configured certificate secrets are intentionally ignored.'
     }
     Write-SigningStatus @{
@@ -115,7 +115,7 @@ if ($Mode -eq 'disabled') {
     return
 }
 
-if (-not $hasCertificate -and -not $hasPassword) {
+if (-not $certificateConfigured -and -not $credentialConfigured) {
     if ($Mode -eq 'required') {
         throw 'Windows signing mode is required, but WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD are not configured.'
     }
@@ -130,7 +130,7 @@ if (-not $hasCertificate -and -not $hasPassword) {
     return
 }
 
-if (-not $hasCertificate -or -not $hasPassword) {
+if (-not $certificateConfigured -or -not $credentialConfigured) {
     throw 'Windows signing configuration is incomplete. Set both WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD, or set WINDOWS_SIGNING_MODE=disabled.'
 }
 

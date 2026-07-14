@@ -1,0 +1,105 @@
+name: GUI acceptance
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/gui-acceptance.yml"
+      - "docs/GUI_ACCEPTANCE.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "build.spec"
+      - "installer/**"
+      - "src/kaito/archive/**"
+      - "src/kaito/gui/**"
+      - "src/kaito/diagnostics.py"
+      - "src/kaito/update_checker.py"
+      - "tests/test_full_review_fixes.py"
+      - "tests/test_productivity_services.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaged-gui-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Run focused GUI and safety regressions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $output = & uv run --frozen pytest -q tests/test_full_review_fixes.py tests/test_productivity_services.py 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/gui-regressions.txt
+          exit $code
+
+      - name: Build packaged GUI
+        run: uv run --frozen pyinstaller --clean --noconfirm build.spec
+
+      - name: Launch real window and capture evidence
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $exe = (Resolve-Path 'dist/kaito.exe').Path
+          $process = Start-Process -FilePath $exe -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+              Start-Sleep -Milliseconds 500
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Packaged GUI exited before acceptance capture: $($process.ExitCode)"
+              }
+            } while ($process.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $deadline)
+            if ($process.MainWindowHandle -eq 0) { throw 'Packaged GUI did not expose a top-level window.' }
+
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+              $bitmap.Save((Join-Path (Resolve-Path artifacts).Path 'gui-startup.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+            }
+            "window_handle=$($process.MainWindowHandle)" | Set-Content artifacts/gui-window.txt -Encoding ascii
+          }
+          finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Upload GUI acceptance package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-gui-acceptance
+          if-no-files-found: error
+          path: |
+            artifacts/
+            dist/kaito.exe
+            docs/GUI_ACCEPTANCE.md

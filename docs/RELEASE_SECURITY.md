@@ -1,6 +1,6 @@
 # Release security model
 
-The stable tag workflow is intentionally gated and fail-closed.
+The stable tag workflow is intentionally gated and fail-closed. Its signing mode is fixed to `required`; unsigned production assets cannot be published.
 
 ## Production environment
 

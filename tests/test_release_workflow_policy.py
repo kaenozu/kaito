@@ -70,3 +70,13 @@ def test_release_workflow_requires_production_environment() -> None:
 
     assert "environment:" in job_header
     assert "name: production" in job_header
+
+
+def test_release_workflow_requires_signed_production_artifacts() -> None:
+    workflow = _workflow_text()
+
+    assert "WINDOWS_SIGNING_MODE: required" in workflow
+    assert "Validate Windows signing configuration" in workflow
+    assert workflow.count("-Mode $env:WINDOWS_SIGNING_MODE") == 3
+    assert "environment:" in workflow
+    assert "name: production" in workflow

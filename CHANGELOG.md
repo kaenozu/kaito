@@ -8,27 +8,42 @@
 
 ### Added
 
-- Release資産へCycloneDX 1.6形式のruntime SBOMと、タグ・コミット・署名状態・資産ハッシュを記録する`RELEASE-METADATA.json`を追加
-- 自己署名のテスト証明書を使い、署名モード、証明書事前検査、SignTool署名・検証を確認するWindows CIを追加
+- Release資産へCycloneDX 1.6 runtime SBOMと、タグ・コミット・署名状態・資産ハッシュを記録する`RELEASE-METADATA.json`を追加
+- 自己署名テスト証明書による署名統合テスト、非公開Release rehearsal、Draft Release再取得検証を追加
+- 固定HEADのPR承認ゲート、Draft Release roundtrip canary、独立した一回限りのProduction署名承認を追加
+- Windows GUIの対象テスト、パッケージ作成、実ウィンドウ起動、スクリーンショットを行う`GUI acceptance` workflowを追加
 
 ### Changed
 
-- Windows署名方針を`disabled`、`optional`、`required`の明示的な3モードへ変更
+- 安定版Release workflowの署名モードを`required`へ固定し、未署名成果物の公開を禁止
 - Releaseを一旦Draftとして作成し、全資産を再ダウンロードしてSHA-256、メタデータ、SBOM、署名状態を照合した後に公開する方式へ変更
-- 署名前にPFXのBase64、パスワード、秘密鍵、Code Signing EKU、有効期間、SignToolの存在を検証
+- コンソールスクリプトを診断CLIとExplorerガードを持つ`kaito.__main__:main`へ統一
+- 更新確認先を`KAITO_UPDATE_ENDPOINT`で差し替え可能にし、非公開GitHub Releasesでは実行時の`KAITO_GITHUB_TOKEN`を使用可能に変更
+- CIとRelease関連workflowで`uv lock --check`を必須化
 
 ### Fixed
 
-- 壊れた署名Secretが設定されているだけで、意図した未署名Releaseまでビルド後半で失敗する問題
-- 公開済み資産がローカルの検証済み成果物と同一かをRelease Workflow内で確認していなかった問題
-- 公開済みReleaseのWorkflow再実行で、検証前に既存の公開Assetを上書きできる問題
-- 不正形式・重複・実体と不一致の同梱チェックサムをSBOM生成が黙って受理できる問題
+- `pyproject.toml`と`uv.lock`でkaitoのバージョンが一致していなかった問題
+- プレリリースの数字を連結し、`1.2rc1`を`1.21`相当として比較する可能性
+- 暗号化アーカイブの展開パスワード入力がマスクされていなかった問題
+- 診断レポートで分離形式のパスワード引数、`C:/`形式、空白を含む引用絶対パスを完全に除外できない問題
+- 安全診断が拒否した後にGUI操作を挟むと解凍ボタンが再有効化される問題
+- 安全診断が拒否したアーカイブで選択解凍を開始できる問題
+- 最近のファイルメニューの「履歴を削除」が動作しない問題
+- 7z／RARプレビューがTkイベントスレッドを停止させる問題
+- 画像プレビューの画素数上限が適用されていなかった問題
+- 完全に空の選択フォルダーをZIPへ保存できない問題
+- ZIP作成時にWindows reparse pointを共通安全判定で拒否していなかった問題
+- コンテキストメニュー登録・削除実装がGUIモジュールと専用モジュールへ二重化していた問題
+- 公開済みReleaseの再実行で検証前に既存Assetを上書きできる問題
+- 不正形式・重複・実体不一致の同梱チェックサムをSBOM生成が受理できる問題
 
 ### Security
 
-- 署名済み成果物を`signtool verify /pa /all`とAuthenticode APIで二重検証
-- 公開資産の再取得後に、未署名モードでは予期しない署名がないこと、署名モードでは署名が有効であることを検証
-- 一時PFXの継承ACLを削除して現在ユーザーだけへアクセスを限定し、書き込み後のデコード済みバッファを消去
+- 署名PFXをBase64、認証情報、秘密鍵、Code Signing EKU、有効期間の順に検証し、一時PFXのACLを現在のWindowsユーザーだけへ制限
+- 署名後にSignTool、Authenticode状態、構成済み証明書のthumbprint一致を検証
+- Production署名承認を別のwrite権限保有者、固定`master` HEAD、nonce、30分以内の期限、単回消費へ束縛
+- 巨大画像の画素数を完全デコード前に拒否し、PillowのDecompressionBomb警告を失敗として扱う
 
 ## [0.11.0] - 2026-07-12
 

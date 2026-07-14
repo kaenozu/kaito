@@ -148,22 +148,22 @@ def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
     assert "git/refs/tags" not in workflow
 
 
-def test_repository_protection_and_bootstrap_order_are_explicit() -> None:
+def test_repository_protection_and_unified_merge_order_are_explicit() -> None:
     operations = _text(OPERATIONS_DOC_PATH)
 
-    protection = operations.index("Protect `master` before merging PR #11")
-    first_merge = operations.index("Merge PR #11")
-    assert protection < first_merge
+    protection = operations.index("Protect `master` before merging")
+    merge_process = operations.index("Before merge:")
+    assert protection < merge_process
     assert "Do not substitute self-approval" in operations
-    assert "Required Reviewers are unavailable" in operations
-    assert "explicit bootstrap set" in operations
-    assert "PR #11, PR #12, and PR #15" in operations
+    assert "unified release and application hardening pull request" in operations
     assert "verify-windows" in operations
     assert "signing-and-sbom" in operations
     assert "build-rehearsal-package" in operations
     assert "verify-redownloaded-package" in operations
+    assert "packaged-gui-smoke" in operations
     assert "workflow_dispatch" in operations
     assert "default branch" in operations
+    assert "exact current HEAD" in operations
 
 
 def test_operational_workflows_use_distinct_concurrency_groups() -> None:

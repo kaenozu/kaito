@@ -236,9 +236,27 @@ def test_release_and_ci_fail_closed_on_lock_and_signing() -> None:
     assert '"agent/**"' not in ci
     assert "uv lock --check" in ci
     assert "uv lock --check" in release
-    assert release.count("-RequireSigning") == 2
-    assert "Release executable is not validly signed" in release
-    assert "Release installer is not validly signed" in release
+    assert "WINDOWS_SIGNING_MODE: required" in release
+    assert "Validate Windows signing configuration" in release
+    assert "Sign executable according to release mode" in release
+    assert "Sign installer according to release mode" in release
+    assert "Create draft GitHub Release with verified assets" in release
+    assert "Verify redownloaded draft Release package" in release
+    assert "Publish verified GitHub Release" in release
+
+
+def test_gui_acceptance_workflow_builds_and_launches_packaged_gui() -> None:
+    workflow = Path(".github/workflows/gui-acceptance.yml").read_text(encoding="utf-8")
+    checklist = Path("docs/GUI_ACCEPTANCE.md").read_text(encoding="utf-8")
+
+    assert "packaged-gui-smoke" in workflow
+    assert "uv lock --check" in workflow
+    assert "tests/test_full_review_fixes.py" in workflow
+    assert "pyinstaller --clean --noconfirm build.spec" in workflow
+    assert "MainWindowHandle" in workflow
+    assert "gui-startup.png" in workflow
+    assert "Rapid preview switching" in checklist
+    assert "Empty selected folder" in checklist
 
 
 def test_console_script_routes_through_guarded_entrypoint() -> None:
