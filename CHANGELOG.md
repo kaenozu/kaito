@@ -6,8 +6,12 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-14
+
 ### Added
 
+- 署名済みDraft Releaseの作成と、別承認で公開する二段階Release workflowを追加
+- `v0.11.0`から`v0.12.0`への上書き更新E2Eを追加
 - Release資産へCycloneDX 1.6 runtime SBOMと、タグ・コミット・署名状態・資産ハッシュを記録する`RELEASE-METADATA.json`を追加
 - 自己署名テスト証明書による署名統合テスト、非公開Release rehearsal、Draft Release再取得検証を追加
 - 固定HEADのPR承認ゲート、Draft Release roundtrip canary、独立した一回限りのProduction署名承認を追加
@@ -15,6 +19,8 @@
 
 ### Changed
 
+- タグpush workflowは検証済みDraft Releaseの作成までで停止し、公開は手動workflowへ分離
+- 公開workflowは元のbuild run、Release ID、tag、commit、再取得した資産を固定して再検証
 - 安定版Release workflowの署名モードを`required`へ固定し、未署名成果物の公開を禁止
 - Releaseを一旦Draftとして作成し、全資産を再ダウンロードしてSHA-256、メタデータ、SBOM、署名状態を照合した後に公開する方式へ変更
 - コンソールスクリプトを診断CLIとExplorerガードを持つ`kaito.__main__:main`へ統一
@@ -23,6 +29,7 @@
 
 ### Fixed
 
+- 既存Draft Releaseを再利用して資産を上書きできる競合窓を排除
 - `pyproject.toml`と`uv.lock`でkaitoのバージョンが一致していなかった問題
 - プレリリースの数字を連結し、`1.2rc1`を`1.21`相当として比較する可能性
 - 暗号化アーカイブの展開パスワード入力がマスクされていなかった問題

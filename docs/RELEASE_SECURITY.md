@@ -37,10 +37,11 @@ Both profiles enforce the same package identity checks:
 
 1. Validate the stable tag and current `master`.
 2. Validate signing configuration and build the package.
-3. Create or update a Draft Release only.
-4. Download all Draft Release assets again.
-5. Verify the downloaded package with the shared `production` profile.
-6. Re-read the live `master` ref and Draft Release identity.
-7. Publish only when every check still matches.
+3. Refuse every existing Release for the tag and create a brand-new Draft Release.
+4. Upload exactly five assets to that new Release ID.
+5. Download and verify all Draft assets with the shared `production` profile.
+6. Stop with the Release in Draft state and record the exact Release ID and build run ID.
+7. A separately dispatched workflow downloads the original build evidence and the same Draft assets, re-verifies them, and rechecks live master, tag, run, Release ID, Draft state, and asset count.
+8. Publish only the exact verified Draft Release when every identity still matches.
 
-A failed verification leaves the Release in draft state. An already-public Release is rejected before build and again before asset upload.
+Existing Draft or public Releases are never reused, and publication cannot occur in the tag-triggered build workflow.

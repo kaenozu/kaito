@@ -60,4 +60,11 @@ Run `Production signing canary` only after Environment configuration, deployment
 
 ## Actual Release
 
-A production Release is a separate decision. Authorization must identify the exact tag, commit, version, production certificate use, and publication action. The tag-triggered workflow validates current `master`, requires signing, creates a Draft Release, redownloads and verifies all assets through the shared production verifier, rechecks `master` and Release identity, and only then publishes. Any failure leaves the Release in draft state.
+A production Release is a separate decision and is split into two operations.
+
+1. After explicit tag authorization, push a new stable tag that points to the exact live `master` HEAD. `Build signed draft Release` requires production signing, refuses every existing Release for the tag, creates a new Draft Release, redownloads all five assets, and verifies them against build evidence.
+2. Record the exact tag, commit, Release ID, and successful build run ID. Inspect the exact production-signed Draft artifacts.
+3. After separate publication authorization, dispatch `Publish verified Release` from `master` with those exact identities and `PUBLISH_VERIFIED_RELEASE`.
+4. The publication workflow downloads the original build-run evidence, redownloads the same Draft assets, runs the shared production verifier, rechecks live identity, and only then makes that Release public.
+
+The build workflow contains no publication command. Existing Releases and tags are never reused, overwritten, or moved. See `RELEASE_PUBLICATION.md`.
