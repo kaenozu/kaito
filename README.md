@@ -124,12 +124,50 @@ kaito.exe --diagnostics
 
 このスクリプトは、安定版番号、CHANGELOG、作業ツリー、既存リモートタグを検査します。既存タグを移動せず、衝突した場合は必ずバージョンを上げてください。
 
-Windowsコード署名は`tools/sign_windows.ps1`とRelease workflowでサポートします。リポジトリSecretに次を設定した場合だけEXEとインストーラーを署名します。
+### Windowsコード署名
+
+Release workflowはリポジトリ変数`WINDOWS_SIGNING_MODE`で署名方針を明示します。
+
+| 値 | 動作 |
+|---|---|
+| `disabled` | 署名Secretが存在しても無視し、未署名で公開します。既定値です。 |
+| `optional` | 両方のSecretが未設定なら未署名で続行し、片側だけ設定または証明書不正なら失敗します。 |
+| `required` | 有効な証明書とパスワードが揃わない限り、ビルド前に失敗します。 |
+
+`optional`または`required`では、次のリポジトリSecretを設定します。
 
 - `WINDOWS_CERTIFICATE_BASE64`: PFXファイルのBase64
 - `WINDOWS_CERTIFICATE_PASSWORD`: PFXパスワード
 
-証明書が未設定の場合、ビルドは継続しますが配布物は未署名です。
+署名前にBase64、PFXパスワード、秘密鍵、Code Signing EKU、有効期間、SignToolの存在を検査します。署名後は`signtool verify /pa /all`とAuthenticode APIの両方で検証します。
+
+ローカル検証例：
+
+```powershell
+$env:WINDOWS_SIGNING_MODE = 'required'
+$env:WINDOWS_CERTIFICATE_BASE64 = Get-Content .\certificate-base64.txt -Raw
+$env:WINDOWS_CERTIFICATE_PASSWORD = 'your-password'
+.\tools\sign_windows.ps1 -ValidateOnly -StatusPath artifacts\signing-preflight.json
+```
+
+### Release資産の検証
+
+Release workflowは成果物を一旦Draft Releaseへアップロードし、同じWorkflow内で全資産を再ダウンロードしてSHA-256、バージョン、コミット、SBOM JSON、署名状態を照合した後に公開へ切り替えます。
+
+各Releaseには次を含めます。
+
+- `kaito.exe`
+- `kaito-installer-<version>.exe`
+- `SHA256SUMS`
+- `RELEASE-METADATA.json`
+- `kaito-sbom.cdx.json`（CycloneDX 1.6 runtime SBOM）
+
+```powershell
+Get-FileHash .\kaito.exe -Algorithm SHA256
+Get-FileHash .\kaito-installer-*.exe -Algorithm SHA256
+```
+
+算出値を`SHA256SUMS`と照合してください。`RELEASE-METADATA.json`にはタグ、コミット、署名モード、署名結果、各資産のSHA-256とサイズを記録します。
 
 ## アーキテクチャ
 
