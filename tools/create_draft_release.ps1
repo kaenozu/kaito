@@ -102,11 +102,10 @@ if ([string]$release.target_commitish -cne $Commit) {
 
 $uploadTemplate = [string]$release.upload_url
 $uploadBase = $uploadTemplate -replace '\{\?name,label\}$', ''
-$uploadedAssetIds = @()
 try {
     foreach ($asset in $resolvedAssets) {
         $encodedName = [Uri]::EscapeDataString($asset.Name)
-        $uploadUri = "$uploadBase?name=$encodedName"
+        $uploadUri = "${uploadBase}?name=$encodedName"
         $uploaded = Invoke-RestMethod `
             -Method Post `
             -Uri $uploadUri `
@@ -116,7 +115,6 @@ try {
         if ([string]$uploaded.name -cne $asset.Name) {
             throw "Uploaded asset name mismatch: expected=$($asset.Name) actual=$($uploaded.name)"
         }
-        $uploadedAssetIds += [string]$uploaded.id
     }
 }
 catch {
