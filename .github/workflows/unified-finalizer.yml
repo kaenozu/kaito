@@ -60,3 +60,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git push origin HEAD:agent/unified-review-release-fixes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Triggered through the contents API so the one-time finalizer runs on the complete tree.
