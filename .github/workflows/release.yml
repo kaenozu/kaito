@@ -9,10 +9,16 @@ permissions:
   contents: write
   issues: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify-build-release:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
+    env:
+      WINDOWS_SIGNING_MODE: ${{ vars.WINDOWS_SIGNING_MODE || 'disabled' }}
 
     steps:
       - name: Check out repository
@@ -56,20 +62,64 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 
+      - name: Require immutable create-only Release policy
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_IMMUTABILITY_ENABLED: ${{ vars.RELEASE_IMMUTABILITY_ENABLED }}
+        run: |
+          if ($env:RELEASE_IMMUTABILITY_ENABLED -cne 'true') {
+            throw 'Release immutability must be enabled in repository settings and RELEASE_IMMUTABILITY_ENABLED must be set to true before a stable tag is created.'
+          }
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
+          try {
+            $existing = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+            throw "Release $env:GITHUB_REF_NAME already exists with id $($existing.id). Stable release workflows are create-only and never reuse an existing Draft or public Release."
+          }
+          catch {
+            if ($null -eq $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) {
+              throw
+            }
+          }
+
+      - name: Validate Windows signing configuration
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -ValidateOnly `
+            -StatusPath 'artifacts/windows-signing-preflight.json'
+
       - name: Verify bundled 7-Zip checksums
         shell: pwsh
         run: |
+          $seen = @{}
+          $count = 0
           Get-Content bundled/SHA256SUMS | ForEach-Object {
-            if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
-              $expected = $Matches[1]
-              $name = $Matches[2].Trim()
-              $path = Join-Path bundled $name
-              if (-not (Test-Path $path -PathType Leaf)) { throw "Missing bundled file: $path" }
-              $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-              if ($actual -ne $expected) { throw "Hash mismatch for $path: $actual" }
-              "$actual  $name" | Add-Content artifacts/bundled-sha256.txt -Encoding ascii
+            if ($_ -notmatch '^([0-9a-f]{64})\s+(.+)$') {
+              throw "Invalid bundled checksum line: $_"
             }
+            $expected = $Matches[1]
+            $name = $Matches[2].Trim()
+            if ([string]::IsNullOrWhiteSpace($name)) { throw 'Bundled checksum filename is empty.' }
+            if ($seen.ContainsKey($name)) { throw "Duplicate bundled checksum entry: $name" }
+            $seen[$name] = $true
+            $count += 1
+            $path = Join-Path bundled $name
+            if (-not (Test-Path $path -PathType Leaf)) { throw "Missing bundled file: $path" }
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "Hash mismatch for ${path}: $actual" }
+            "$actual  $name" | Add-Content artifacts/bundled-sha256.txt -Encoding ascii
           }
+          if ($count -eq 0) { throw 'bundled/SHA256SUMS contains no checksum entries.' }
 
       - name: Quality gates
         shell: pwsh
@@ -86,12 +136,16 @@ jobs:
       - name: Build executable
         run: uv run --frozen pyinstaller --clean --noconfirm build.spec
 
-      - name: Sign executable when configured
+      - name: Sign executable according to release mode
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath 'dist/kaito.exe'
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -FilePath 'dist/kaito.exe' `
+            -StatusPath 'artifacts/windows-signing-executable.json'
 
       - name: Verify executable
         shell: pwsh
@@ -155,21 +209,77 @@ jobs:
           if ($null -eq $installer) { throw 'Installer output not found' }
           "KAITO_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
 
-      - name: Sign installer when configured
+      - name: Sign installer according to release mode
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./tools/sign_windows.ps1 -FilePath $env:KAITO_INSTALLER
+        run: |
+          ./tools/sign_windows.ps1 `
+            -Mode $env:WINDOWS_SIGNING_MODE `
+            -FilePath $env:KAITO_INSTALLER `
+            -StatusPath 'artifacts/windows-signing-installer.json'
 
       - name: Test install, registry integration, and uninstall
         shell: pwsh
         run: ./tools/test_installer.ps1 -InstallerPath $env:KAITO_INSTALLER -ArtifactsDir artifacts
 
+      - name: Generate CycloneDX runtime SBOM
+        shell: pwsh
+        run: |
+          uv run --frozen python tools/generate_sbom.py `
+            --repository-root . `
+            --output dist/kaito-sbom.cdx.json `
+            --commit $env:GITHUB_SHA
+          Get-Content dist/kaito-sbom.cdx.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Generate release metadata
+        shell: pwsh
+        run: |
+          $exeSigning = Get-Content 'artifacts/windows-signing-executable.json' -Raw | ConvertFrom-Json
+          $installerSigning = Get-Content 'artifacts/windows-signing-installer.json' -Raw | ConvertFrom-Json
+          if ($exeSigning.result -ne $installerSigning.result) {
+            throw "Executable and installer signing states differ: $($exeSigning.result) vs $($installerSigning.result)"
+          }
+
+          $assetPaths = @(
+            (Resolve-Path 'dist/kaito.exe').Path,
+            (Resolve-Path $env:KAITO_INSTALLER).Path,
+            (Resolve-Path 'dist/kaito-sbom.cdx.json').Path
+          )
+          $assets = foreach ($assetPath in $assetPaths) {
+            $item = Get-Item $assetPath
+            [ordered]@{
+              name = $item.Name
+              sha256 = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = $item.Length
+            }
+          }
+
+          $metadata = [ordered]@{
+            schema_version = 1
+            version = $env:KAITO_VERSION
+            tag = $env:GITHUB_REF_NAME
+            commit = $env:GITHUB_SHA
+            workflow_run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            signing = [ordered]@{
+              mode = $env:WINDOWS_SIGNING_MODE
+              result = $exeSigning.result
+              certificate = $exeSigning.certificate
+            }
+            assets = $assets
+          }
+          $metadata | ConvertTo-Json -Depth 10 | Set-Content 'dist/RELEASE-METADATA.json' -Encoding utf8
+
       - name: Generate release checksums
         shell: pwsh
         run: |
-          $files = @('dist/kaito.exe', $env:KAITO_INSTALLER)
+          $files = @(
+            'dist/kaito.exe',
+            $env:KAITO_INSTALLER,
+            'dist/kaito-sbom.cdx.json',
+            'dist/RELEASE-METADATA.json'
+          )
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([System.IO.Path]::GetFileName($file))"
@@ -187,7 +297,7 @@ jobs:
             throw 'Release verification mutated tracked repository files.'
           }
 
-      - name: Upload verification artifacts
+      - name: Upload build verification evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kaito-release-verification
@@ -195,34 +305,470 @@ jobs:
             artifacts/
             dist/kaito.exe
             dist/kaito-installer-*.exe
+            dist/kaito-sbom.cdx.json
+            dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Publish GitHub release assets
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - name: Reconfirm Release absence before create-only Draft creation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
+          try {
+            $existing = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+            throw "Release $env:GITHUB_REF_NAME appeared before Draft creation with id $($existing.id). Refusing to reuse it."
+          }
+          catch {
+            if ($null -eq $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) {
+              throw
+            }
+          }
+
+      - name: Create a new Draft Release and upload assets by Release ID
+        id: create_draft_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $installerPaths = @(Resolve-Path 'dist/kaito-installer-*.exe' | ForEach-Object { $_.Path })
+          if ($installerPaths.Count -ne 1) {
+            throw "Expected exactly one installer asset, found $($installerPaths.Count)."
+          }
+          $assetItems = @(
+            Get-Item (Resolve-Path 'dist/kaito.exe').Path
+            Get-Item $installerPaths[0]
+            Get-Item (Resolve-Path 'dist/kaito-sbom.cdx.json').Path
+            Get-Item (Resolve-Path 'dist/RELEASE-METADATA.json').Path
+            Get-Item (Resolve-Path 'dist/SHA256SUMS').Path
+          )
+          $expectedNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $actualNames = @($assetItems | ForEach-Object { $_.Name } | Sort-Object)
+          $assetDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($assetDifference.Count -gt 0) {
+            throw "Local Release asset set is incorrect: $($assetDifference | Out-String)"
+          }
+
+          $createUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases"
+          $createBody = @{
+            tag_name = $env:GITHUB_REF_NAME
+            name = "kaito v$env:KAITO_VERSION"
+            draft = $true
+            prerelease = $false
+            generate_release_notes = $true
+          } | ConvertTo-Json
+          try {
+            $created = Invoke-RestMethod -Method Post -Uri $createUri -Headers $headers -ContentType 'application/json' -Body $createBody
+          }
+          catch {
+            throw "Create-only Draft Release request failed. An existing or concurrently created Release is never reused. $($_.Exception.Message)"
+          }
+          $releaseId = [string]$created.id
+          if (
+            [string]::IsNullOrWhiteSpace($releaseId) -or
+            -not [bool]$created.draft -or
+            [string]$created.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Create Release API returned an unexpected Draft Release identity.'
+          }
+          "release_id=$releaseId" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          $uploadedNames = @()
+          foreach ($asset in $assetItems) {
+            $currentUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+            $current = Invoke-RestMethod -Method Get -Uri $currentUri -Headers $headers
+            if (
+              [string]$current.id -ne $releaseId -or
+              -not [bool]$current.draft -or
+              [string]$current.tag_name -ne $env:GITHUB_REF_NAME
+            ) {
+              throw "Draft Release identity or state changed before uploading $($asset.Name)."
+            }
+            $currentNames = @($current.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+            $expectedCurrentNames = @($uploadedNames | Sort-Object)
+            $currentDifference = @(Compare-Object -ReferenceObject $expectedCurrentNames -DifferenceObject $currentNames)
+            if ($currentDifference.Count -gt 0) {
+              throw "Draft Release assets changed outside this workflow before uploading $($asset.Name): $($currentDifference | Out-String)"
+            }
+            $uploadBase = ([string]$current.upload_url).Split('{')[0]
+            if ([string]::IsNullOrWhiteSpace($uploadBase)) {
+              throw 'Draft Release upload URL is missing.'
+            }
+            $uploadUri = "${uploadBase}?name=$([Uri]::EscapeDataString($asset.Name))"
+            $uploaded = Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType 'application/octet-stream' -InFile $asset.FullName
+            if ([string]$uploaded.name -ne $asset.Name) {
+              throw "Uploaded asset identity mismatch: expected=$($asset.Name) actual=$($uploaded.name)"
+            }
+            $uploadedNames += $asset.Name
+          }
+
+          $finalUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+          $final = Invoke-RestMethod -Method Get -Uri $finalUri -Headers $headers
+          $finalNames = @($final.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $finalDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $finalNames)
+          if (
+            [string]$final.id -ne $releaseId -or
+            -not [bool]$final.draft -or
+            [string]$final.tag_name -ne $env:GITHUB_REF_NAME -or
+            $finalDifference.Count -gt 0
+          ) {
+            throw 'Draft Release identity, state, or exact asset set changed after upload.'
+          }
+          [ordered]@{
+            schema_version = 1
+            release_id = $releaseId
+            tag = $final.tag_name
+            expected_commit = $env:GITHUB_SHA
+            draft = [bool]$final.draft
+            assets = @($final.assets | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size } })
+          } | ConvertTo-Json -Depth 6 | Set-Content artifacts/draft-release-created.json -Encoding utf8
+
+      - name: Confirm Release remains the same Draft before verification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $release = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -Headers $headers
+          if (-not [bool]$release.draft) { throw 'Release became public before publication verification completed.' }
+          if (
+            [string]$release.id -ne $releaseId -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Release identity changed unexpectedly before verification.'
+          }
+
+      - name: Redownload and verify Draft Release assets by Release ID
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $release = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId" -Headers $headers
+          if (
+            [string]$release.id -ne $releaseId -or
+            -not [bool]$release.draft -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Draft Release identity or state changed before redownload.'
+          }
+          $expectedReleaseNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $releaseNames = @($release.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $releaseDifference = @(Compare-Object -ReferenceObject $expectedReleaseNames -DifferenceObject $releaseNames)
+          if ($releaseDifference.Count -gt 0) {
+            throw "Draft Release asset set changed before redownload: $($releaseDifference | Out-String)"
+          }
+
+          $published = Join-Path $env:RUNNER_TEMP 'kaito-published-assets'
+          Remove-Item $published -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $published -Force | Out-Null
+          foreach ($asset in @($release.assets)) {
+            $assetHeaders = @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            }
+            $assetUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
+            $destination = Join-Path $published ([string]$asset.name)
+            Invoke-WebRequest -Method Get -Uri $assetUri -Headers $assetHeaders -OutFile $destination
+          }
+
+          $localSums = (Get-FileHash 'dist/SHA256SUMS' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $publishedSumsPath = Join-Path $published 'SHA256SUMS'
+          if (-not (Test-Path $publishedSumsPath -PathType Leaf)) { throw 'Published SHA256SUMS is missing.' }
+          $publishedSums = (Get-FileHash $publishedSumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($publishedSums -ne $localSums) { throw 'Published SHA256SUMS differs from the verified local file.' }
+
+          $expected = @{}
+          Get-Content $publishedSumsPath | ForEach-Object {
+            if ($_ -notmatch '^([0-9a-f]{64})\s+(.+)$') { throw "Invalid checksum line: $_" }
+            $name = $Matches[2].Trim()
+            if ($expected.ContainsKey($name)) { throw "Duplicate checksum entry: $name" }
+            $expected[$name] = $Matches[1]
+          }
+          if ($expected.Count -ne 4) { throw "SHA256SUMS must contain exactly four entries, found $($expected.Count)." }
+          $expectedChecksumNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json'
+          ) | Sort-Object
+          $actualChecksumNames = @($expected.Keys | Sort-Object)
+          $checksumNameDifference = @(Compare-Object -ReferenceObject $expectedChecksumNames -DifferenceObject $actualChecksumNames)
+          if ($checksumNameDifference.Count -gt 0) {
+            throw "Published SHA256SUMS file set is incorrect: $($checksumNameDifference | Out-String)"
+          }
+          foreach ($entry in $expected.GetEnumerator()) {
+            $assetPath = Join-Path $published $entry.Key
+            if (-not (Test-Path $assetPath -PathType Leaf)) { throw "Published asset is missing: $($entry.Key)" }
+            $actual = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $entry.Value) { throw "Published asset hash mismatch: $($entry.Key) $actual" }
+            "$actual  $($entry.Key)" | Add-Content artifacts/published-sha256.txt -Encoding ascii
+          }
+
+          $allowedNames = @($expected.Keys) + 'SHA256SUMS'
+          $unexpected = @(Get-ChildItem $published -File | Where-Object { $_.Name -notin $allowedNames })
+          if ($unexpected.Count -gt 0) {
+            throw "Unexpected published assets: $($unexpected.Name -join ', ')"
+          }
+
+          $releaseMetadata = Get-Content (Join-Path $published 'RELEASE-METADATA.json') -Raw | ConvertFrom-Json
+          if (
+            $releaseMetadata.version -ne $env:KAITO_VERSION -or
+            $releaseMetadata.tag -ne $env:GITHUB_REF_NAME -or
+            $releaseMetadata.commit -ne $env:GITHUB_SHA
+          ) {
+            throw 'Published release metadata does not match the tag target.'
+          }
+
+          $metadataAssets = @($releaseMetadata.assets)
+          if ($metadataAssets.Count -ne 3) { throw 'Published release metadata must describe exactly three assets.' }
+          $expectedMetadataNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json'
+          ) | Sort-Object
+          $actualMetadataNames = @($metadataAssets | ForEach-Object { $_.name } | Sort-Object)
+          $metadataNameDifference = @(Compare-Object -ReferenceObject $expectedMetadataNames -DifferenceObject $actualMetadataNames)
+          if ($metadataNameDifference.Count -gt 0) {
+            throw "Published release metadata asset set is incorrect: $($metadataNameDifference | Out-String)"
+          }
+          foreach ($asset in $metadataAssets) {
+            $assetPath = Join-Path $published $asset.name
+            if (-not (Test-Path $assetPath -PathType Leaf)) { throw "Metadata asset is missing: $($asset.name)" }
+            $item = Get-Item $assetPath
+            $actual = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $asset.sha256 -or $item.Length -ne $asset.size) {
+              throw "Published release metadata asset mismatch: $($asset.name)"
+            }
+          }
+
+          $sbom = Get-Content (Join-Path $published 'kaito-sbom.cdx.json') -Raw | ConvertFrom-Json
+          if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.specVersion -ne '1.6') {
+            throw 'Published SBOM is not CycloneDX 1.6.'
+          }
+          $sbomRoot = $sbom.metadata.component
+          if ($sbomRoot.name -ne 'kaito' -or $sbomRoot.version -ne $env:KAITO_VERSION) {
+            throw 'Published SBOM root component does not match the release version.'
+          }
+          $sourceCommit = @($sbomRoot.properties | Where-Object { $_.name -eq 'kaito:source-commit' })
+          if ($sourceCommit.Count -ne 1 -or $sourceCommit[0].value -ne $env:GITHUB_SHA) {
+            throw 'Published SBOM source commit does not match the tag target.'
+          }
+
+          $sevenZip = @($sbom.components | Where-Object { $_.name -eq '7-Zip' -and $_.version -eq '26.02' })
+          if ($sevenZip.Count -ne 1) {
+            throw 'Published SBOM does not contain the expected bundled 7-Zip 26.02 component.'
+          }
+          $seenBundled = @{}
+          Get-Content bundled/SHA256SUMS | ForEach-Object {
+            if ($_ -notmatch '^([0-9a-f]{64})\s+(.+)$') { throw "Invalid bundled checksum line: $_" }
+            $expectedHash = $Matches[1]
+            $bundledName = $Matches[2].Trim()
+            if ($seenBundled.ContainsKey($bundledName)) { throw "Duplicate bundled checksum entry: $bundledName" }
+            $seenBundled[$bundledName] = $true
+            $propertyName = "kaito:bundled-file:${bundledName}:sha256"
+            $property = @($sevenZip[0].properties | Where-Object { $_.name -eq $propertyName })
+            if ($property.Count -ne 1 -or $property[0].value -ne $expectedHash) {
+              throw "Published SBOM checksum mismatch for bundled file: $bundledName"
+            }
+          }
+          if ($seenBundled.Count -eq 0) { throw 'No bundled checksum entries were verified against the SBOM.' }
+
+          foreach ($binaryName in @('kaito.exe', "kaito-installer-$env:KAITO_VERSION.exe")) {
+            $binaryPath = Join-Path $published $binaryName
+            $signature = Get-AuthenticodeSignature $binaryPath
+            if ($releaseMetadata.signing.result -eq 'signed') {
+              if ($signature.Status -ne 'Valid') {
+                throw "Published signed asset failed Authenticode verification: $binaryName $($signature.Status)"
+              }
+              $expectedThumbprint = [string]$releaseMetadata.signing.certificate.thumbprint
+              if (
+                [string]::IsNullOrWhiteSpace($expectedThumbprint) -or
+                $null -eq $signature.SignerCertificate -or
+                -not [string]::Equals(
+                  $signature.SignerCertificate.Thumbprint,
+                  $expectedThumbprint,
+                  [System.StringComparison]::OrdinalIgnoreCase
+                )
+              ) {
+                throw "Published signed asset certificate does not match release metadata: $binaryName"
+              }
+            }
+            elseif ($releaseMetadata.signing.result -eq 'unsigned') {
+              if ($signature.Status -ne 'NotSigned') {
+                throw "Published unsigned asset has an unexpected signature state: $binaryName $($signature.Status)"
+              }
+            }
+            else {
+              throw "Published release metadata has an unsupported signing result: $($releaseMetadata.signing.result)"
+            }
+          }
+
+      - name: Upload publication verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: kaito v${{ env.KAITO_VERSION }}
-          generate_release_notes: true
-          files: |
-            dist/kaito.exe
-            dist/kaito-installer-*.exe
+          name: kaito-release-publication-evidence
+          path: |
+            artifacts/draft-release-created.json
+            artifacts/published-sha256.txt
+            dist/RELEASE-METADATA.json
             dist/SHA256SUMS
+
+      - name: Publish verified immutable GitHub Release by Release ID
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseId = '${{ steps.create_draft_release.outputs.release_id }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $masterCommit = Invoke-RestMethod -Method Get -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" -Headers $headers
+          $masterSha = [string]$masterCommit.object.sha
+          if ([string]::IsNullOrWhiteSpace($masterSha)) {
+            throw 'Unable to inspect master immediately before publication.'
+          }
+          if ($env:GITHUB_SHA -ne $masterSha) {
+            throw "master advanced after release verification; leaving the Release in draft state: tag=$env:GITHUB_SHA master=$masterSha"
+          }
+
+          $tagRef = "refs/tags/$env:GITHUB_REF_NAME"
+          $peeledTagRef = "${tagRef}^{}"
+          $remoteTagLines = @(& git ls-remote --tags origin $tagRef $peeledTagRef)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to inspect the remote tag immediately before publication.'
+          }
+          $directTagMatches = @($remoteTagLines | Where-Object {
+            $parts = [regex]::Split($_.Trim(), '\s+')
+            $parts.Count -eq 2 -and $parts[1] -eq $tagRef
+          })
+          $peeledTagMatches = @($remoteTagLines | Where-Object {
+            $parts = [regex]::Split($_.Trim(), '\s+')
+            $parts.Count -eq 2 -and $parts[1] -eq $peeledTagRef
+          })
+          if ($peeledTagMatches.Count -eq 1) {
+            $remoteTagCommit = ([regex]::Split($peeledTagMatches[0].Trim(), '\s+'))[0]
+          }
+          elseif ($directTagMatches.Count -eq 1) {
+            $remoteTagCommit = ([regex]::Split($directTagMatches[0].Trim(), '\s+'))[0]
+          }
+          else {
+            throw "Unable to resolve exactly one remote tag target: direct=$($directTagMatches.Count) peeled=$($peeledTagMatches.Count)"
+          }
+          if ($remoteTagCommit -ne $env:GITHUB_SHA) {
+            throw "Release tag target changed immediately before publication; leaving the Release in draft state: expected=$env:GITHUB_SHA remote=$remoteTagCommit"
+          }
+
+          $releaseUri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+          $release = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+          if (
+            [string]$release.id -ne $releaseId -or
+            -not [bool]$release.draft -or
+            [string]$release.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Release identity or Draft state changed immediately before publication.'
+          }
+          $expectedNames = @(
+            'kaito.exe',
+            "kaito-installer-$env:KAITO_VERSION.exe",
+            'kaito-sbom.cdx.json',
+            'RELEASE-METADATA.json',
+            'SHA256SUMS'
+          ) | Sort-Object
+          $actualNames = @($release.assets | ForEach-Object { [string]$_.name } | Sort-Object)
+          $assetDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($assetDifference.Count -gt 0) {
+            throw "Release assets changed immediately before publication: $($assetDifference | Out-String)"
+          }
+
+          $publishBody = @{ draft = $false } | ConvertTo-Json
+          $published = Invoke-RestMethod -Method Patch -Uri $releaseUri -Headers $headers -ContentType 'application/json' -Body $publishBody
+          if (
+            [string]$published.id -ne $releaseId -or
+            [bool]$published.draft -or
+            [string]$published.tag_name -ne $env:GITHUB_REF_NAME
+          ) {
+            throw 'Published Release identity or state is incorrect.'
+          }
+          $confirmed = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+          if ($null -eq $confirmed.PSObject.Properties['immutable'] -or -not [bool]$confirmed.immutable) {
+            throw 'The Release was published but GitHub did not report it as immutable. Treat this as a repository-settings failure.'
+          }
 
       - name: Record completed release
+        continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $checksums = Get-Content 'dist/SHA256SUMS' -Raw
+          $releaseMetadata = Get-Content 'dist/RELEASE-METADATA.json' -Raw | ConvertFrom-Json
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $body = @"
           ## v$env:KAITO_VERSION release completed
 
-          Stable tag and GitHub Release were published successfully.
+          A create-only Draft Release was uploaded and verified by immutable Release ID, then published after the remote tag target and GitHub Release immutability had been explicitly verified.
+
+          Signing mode: ``$($releaseMetadata.signing.mode)``
+          Signing result: ``$($releaseMetadata.signing.result)``
 
           ```text
           $checksums
           ```
 
+          Workflow: $runUrl
+          "@
+          gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
+
+      - name: Record failed release workflow
+        if: failure()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $body = @"
+          ## v$env:KAITO_VERSION release workflow failed
+
+          Existing Draft or public Releases are never reused, existing assets are never deleted or overwritten, and every post-creation operation is pinned to the Release ID returned by the create request.
+
+          Signing mode: ``$env:WINDOWS_SIGNING_MODE``
           Workflow: $runUrl
           "@
           gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body

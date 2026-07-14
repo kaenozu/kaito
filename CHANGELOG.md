@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- Release資産へCycloneDX 1.6形式のruntime SBOMと、タグ・コミット・署名状態・資産ハッシュを記録する`RELEASE-METADATA.json`を追加
+- 自己署名のテスト証明書を使い、署名モード、証明書事前検査、SignTool署名・検証を確認するWindows CIを追加
+
+### Changed
+
+- Windows署名方針を`disabled`、`optional`、`required`の明示的な3モードへ変更
+- Releaseを一旦Draftとして作成し、全資産を再ダウンロードしてSHA-256、メタデータ、SBOM、署名状態を照合した後に公開する方式へ変更
+- 署名前にPFXのBase64、パスワード、秘密鍵、Code Signing EKU、有効期間、SignToolの存在を検証
+
+### Fixed
+
+- 壊れた署名Secretが設定されているだけで、意図した未署名Releaseまでビルド後半で失敗する問題
+- 公開済み資産がローカルの検証済み成果物と同一かをRelease Workflow内で確認していなかった問題
+- 公開済みReleaseのWorkflow再実行で、検証前に既存の公開Assetを上書きできる問題
+- 不正形式・重複・実体と不一致の同梱チェックサムをSBOM生成が黙って受理できる問題
+
+### Security
+
+- 署名済み成果物を`signtool verify /pa /all`とAuthenticode APIで二重検証
+- 公開資産の再取得後に、未署名モードでは予期しない署名がないこと、署名モードでは署名が有効であることを検証
+- 一時PFXの継承ACLを削除して現在ユーザーだけへアクセスを限定し、書き込み後のデコード済みバッファを消去
+
 ## [0.11.0] - 2026-07-12
 
 ### Added
