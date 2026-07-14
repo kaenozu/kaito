@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 concurrency:
   group: unified-review-finalizer
@@ -56,3 +55,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/publish_unified_tree_once.py
+
+      - name: Upload publisher failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unified-publisher-error
+          if-no-files-found: error
+          path: artifacts/publisher-error.txt
