@@ -1,0 +1,300 @@
+name: Publish verified Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PUBLISH_VERIFIED_RELEASE exactly
+        required: true
+        type: string
+      tag:
+        description: Exact stable tag created by the signed Draft Release workflow
+        required: true
+        type: string
+      target_commit:
+        description: Exact current master commit and tag target
+        required: true
+        type: string
+      release_id:
+        description: Exact verified Draft Release numeric ID
+        required: true
+        type: string
+      build_run_id:
+        description: Exact successful Build signed draft Release run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+concurrency:
+  group: publish-verified-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+
+    steps:
+      - name: Reject untrusted dispatch context and malformed inputs
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master') {
+            throw "Publish workflow must be dispatched from master, not $env:GITHUB_REF"
+          }
+          if ('${{ inputs.confirmation }}' -cne 'PUBLISH_VERIFIED_RELEASE') {
+            throw 'Publication confirmation did not match exactly.'
+          }
+          if ('${{ inputs.tag }}' -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'Tag must be a stable vMAJOR.MINOR.PATCH tag.'
+          }
+          if ('${{ inputs.target_commit }}' -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'target_commit must be a lowercase 40-character SHA.'
+          }
+          if ('${{ inputs.release_id }}' -cnotmatch '^[1-9][0-9]*$') {
+            throw 'release_id must be numeric.'
+          }
+          if ('${{ inputs.build_run_id }}' -cnotmatch '^[1-9][0-9]*$') {
+            throw 'build_run_id must be numeric.'
+          }
+
+      - name: Check out trusted master commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.target_commit }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Bind master, tag, Draft Release, and build run identity
+        id: identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_COMMIT: ${{ inputs.target_commit }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          INPUT_BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          function Resolve-CommitSha([string]$Type, [string]$Sha) {
+            $currentType = $Type
+            $currentSha = $Sha
+            for ($depth = 0; $depth -lt 4; $depth += 1) {
+              if ($currentType -eq 'commit') { return $currentSha }
+              if ($currentType -ne 'tag') {
+                throw "Unexpected Git object type while resolving tag: $currentType"
+              }
+              $tagObject = gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$currentSha" | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve annotated tag object.' }
+              $currentType = [string]$tagObject.object.type
+              $currentSha = [string]$tagObject.object.sha
+            }
+            throw 'Annotated tag nesting exceeded the supported depth.'
+          }
+
+          $masterSha = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($masterSha)) {
+            throw 'Unable to read live master.'
+          }
+          $masterSha = $masterSha.Trim()
+          if ($masterSha -cne $env:INPUT_COMMIT) {
+            throw "master does not match approved target: master=$masterSha target=$env:INPUT_COMMIT"
+          }
+          if ($env:GITHUB_SHA -cne $env:INPUT_COMMIT) {
+            throw "Checked-out workflow commit mismatch: checkout=$env:GITHUB_SHA target=$env:INPUT_COMMIT"
+          }
+
+          $tagRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:INPUT_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Unable to read tag $env:INPUT_TAG" }
+          $tagCommit = Resolve-CommitSha ([string]$tagRef.object.type) ([string]$tagRef.object.sha)
+          if ($tagCommit -cne $env:INPUT_COMMIT) {
+            throw "Tag does not resolve to target commit: tag=$tagCommit target=$env:INPUT_COMMIT"
+          }
+
+          $projectVersion = uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read project version.' }
+          $projectVersion = $projectVersion.Trim()
+          if ($env:INPUT_TAG -cne "v$projectVersion") {
+            throw "Tag/version mismatch: tag=$env:INPUT_TAG version=$projectVersion"
+          }
+          if ($projectVersion -match '(dev|a|b|rc)') {
+            throw "Stable publication refuses prerelease version $projectVersion"
+          }
+          if (-not (Select-String -Path CHANGELOG.md -Pattern ([regex]::Escape("[$projectVersion]")) -Quiet)) {
+            throw "CHANGELOG does not contain [$projectVersion]"
+          }
+
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:INPUT_RELEASE_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read the requested Draft Release.' }
+          if ([string]$release.id -cne $env:INPUT_RELEASE_ID) {
+            throw "Release ID mismatch: $($release.id)"
+          }
+          if (-not [bool]$release.draft) { throw 'Requested Release is not draft.' }
+          if ([bool]$release.prerelease) { throw 'Stable publication refuses a prerelease.' }
+          if ([string]$release.tag_name -cne $env:INPUT_TAG) {
+            throw "Release tag mismatch: $($release.tag_name)"
+          }
+          if (@($release.assets).Count -ne 5) {
+            throw "Release asset count mismatch: $(@($release.assets).Count)"
+          }
+
+          $resolvedByTag = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:INPUT_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve Release by tag.' }
+          if ([string]$resolvedByTag.id -cne $env:INPUT_RELEASE_ID) {
+            throw "Release-by-tag identity mismatch: $($resolvedByTag.id)"
+          }
+
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:INPUT_BUILD_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read build workflow run.' }
+          if ([string]$run.status -cne 'completed' -or [string]$run.conclusion -cne 'success') {
+            throw "Build run is not a completed success: status=$($run.status) conclusion=$($run.conclusion)"
+          }
+          if ([string]$run.head_sha -cne $env:INPUT_COMMIT) {
+            throw "Build run commit mismatch: $($run.head_sha)"
+          }
+          if ([string]$run.event -cne 'push') {
+            throw "Build run event must be push, not $($run.event)"
+          }
+          if ([string]$run.head_branch -cne $env:INPUT_TAG) {
+            throw "Build run tag mismatch: $($run.head_branch)"
+          }
+          if ([string]$run.path -notmatch 'release\.yml') {
+            throw "Build run did not execute release.yml: $($run.path)"
+          }
+
+          "version=$projectVersion" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Download immutable build evidence
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $referenceRoot = Join-Path $env:RUNNER_TEMP 'kaito-build-reference'
+          Remove-Item $referenceRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $referenceRoot -Force | Out-Null
+          gh run download '${{ inputs.build_run_id }}' `
+            --repo $env:GITHUB_REPOSITORY `
+            --name kaito-release-verification `
+            --dir $referenceRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download build verification artifact.' }
+          $checksums = @(Get-ChildItem $referenceRoot -Recurse -File -Filter SHA256SUMS)
+          if ($checksums.Count -ne 1) {
+            throw "Expected exactly one reference SHA256SUMS, found $($checksums.Count)"
+          }
+          "KAITO_REFERENCE_CHECKSUMS=$($checksums[0].FullName)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Redownload exact Draft Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $published = Join-Path $env:RUNNER_TEMP 'kaito-draft-assets-for-publication'
+          Remove-Item $published -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $published -Force | Out-Null
+          gh release download '${{ inputs.tag }}' `
+            --repo $env:GITHUB_REPOSITORY `
+            --dir $published
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download Draft Release assets.' }
+          "KAITO_PUBLICATION_ASSETS=$published" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Verify exact package before publication
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/publication -Force | Out-Null
+          ./tools/verify_release_package.ps1 `
+            -Profile production `
+            -PackageDir $env:KAITO_PUBLICATION_ASSETS `
+            -Version '${{ steps.identity.outputs.version }}' `
+            -Tag '${{ inputs.tag }}' `
+            -Commit '${{ inputs.target_commit }}' `
+            -ReferenceChecksumsPath $env:KAITO_REFERENCE_CHECKSUMS `
+            -ArtifactsDir 'artifacts/publication'
+
+      - name: Recheck live identity and publish only the same verified Draft Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_COMMIT: ${{ inputs.target_commit }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          INPUT_BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          $masterSha = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $masterSha -cne $env:INPUT_COMMIT) {
+            throw "master changed before publication: master=$masterSha expected=$env:INPUT_COMMIT"
+          }
+
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:INPUT_BUILD_RUN_ID" | ConvertFrom-Json
+          if (
+            $LASTEXITCODE -ne 0 -or
+            [string]$run.status -cne 'completed' -or
+            [string]$run.conclusion -cne 'success' -or
+            [string]$run.head_sha -cne $env:INPUT_COMMIT
+          ) {
+            throw 'Build run identity changed or is no longer a successful exact-commit run.'
+          }
+
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:INPUT_RELEASE_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to re-read Draft Release.' }
+          if (
+            [string]$release.id -cne $env:INPUT_RELEASE_ID -or
+            -not [bool]$release.draft -or
+            [string]$release.tag_name -cne $env:INPUT_TAG -or
+            @($release.assets).Count -ne 5
+          ) {
+            throw 'Draft Release identity or asset set changed before publication.'
+          }
+
+          $published = gh api `
+            --method PATCH `
+            -H 'Accept: application/vnd.github+json' `
+            -H 'X-GitHub-Api-Version: 2022-11-28' `
+            -f draft=false `
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:INPUT_RELEASE_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub rejected Release publication.' }
+          if ([bool]$published.draft) { throw 'Release remained draft after publication request.' }
+          if ([string]$published.id -cne $env:INPUT_RELEASE_ID) {
+            throw 'Published Release ID changed unexpectedly.'
+          }
+
+      - name: Upload final publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-release-final-publication-evidence
+          if-no-files-found: warn
+          path: artifacts/publication/
+
+      - name: Record completed publication
+        if: success()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $body = @"
+          ## ${{ inputs.tag }} publication completed
+
+          A separately dispatched publication job redownloaded the exact Draft Release, compared it with build-run evidence, verified signatures and package identity, rechecked live master, tag, Release ID, and build run, and then published the same Release.
+
+          Commit: ``${{ inputs.target_commit }}``
+          Release ID: ``${{ inputs.release_id }}``
+          Build run ID: ``${{ inputs.build_run_id }}``
+          Publication run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+          "@
+          gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
