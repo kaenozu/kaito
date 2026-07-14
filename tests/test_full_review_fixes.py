@@ -227,24 +227,16 @@ def test_image_preview_rejects_pixel_count_before_full_decode() -> None:
     assert "画素数" in str(message)
 
 
-def test_release_and_ci_fail_closed_on_lock_and_signing() -> None:
+def test_personal_app_ci_uses_locked_build_and_installer_checks() -> None:
     ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    publish = Path(".github/workflows/release-publish.yml").read_text(encoding="utf-8")
 
     assert 'branches: [master, "feature/**"]' in ci
     assert '"agent/**"' not in ci
     assert "uv lock --check" in ci
-    assert "uv lock --check" in release
-    assert "WINDOWS_SIGNING_MODE: required" in release
-    assert "Validate Windows signing configuration" in release
-    assert "Sign executable according to release mode" in release
-    assert "Sign installer according to release mode" in release
-    assert "Create a new draft GitHub Release with verified assets" in release
-    assert "Verify redownloaded draft Release package" in release
-    assert "Publish verified GitHub Release" not in release
-    assert "name: Publish verified Release" in publish
-    assert "-F draft=false" in publish
+    assert "pyinstaller --clean --noconfirm build.spec" in ci
+    assert "tools/test_installer.ps1" in ci
+    assert "gh release download" not in ci
+    assert "test_upgrade.ps1" not in ci
 
 
 def test_gui_acceptance_workflow_builds_and_launches_packaged_gui() -> None:

@@ -24,7 +24,6 @@ Windows 10/11向けのZIP・RAR・7zアーカイブ閲覧／検査／展開／�
 - 一時ステージングへの展開と、検証後の安全な移動
 - 原子的なZIP／7z作成
 - 処理中のキャンセルと7-Zip子プロセスの終了
-- GitHub Releasesまたは公開更新エンドポイントによる更新通知（無効化可能）
 - 個人パスとパスワードを除外した診断レポートのコピー
 - 7-Zip 26.02の同梱とSHA-256整合性検証
 
@@ -45,15 +44,20 @@ RARは展開専用です。`.rar`を出力先として指定しても、ZIPへ�
 - Windows 10 / 11（64-bit）
 - 別途7-Zipをインストールする必要はありません
 
-配布EXEは同梱した固定バージョンの7-Zipだけを使用します。同梱ファイルが欠落または改変されている場合、システムに別の7-Zipがあっても処理を続行しません。
+ローカルで作成したEXEは同梱した固定バージョンの7-Zipだけを使用します。同梱ファイルが欠落または改変されている場合、システムに別の7-Zipがあっても処理を続行しません。
 
-## インストール
+## ローカル利用
 
-1. GitHub Releasesから`kaito-installer-*.exe`を取得します。
-2. インストーラーを実行します。
-3. `.zip`、`.rar`、`.7z`の右クリックメニューから「kaitoで解凍」または「kaitoで整合性を検査」を使用できます。
+このアプリは個人利用を前提としており、公開Releaseや自動更新サービスは使用しません。
 
-インストーラーは現在のユーザーだけにインストールし、管理者権限を必須としません。
+```powershell
+uv lock --check
+uv sync --frozen
+uv run pyinstaller --clean --noconfirm build.spec
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\kaito.iss
+```
+
+生成物は`dist/kaito.exe`と`dist/kaito-installer-*.exe`です。インストーラーは現在のユーザーだけにインストールし、管理者権限を必須としません。
 
 ## 基本操作
 
@@ -112,64 +116,6 @@ kaito.exe --diagnostics
 `--backend-info --json`は、バックエンドの取得元、実行パス、バージョン、SHA-256、整合性判定を機械可読形式で出力します。
 
 `--diagnostics`はOS、kaito、Python、7-Zip、安全上限だけを出力し、アーカイブの完全パス、エントリ名、パスワードは含めません。
-
-## 更新確認
-
-更新確認は短いHTTPSリクエストでバージョン情報だけを取得します。ファイル名、アーカイブ内容、設定値、パスワードは送信しません。設定画面から無効化でき、画面上の「更新確認」ボタンから手動実行もできます。
-
-既定のGitHub Releases APIが非公開リポジトリを指す場合、認証なしでは更新情報を取得できません。配布時は次のどちらかを実行環境へ設定してください。値はkaitoの設定ファイルへ保存されません。
-
-- `KAITO_UPDATE_ENDPOINT`: 認証なしで取得できる公開Release API、または同じ`tag_name`／`html_url`形式を返すJSONエンドポイント
-- `KAITO_GITHUB_TOKEN`: 非公開GitHub Releasesを読むための最小権限トークン
-
-どちらも利用できない場合、更新確認だけを失敗として扱い、アーカイブ操作は継続します。安定版とプレリリースは分けて比較し、`1.2rc1`を`1.2.0`より新しいものとして誤通知しません。
-
-## リリース前確認
-
-```powershell
-.\tools\prepare_release.ps1
-```
-
-このスクリプトは、安定版番号、CHANGELOG、作業ツリー、既存リモートタグを検査します。既存タグを移動せず、衝突した場合は必ずバージョンを上げてください。
-
-### Windowsコード署名
-
-`tools/sign_windows.ps1`は、ローカル検証とRelease rehearsal向けに`disabled`、`optional`、`required`の3モードを提供します。
-
-| 値 | 動作 |
-|---|---|
-| `disabled` | 署名情報を使用せず、未署名成果物を生成します。ローカル開発専用です。 |
-| `optional` | 署名情報が両方未設定なら未署名で続行し、片側だけ設定または証明書不正なら失敗します。 |
-| `required` | 有効な証明書と認証情報が揃わない限り、ビルド前に失敗します。 |
-
-安定版のtag-triggered Release workflowは`required`へ固定されており、未署名のEXEまたはインストーラーを公開できません。Production Environmentには次を設定します。
-
-- `WINDOWS_CERTIFICATE_BASE64`: PFXファイルのBase64
-- `WINDOWS_CERTIFICATE_PASSWORD`: PFX認証情報
-- `WINDOWS_TIMESTAMP_URL`: HTTPSのタイムスタンプサービスURL
-
-署名前にBase64、PFX、秘密鍵、Code Signing EKU、有効期間、SignTool、タイムスタンプURLを検査します。署名後はSignToolとAuthenticode APIの両方で検証し、構成した証明書のthumbprintと一致しない成果物を拒否します。
-
-Production EnvironmentのRequired Reviewerを利用できない場合は、[`docs/PRODUCTION_SIGNING_AUTHORIZATION.md`](docs/PRODUCTION_SIGNING_AUTHORIZATION.md)の一回限りの独立承認を使用します。成功したCIや自己承認は代替になりません。
-
-### Release資産の検証
-
-Release workflowは成果物を一旦Draft Releaseへアップロードし、同じWorkflow内で全資産を再ダウンロードしてSHA-256、バージョン、コミット、SBOM JSON、署名状態を照合した後に公開へ切り替えます。
-
-各Releaseには次を含めます。
-
-- `kaito.exe`
-- `kaito-installer-<version>.exe`
-- `SHA256SUMS`
-- `RELEASE-METADATA.json`
-- `kaito-sbom.cdx.json`（CycloneDX 1.6 runtime SBOM）
-
-```powershell
-Get-FileHash .\kaito.exe -Algorithm SHA256
-Get-FileHash .\kaito-installer-*.exe -Algorithm SHA256
-```
-
-算出値を`SHA256SUMS`と照合してください。`RELEASE-METADATA.json`にはタグ、コミット、署名モード、署名結果、各資産のSHA-256とサイズを記録します。
 
 ## Windows GUI受け入れ
 
