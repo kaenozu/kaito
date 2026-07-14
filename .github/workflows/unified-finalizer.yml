@@ -59,4 +59,5 @@ jobs:
         with:
           name: validated-unified-tree
           if-no-files-found: error
+          include-hidden-files: true
           path: artifacts/unified-tree/
