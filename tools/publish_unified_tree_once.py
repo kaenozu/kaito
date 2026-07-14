@@ -11,6 +11,7 @@ from typing import Any
 
 REPOSITORY = os.environ["GITHUB_REPOSITORY"]
 BRANCH = "agent/unified-review-release-fixes"
+PR_NUMBER = 25
 TOKEN = os.environ["GITHUB_TOKEN"]
 API_ROOT = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +78,7 @@ def changed_paths() -> tuple[set[str], set[str]]:
     return modified, deleted
 
 
-def main() -> None:
+def publish() -> str:
     local_head = git("rev-parse", "HEAD")
     ref = api("GET", f"/git/ref/heads/{BRANCH}")
     remote_head = str(ref["object"]["sha"])
@@ -108,9 +109,7 @@ def main() -> None:
         )
 
     for relative in sorted(deleted):
-        elements.append(
-            {"path": relative, "mode": "100644", "type": "blob", "sha": None}
-        )
+        elements.append({"path": relative, "sha": None})
 
     tree = api("POST", "/git/trees", {"base_tree": base_tree, "tree": elements})
     new_commit = api(
@@ -127,7 +126,34 @@ def main() -> None:
         f"/git/refs/heads/{BRANCH}",
         {"sha": new_commit["sha"], "force": False},
     )
-    print(f"Published unified commit {new_commit['sha']}")
+    return str(new_commit["sha"])
+
+
+def report_failure(message: str) -> None:
+    try:
+        api(
+            "POST",
+            f"/issues/{PR_NUMBER}/comments",
+            {
+                "body": (
+                    "## Unified finalizer publication failed\n\n"
+                    "All formatting, lint, type checking, and tests completed successfully, "
+                    "but the atomic Git Data API publication step failed.\n\n"
+                    f"```text\n{message[:5000]}\n```"
+                )
+            },
+        )
+    except Exception as report_error:
+        print(f"Unable to post failure details: {report_error}")
+
+
+def main() -> None:
+    try:
+        commit_sha = publish()
+    except Exception as exc:
+        report_failure(str(exc))
+        raise
+    print(f"Published unified commit {commit_sha}")
 
 
 if __name__ == "__main__":
