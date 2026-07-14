@@ -10,9 +10,10 @@ ROUNDTRIP_PATH = (
 PRODUCTION_CANARY_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "production-signing-canary.yml"
 )
-APPROVAL_GATE_PATH = (
+FIXED_HEAD_GATE_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "release-approval-gate.yml"
 )
+FIXED_HEAD_VERIFIER_PATH = REPOSITORY_ROOT / "tools" / "verify_pr_approval_gate.py"
 OPERATIONS_DOC_PATH = REPOSITORY_ROOT / "docs" / "RELEASE_OPERATIONS.md"
 
 
@@ -84,11 +85,13 @@ def test_production_signing_canary_is_manual_read_only_and_metadata_only() -> No
     assert "contents: write" not in workflow
 
 
-def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
-    workflow = _text(APPROVAL_GATE_PATH)
+def test_release_fixed_head_gate_is_manual_read_only_and_solo_compatible() -> None:
+    workflow = _text(FIXED_HEAD_GATE_PATH)
+    verifier = _text(FIXED_HEAD_VERIFIER_PATH)
 
     _assert_manual_only(workflow)
     _assert_actions_are_commit_pinned(workflow)
+    assert "name: Release PR fixed-head gate" in workflow
     assert "VERIFY_FIXED_PR_GATE" in workflow
     assert (
         "permissions:\n  actions: read\n  contents: read\n  pull-requests: read"
@@ -103,26 +106,30 @@ def test_release_approval_gate_is_manual_read_only_and_fixed_head() -> None:
     assert "pull-requests: write" not in workflow
     assert "gh release" not in workflow
     assert "git/refs/tags" not in workflow
+    assert "solo_maintainer_policy" in verifier
+    assert "independent_approval" not in verifier
+    assert "collaborators/" not in verifier
 
 
 def test_repository_protection_is_required_before_first_merge() -> None:
     operations = _text(OPERATIONS_DOC_PATH)
 
-    protection = operations.index("Protect `master` before merging PR #11")
-    first_merge = operations.index("Merge PR #11")
+    protection = operations.index("Protect `master` before merging PR #20")
+    first_merge = operations.index("Merge PR #20")
     assert protection < first_merge
-    assert "Do not substitute self-approval" in operations
-    assert "required reviewers are unavailable" in operations
+    assert "required approval count is zero" in operations
+    assert "External approving review is optional" in operations
+    assert "Enable Release immutability" in operations
 
 
 def test_operational_workflows_use_distinct_concurrency_groups() -> None:
     roundtrip = _text(ROUNDTRIP_PATH)
     production = _text(PRODUCTION_CANARY_PATH)
-    approval = _text(APPROVAL_GATE_PATH)
+    fixed_head = _text(FIXED_HEAD_GATE_PATH)
 
     assert "group: draft-release-roundtrip" in roundtrip
     assert "group: production-signing-canary" in production
-    assert "group: release-pr-approval-gate-${{ inputs.pr_number }}" in approval
+    assert "group: release-pr-fixed-head-gate-${{ inputs.pr_number }}" in fixed_head
     assert "cancel-in-progress: false" in roundtrip
     assert "cancel-in-progress: false" in production
-    assert "cancel-in-progress: false" in approval
+    assert "cancel-in-progress: false" in fixed_head
