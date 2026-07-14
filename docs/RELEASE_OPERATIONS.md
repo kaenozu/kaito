@@ -44,11 +44,11 @@ Configure a GitHub Environment named `production` before production signing:
 - store `WINDOWS_TIMESTAMP_URL` as an HTTPS Environment variable;
 - restrict deployment branches or tags to the intended release policy;
 - verify ordinary pull-request workflows cannot read production secrets;
-- add an independent Required Reviewer and prevent self-review when the plan supports those controls.
+- add an independent Required Reviewer and prevent self-review.
 
 The stable Release workflow is fixed to required signing. Missing, partial, invalid, expired, incorrectly scoped, or mismatched signing material fails before publication.
 
-If Environment Required Reviewers are unavailable, the one-time issue-comment authorization in `PRODUCTION_SIGNING_AUTHORIZATION.md` is mandatory. An unprotected Environment, a confirmation string alone, repository-owner self-approval, or CI success is not equivalent.
+An independent Environment approval is mandatory for the stable signed Draft build and the separate publication job. If the GitHub plan cannot enforce an independent Required Reviewer for this private repository, the stable production release remains blocked until an equivalent enforceable control is available. The one-time issue-comment authorization in `PRODUCTION_SIGNING_AUTHORIZATION.md` is scoped to the production-signing canary and is not a substitute for stable Release Environment approval.
 
 ## Draft Release roundtrip canary
 
@@ -62,9 +62,9 @@ Run `Production signing canary` only after Environment configuration, deployment
 
 A production Release is a separate decision and is split into two operations.
 
-1. After explicit tag authorization, push a new stable tag that points to the exact live `master` HEAD. `Build signed draft Release` requires production signing, refuses every existing Release for the tag, creates a new Draft Release, redownloads all five assets, and verifies them against build evidence.
+1. After explicit tag authorization, push a new stable tag that points to the exact live `master` HEAD. `Build signed draft Release` requires production signing and independent Environment approval, refuses every existing Release for the tag, creates a new Draft Release, redownloads all five assets, and verifies them against build evidence.
 2. Record the exact tag, commit, Release ID, and successful build run ID. Inspect the exact production-signed Draft artifacts.
-3. After separate publication authorization, dispatch `Publish verified Release` from `master` with those exact identities and `PUBLISH_VERIFIED_RELEASE`.
+3. After separate publication authorization and a second independent Environment approval, dispatch `Publish verified Release` from `master` with those exact identities and `PUBLISH_VERIFIED_RELEASE`.
 4. The publication workflow downloads the original build-run evidence, redownloads the same Draft assets, runs the shared production verifier, rechecks live identity, and only then makes that Release public.
 
 The build workflow contains no publication command. Existing Releases and tags are never reused, overwritten, or moved. See `RELEASE_PUBLICATION.md`.
