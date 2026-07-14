@@ -1,10 +1,12 @@
-# Release operations and approval gates
+# Release operations and fixed-head gates
 
 This document separates version-controlled safeguards from repository settings and production credentials. A green pull request does not by itself authorize a merge, tag, signing-secret use, or Release publication.
 
+`kaenozu/kaito` uses a solo-maintainer model. External approving review is optional and the required approval count is zero. The maintainer must still make an explicit decision for the exact target after all technical and administrative gates pass.
+
 ## Non-negotiable authorization boundaries
 
-The following actions require an explicit decision for the exact target and must not be inferred from a successful CI run or an earlier approval:
+The following actions require an explicit decision for the exact target and must not be inferred from a successful CI run or an earlier audit:
 
 - marking a Draft pull request Ready for Review;
 - merging or enabling auto-merge;
@@ -12,80 +14,80 @@ The following actions require an explicit decision for the exact target and must
 - creating, publishing, or deleting a Release outside an authorized canary;
 - using production signing secrets, a production certificate, or a production timestamp service.
 
-Do not substitute self-approval, a bot comment, a resolved thread, or a successful workflow for an independent approving review.
+Bot or AI feedback may assist review but is not an authorization boundary. No second human is required for PR merge authorization under the solo-maintainer policy.
 
 ## Repository capability and protection gate
 
-Protect `master` before merging PR #11. The first release-pipeline merge must not occur while repository policy is only documented but unenforced.
+Protect `master` before merging PR #20. The first release-pipeline merge must not occur while repository policy is only documented but unenforced.
 
 Required branch protection or ruleset controls:
 
 - require a pull request before merging;
-- require at least one independent approving review;
-- dismiss stale approvals after a new commit;
-- require approval of the most recent push by someone other than the pusher when supported;
+- set required approving reviews to zero;
+- do not require approval of the most recent push by another user;
 - require all review conversations to be resolved;
 - require the normal Windows CI, Release Hardening, and Release Rehearsal checks;
 - require the pull request to be current with `master` when supported;
 - prevent force pushes and branch deletion;
-- apply the rule to administrators or prohibit administrative bypass during this release sequence.
+- apply the rule to administrators or otherwise record any unavoidable owner bypass;
+- Enable Release immutability for future published Releases.
 
-The repository is private. Verify the active GitHub plan before relying on Environment protection. Environment secrets and deployment branches require a plan that supports private-repository Environments. Required reviewers and wait timers can have narrower private-repository availability. If required reviewers are unavailable, production signing remains blocked until an explicitly accepted alternative control exists; creating an unprotected `production` Environment is not equivalent.
+The repository is private. Verify the active GitHub plan before relying on branch protection, rulesets, or Environment protection. Environment secrets and deployment branches require a plan that supports the selected private-repository controls.
 
-## Fixed-head pull-request approval gate
+## Fixed-head pull-request gate
 
-Workflow: `Release PR approval gate`
+Workflow: `Release PR fixed-head gate`
 
-Purpose: produce fail-closed evidence for a specific pull request, HEAD SHA, current `master` SHA, exact changed-file set, required workflow set, review-thread state, auto-merge state, and independent approval.
+Purpose: produce fail-closed evidence for a specific pull request, HEAD SHA, current `master` SHA, exact changed-file set, required workflow set, review-thread state, and auto-merge state.
 
 The workflow is manual and read-only. It requires the exact confirmation phrase `VERIFY_FIXED_PR_GATE` and uploads JSON evidence. A result is:
 
-- `PASS` only when every check passes;
-- `BLOCKED` when the only missing condition is an independent approval of the fixed HEAD;
-- `FAIL` for a state, SHA, file, workflow, review-thread, or auto-merge mismatch;
+- `PASS` only when every fixed-head and repository-state check passes;
+- `FAIL` for a PR state, SHA, file, workflow, review-thread, or auto-merge mismatch;
 - `INCONCLUSIVE` when GitHub state cannot be retrieved or evaluated completely.
 
-For PR #11, the reviewed snapshot is:
+The gate does not fetch collaborator permissions and does not require an `APPROVED` review. It records a `solo_maintainer_policy` PASS check instead.
+
+For PR #20, the previously validated snapshot was:
 
 - base ref: `master`;
 - current base SHA: `bfcbd9904196043e371a8f398edc71a6de30cdf1`;
-- fixed HEAD: `9174b11a87d80e4654c987b7d1708427367b5ee0`;
-- comparison: 62 ahead, 0 behind;
+- fixed HEAD: `8cac1e2985a9ca3c7f68893f0a95debbc6f8b67b`;
+- comparison: 63 ahead, 0 behind;
 - required workflows: `CI`, `Release hardening checks`, `Release rehearsal`;
 - exact changed files: 12.
 
-The pull-request metadata endpoint previously reported 13 files because it exposed `tests/test_productivity_services.py`, a change already present on the current `master`. The direct current-`master` comparison is authoritative for the gate and must still be reconfirmed immediately before approval and immediately before merge.
+That snapshot is no longer merge-authorizing because a Release publication race was identified. The corrected PR #20 HEAD, comparison, file set, and workflows must be supplied when the gate is eventually run.
 
 ## Required repository settings
 
 Configure a GitHub Environment named `production` before enabling production signing.
 
-- Add at least one independent Required Reviewer when the repository plan supports it.
-- Prevent self-review when supported.
 - Store `WINDOWS_CERTIFICATE_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` as Environment secrets, not repository-wide secrets.
 - Store `WINDOWS_TIMESTAMP_URL` as an Environment variable and require an HTTPS RFC 3161 endpoint.
 - Restrict Environment deployment branches or tags to the intended release policy.
 - Verify ordinary pull-request workflows cannot read production secrets.
+- An Environment Required Reviewer is optional under the solo-maintainer model; do not configure an impossible second-person requirement unless a collaborator is intentionally added later.
 
 These settings are not created by workflow YAML. Their presence must be checked in repository settings before production use.
 
 ## Pull-request and merge sequence
 
-1. Confirm the GitHub plan and identify a human reviewer with write, maintain, or admin permission who is not the pull-request author.
-2. Protect `master` before merging PR #11 with the controls listed above.
-3. Reconfirm PR #11 against the fixed base SHA, fixed HEAD, exact 12-file set, three successful workflows, zero unresolved threads, and disabled auto-merge.
-4. Obtain an independent `APPROVED` review anchored to the fixed PR #11 HEAD.
-5. Run the fixed-head approval gate and retain its JSON evidence.
-6. Merge PR #11 only after a separate explicit merge authorization and with an expected-head guard.
-7. Retarget PR #12 to `master`, update it to the new `master`, rerun all three required workflows, obtain a fresh independent approval, run the gate, and merge only after explicit authorization.
-8. Retarget PR #15 to `master`, update it to the new `master`, rerun all three required workflows, obtain a fresh independent approval, run the gate, and merge only after explicit authorization.
+1. Confirm the GitHub plan and available repository controls.
+2. Protect `master` before merging PR #20 with the controls listed above.
+3. Correct PR #20's Release publication race and rerun all required workflows on the resulting new HEAD.
+4. Reconfirm PR #20 against its current base SHA, fixed HEAD, exact file set, successful workflows, zero unresolved threads, disabled auto-merge, and GitGuardian disposition.
+5. Run the fixed-head gate and retain its JSON evidence.
+6. Merge PR #20 only after a separate explicit merge authorization and with an expected-head guard.
+7. Retarget PR #12 to `master`, update it to the new `master`, rerun all required workflows, run the gate, and merge only after explicit authorization.
+8. Retarget PR #15 to `master`, update it to the new `master`, rerun all required workflows, run the gate, and merge only after explicit authorization.
 9. Configure and verify the `production` Environment, Environment-scoped credentials, deployment restrictions, and secret isolation before any production-signing canary.
 10. Complete GitGuardian incident disposition before production credentials are used.
 11. Run the Draft Release roundtrip canary only after explicit temporary-tag and Draft-Release authorization.
-12. Run the production signing canary only after explicit production-secret authorization and any required Environment approval.
+12. Run the production signing canary only after explicit production-secret authorization and any Environment gate that is actually configured.
 13. Perform an actual release only under a separate fixed tag, commit, and publication decision.
 
-Any new commit, base movement, changed-file difference, failed or missing workflow, unresolved thread, or stale approval invalidates the previous gate evidence.
+Any new commit, base movement, changed-file difference, failed or missing workflow, unresolved thread, or auto-merge state change invalidates the previous gate evidence.
 
 ## Draft Release roundtrip canary
 
@@ -95,10 +97,10 @@ Purpose: exercise the real GitHub tag, Draft Release, asset upload, Release API 
 
 Preconditions:
 
-1. PR #11, PR #12, and PR #15 are merged in order under the approval process above.
+1. PR #20, PR #12, and PR #15 are merged in order under the fixed-head process above.
 2. The selected `source_ref` has successful CI, Hardening, and Rehearsal checks.
 3. No Release or tag exists with the generated `draft-roundtrip-<run>-<attempt>` name.
-4. The operator has explicit authorization to create and delete a temporary tag and Draft Release.
+4. The operator has explicitly authorized creation and deletion of the temporary tag and Draft Release.
 
 Run procedure:
 
@@ -123,14 +125,13 @@ Preconditions:
 1. The `production` Environment and its protection controls have been verified.
 2. Environment secrets and `WINDOWS_TIMESTAMP_URL` are configured.
 3. The certificate is the intended production code-signing certificate and is currently valid.
-4. Secret use has explicit authorization.
-5. If Environment Required Reviewers are unavailable for this private repository, an explicitly approved alternative control is active; otherwise the canary remains blocked.
+4. Secret use has explicit authorization from the repository owner for the exact run.
 
 Run procedure:
 
 1. Open **Actions → Production signing canary → Run workflow**.
 2. Enter `SIGN_CANARY_WITH_PRODUCTION_CERT` exactly.
-3. Complete the Environment approval when configured.
+3. Complete any Environment approval that is actually configured.
 4. Confirm the fresh executable is unsigned before signing.
 5. Confirm required-mode signing succeeds with the configured HTTPS timestamp URL.
 6. Confirm independent SignTool verification succeeds and Authenticode reports `Valid`.
@@ -150,6 +151,6 @@ Record the following for each incident:
 - whether the value was a runtime-generated test value, fixture, or real credential;
 - final-tree search result;
 - rotation requirement, if any;
-- reviewer and disposition date.
+- operator and disposition date.
 
 Do not rewrite shared history solely to hide a false-positive fixture unless a real credential was committed or repository policy requires history removal.
