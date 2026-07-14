@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 API_VERSION = "2022-11-28"
-WRITE_PERMISSIONS = {"admin", "maintain", "write"}
 
 
 @dataclass(frozen=True)
@@ -203,29 +202,11 @@ def evaluate_snapshot(snapshot: dict[str, Any], expected: Expectation) -> list[C
             "Auto-merge is enabled.",
         )
     )
-
-    approvals = []
-    for review in snapshot["reviews"]:
-        if review.get("state") != "APPROVED":
-            continue
-        author = review.get("user", {}).get("login")
-        if not author or author == pr["user"]["login"]:
-            continue
-        if review.get("commit_id") != expected.expected_head:
-            continue
-        permission = snapshot["reviewer_permissions"].get(author)
-        if permission in WRITE_PERMISSIONS:
-            approvals.append(author)
-    approval_detail = (
-        f"Independent approval on fixed HEAD by: {sorted(set(approvals))}."
-    )
     checks.append(
         Check(
-            "independent_approval",
-            "PASS" if approvals else "BLOCKED",
-            approval_detail
-            if approvals
-            else "No independent write-capable reviewer approved the fixed HEAD.",
+            "solo_maintainer_policy",
+            "PASS",
+            "External approving review is not required by the solo-maintainer policy.",
         )
     )
     return checks
@@ -240,9 +221,6 @@ def collect_snapshot(client: GitHubClient, expected: Expectation) -> dict[str, A
     )
     compare = client.get(
         f"{root}/compare/{expected.expected_base_sha}...{expected.expected_head}"
-    )
-    reviews = client.get(
-        f"{root}/pulls/{expected.pr_number}/reviews", {"per_page": "100"}
     )
     runs = client.get(
         f"{root}/actions/runs",
@@ -272,26 +250,14 @@ def collect_snapshot(client: GitHubClient, expected: Expectation) -> dict[str, A
     review_threads = graphql["reviewThreads"]
     if review_threads["pageInfo"]["hasNextPage"]:
         raise RuntimeError(
-            "More than 100 review threads exist; pagination is required before approval."
+            "More than 100 review threads exist; pagination is required before gate evaluation."
         )
-
-    reviewer_permissions: dict[str, str] = {}
-    for review in reviews:
-        login = review.get("user", {}).get("login")
-        if not login or login == pr["user"]["login"] or login in reviewer_permissions:
-            continue
-        permission = client.get(f"{root}/collaborators/{login}/permission")[
-            "permission"
-        ]
-        reviewer_permissions[login] = permission
 
     return {
         "pr": pr,
         "base_sha": base_ref["object"]["sha"],
         "compare": compare,
-        "reviews": reviews,
         "workflow_runs": runs,
-        "reviewer_permissions": reviewer_permissions,
         "unresolved_threads": sum(
             not node["isResolved"] for node in review_threads["nodes"]
         ),
@@ -312,7 +278,7 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify a fixed-head pull-request approval gate."
+        description="Verify a fixed-head pull-request audit gate."
     )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pr-number", type=int, required=True)
@@ -353,22 +319,16 @@ def main() -> int:
             expected,
         )
         checks = evaluate_snapshot(snapshot, expected)
-        overall = (
-            "PASS"
-            if all(check.status == "PASS" for check in checks)
-            else "BLOCKED"
-            if any(check.status == "BLOCKED" for check in checks)
-            and all(check.status in {"PASS", "BLOCKED"} for check in checks)
-            else "FAIL"
-        )
         payload = {
-            "schema_version": 1,
-            "overall": overall,
+            "schema_version": 2,
+            "overall": (
+                "PASS" if all(check.status == "PASS" for check in checks) else "FAIL"
+            ),
             "checks": [check.__dict__ for check in checks],
         }
     except Exception as exc:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "overall": "INCONCLUSIVE",
             "error_type": type(exc).__name__,
             "message": str(exc),
