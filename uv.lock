@@ -137,7 +137,7 @@ wheels = [
 
 [[package]]
 name = "kaito"
-version = "0.12.0"
+version = "0.12.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },

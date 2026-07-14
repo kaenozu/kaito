@@ -6,51 +6,30 @@
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-07-14
-
 ### Added
 
-- 署名済みDraft Releaseの作成と、別承認で公開する二段階Release workflowを追加
-- `v0.11.0`から`v0.12.0`への上書き更新E2Eを追加
-- Release資産へCycloneDX 1.6 runtime SBOMと、タグ・コミット・署名状態・資産ハッシュを記録する`RELEASE-METADATA.json`を追加
-- 自己署名テスト証明書による署名統合テスト、非公開Release rehearsal、Draft Release再取得検証を追加
-- 固定HEADのPR承認ゲート、Draft Release roundtrip canary、独立した一回限りのProduction署名承認を追加
-- Windows GUIの対象テスト、パッケージ作成、実ウィンドウ起動、スクリーンショットを行う`GUI acceptance` workflowを追加
+- Windows上でパッケージ済みGUIを起動し、実ウィンドウとスクリーンショットを確認する`GUI acceptance` workflow
+- 選択した空フォルダーをZIP内へ保持する処理
 
 ### Changed
 
-- タグpush workflowは検証済みDraft Releaseの作成までで停止し、公開は手動workflowへ分離
-- 公開workflowは元のbuild run、Release ID、tag、commit、再取得した資産を固定して再検証
-- 安定版Release workflowの署名モードを`required`へ固定し、未署名成果物の公開を禁止
-- Releaseを一旦Draftとして作成し、全資産を再ダウンロードしてSHA-256、メタデータ、SBOM、署名状態を照合した後に公開する方式へ変更
 - コンソールスクリプトを診断CLIとExplorerガードを持つ`kaito.__main__:main`へ統一
-- 更新確認先を`KAITO_UPDATE_ENDPOINT`で差し替え可能にし、非公開GitHub Releasesでは実行時の`KAITO_GITHUB_TOKEN`を使用可能に変更
-- CIとRelease関連workflowで`uv lock --check`を必須化
+- 更新確認先を実行時に差し替え可能にし、認証情報を設定ファイルへ保存しない構成へ変更
+- CIで`uv lock --check`を必須化
+- 個人利用向けの内部開発版として`0.12.0.dev0`を使用
 
 ### Fixed
 
-- 既存Draft Releaseを再利用して資産を上書きできる競合窓を排除
-- `pyproject.toml`と`uv.lock`でkaitoのバージョンが一致していなかった問題
-- プレリリースの数字を連結し、`1.2rc1`を`1.21`相当として比較する可能性
-- 暗号化アーカイブの展開パスワード入力がマスクされていなかった問題
-- 診断レポートで分離形式のパスワード引数、`C:/`形式、空白を含む引用絶対パスを完全に除外できない問題
-- 安全診断が拒否した後にGUI操作を挟むと解凍ボタンが再有効化される問題
-- 安全診断が拒否したアーカイブで選択解凍を開始できる問題
-- 最近のファイルメニューの「履歴を削除」が動作しない問題
-- 7z／RARプレビューがTkイベントスレッドを停止させる問題
-- 画像プレビューの画素数上限が適用されていなかった問題
-- 完全に空の選択フォルダーをZIPへ保存できない問題
-- ZIP作成時にWindows reparse pointを共通安全判定で拒否していなかった問題
-- コンテキストメニュー登録・削除実装がGUIモジュールと専用モジュールへ二重化していた問題
-- 公開済みReleaseの再実行で検証前に既存Assetを上書きできる問題
-- 不正形式・重複・実体不一致の同梱チェックサムをSBOM生成が受理できる問題
-
-### Security
-
-- 署名PFXをBase64、認証情報、秘密鍵、Code Signing EKU、有効期間の順に検証し、一時PFXのACLを現在のWindowsユーザーだけへ制限
-- 署名後にSignTool、Authenticode状態、構成済み証明書のthumbprint一致を検証
-- Production署名承認を別のwrite権限保有者、固定`master` HEAD、nonce、30分以内の期限、単回消費へ束縛
-- 巨大画像の画素数を完全デコード前に拒否し、PillowのDecompressionBomb警告を失敗として扱う
+- プレリリースのバージョン比較
+- 展開パスワード入力のマスクと値の破棄
+- 診断レポートにおけるパスワードと絶対パスの除外
+- 安全診断で拒否した後に解凍操作が再有効化される問題
+- 安全診断で拒否したアーカイブの選択解凍
+- 最近のファイル履歴削除
+- 7z／RARプレビューによるTkイベントスレッド停止
+- 画像プレビューの画素数上限
+- Windows reparse pointを含むZIP作成
+- コンテキストメニュー実装の二重化
 
 ## [0.11.0] - 2026-07-12
 
