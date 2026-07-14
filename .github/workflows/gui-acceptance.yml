@@ -61,36 +61,126 @@ jobs:
       - name: Launch real window and capture evidence
         shell: pwsh
         run: |
-          Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class KaitoNativeWindow {
+              [StructLayout(LayoutKind.Sequential)]
+              public struct RECT {
+                  public int Left;
+                  public int Top;
+                  public int Right;
+                  public int Bottom;
+              }
+
+              [DllImport("user32.dll")]
+              public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+              [DllImport("user32.dll")]
+              public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+
+              [DllImport("user32.dll")]
+              public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+
+              [DllImport("user32.dll")]
+              public static extern bool SetForegroundWindow(IntPtr hWnd);
+          }
+          "@
+
+          $artifactRoot = (Resolve-Path artifacts).Path
+          $diagnosticPath = Join-Path $artifactRoot 'gui-launch.txt'
           $exe = (Resolve-Path 'dist/kaito.exe').Path
-          $process = Start-Process -FilePath $exe -PassThru
+          $existingIds = @(
+            Get-Process -Name kaito -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Id }
+          )
+          $launcher = Start-Process -FilePath $exe -PassThru
+          $candidate = $null
+          $observed = @()
+
           try {
-            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
               Start-Sleep -Milliseconds 500
-              $process.Refresh()
-              if ($process.HasExited) {
-                throw "Packaged GUI exited before acceptance capture: $($process.ExitCode)"
+              foreach ($item in @(Get-Process -Name kaito -ErrorAction SilentlyContinue)) {
+                if ($existingIds -contains $item.Id) { continue }
+                try { $item.Refresh() } catch { continue }
+                $observed += [ordered]@{
+                  time = [DateTimeOffset]::UtcNow.ToString('o')
+                  id = $item.Id
+                  handle = [int64]$item.MainWindowHandle
+                  title = $item.MainWindowTitle
+                  exited = $item.HasExited
+                }
+                if (-not $item.HasExited -and $item.MainWindowHandle -ne 0) {
+                  $candidate = $item
+                  break
+                }
               }
-            } while ($process.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $deadline)
-            if ($process.MainWindowHandle -eq 0) { throw 'Packaged GUI did not expose a top-level window.' }
+            } while ($null -eq $candidate -and [DateTime]::UtcNow -lt $deadline)
 
-            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            [ordered]@{
+              launcher_id = $launcher.Id
+              launcher_exited = $launcher.HasExited
+              launcher_exit_code = if ($launcher.HasExited) { $launcher.ExitCode } else { $null }
+              observed = $observed
+            } | ConvertTo-Json -Depth 8 | Set-Content $diagnosticPath -Encoding utf8
+
+            if ($null -eq $candidate) {
+              throw 'No packaged kaito process exposed a top-level window within 30 seconds.'
+            }
+
+            $handle = [IntPtr]$candidate.MainWindowHandle
+            [void][KaitoNativeWindow]::ShowWindowAsync($handle, 9)
+            [void][KaitoNativeWindow]::SetForegroundWindow($handle)
+            Start-Sleep -Seconds 1
+
+            $rect = New-Object KaitoNativeWindow+RECT
+            if (-not [KaitoNativeWindow]::GetWindowRect($handle, [ref]$rect)) {
+              throw 'Unable to determine the packaged GUI window bounds.'
+            }
+            $width = $rect.Right - $rect.Left
+            $height = $rect.Bottom - $rect.Top
+            if ($width -lt 100 -or $height -lt 100) {
+              throw "Packaged GUI window bounds are invalid: ${width}x${height}."
+            }
+
+            $bitmap = New-Object System.Drawing.Bitmap($width, $height)
             $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $hdc = $graphics.GetHdc()
             try {
-              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-              $bitmap.Save((Join-Path (Resolve-Path artifacts).Path 'gui-startup.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+              if (-not [KaitoNativeWindow]::PrintWindow($handle, $hdc, 2)) {
+                throw 'PrintWindow failed for the packaged GUI.'
+              }
             }
             finally {
+              $graphics.ReleaseHdc($hdc)
               $graphics.Dispose()
+            }
+            try {
+              $bitmap.Save(
+                (Join-Path $artifactRoot 'gui-startup.png'),
+                [System.Drawing.Imaging.ImageFormat]::Png
+              )
+            }
+            finally {
               $bitmap.Dispose()
             }
-            "window_handle=$($process.MainWindowHandle)" | Set-Content artifacts/gui-window.txt -Encoding ascii
+
+            @(
+              "process_id=$($candidate.Id)"
+              "window_handle=$($candidate.MainWindowHandle)"
+              "window_title=$($candidate.MainWindowTitle)"
+              "window_size=${width}x${height}"
+            ) | Set-Content (Join-Path $artifactRoot 'gui-window.txt') -Encoding utf8
           }
           finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            foreach ($item in @(Get-Process -Name kaito -ErrorAction SilentlyContinue)) {
+              if ($existingIds -contains $item.Id) { continue }
+              Stop-Process -Id $item.Id -Force -ErrorAction SilentlyContinue
+            }
           }
 
       - name: Upload GUI acceptance package
