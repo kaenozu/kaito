@@ -82,8 +82,8 @@ function Assert-ContextCommands() {
         if (-not (Test-Path $commandKey)) {
             throw "Context-menu command missing: $commandKey"
         }
-        $command = [string](Get-ItemPropertyValue -Path $commandKey -Name '(default)')
-        if ($command -notlike "*$InstallDir*") {
+        $command = [string](Get-Item $commandKey).GetValue('')
+        if ([string]::IsNullOrWhiteSpace($command) -or $command -notlike "*$InstallDir*") {
             throw "Context-menu command does not target upgraded install: $command"
         }
     }
