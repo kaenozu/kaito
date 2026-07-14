@@ -24,7 +24,7 @@ write("pyproject.toml", pyproject)
 installer = read("installer/kaito.iss")
 installer = re.sub(
     r"(?m)^; Override version:.*$",
-    f"; Override version: ISCC.exe /DMyAppVersion={VERSION} installer\\kaito.iss",
+    lambda _match: f"; Override version: ISCC.exe /DMyAppVersion={VERSION} installer\\kaito.iss",
     installer,
     count=1,
 )
