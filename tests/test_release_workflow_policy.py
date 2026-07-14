@@ -1,59 +1,73 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+BUILD_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+PUBLISH_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release-publish.yml"
 
 
-def _workflow_text() -> str:
-    return WORKFLOW_PATH.read_text(encoding="utf-8")
+def _text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def test_release_workflow_refuses_public_release_replay() -> None:
-    workflow = _workflow_text()
+def _assert_manual_only(workflow: str) -> None:
+    assert "workflow_dispatch:" in workflow
+    assert "\n  pull_request:" not in workflow
+    assert "\n  push:" not in workflow
+    assert "\n  schedule:" not in workflow
+    assert "\n  workflow_call:" not in workflow
 
-    early_guard = workflow.index("- name: Reject an existing public Release")
+
+def _assert_actions_are_commit_pinned(workflow: str) -> None:
+    lines = [line.strip() for line in workflow.splitlines() if "uses:" in line]
+    assert lines
+    for line in lines:
+        assert re.search(r"uses:\s+[^\s]+@[0-9a-f]{40}(?:\s|$)", line), line
+
+
+def test_tag_workflow_creates_only_a_new_verified_draft() -> None:
+    workflow = _text(BUILD_PATH)
+
+    early_guard = workflow.index("- name: Reject any existing Release")
     build = workflow.index("- name: Build executable")
-    upload_guard = workflow.index(
-        "- name: Reconfirm Release is absent or still draft before asset upload"
+    late_guard = workflow.index(
+        "- name: Reconfirm Release is still absent before asset upload"
     )
-    release_action = workflow.index(
-        "- name: Create draft GitHub Release with verified assets"
+    create = workflow.index(
+        "- name: Create a new draft GitHub Release with verified assets"
     )
-    post_upload_guard = workflow.index(
-        "- name: Confirm Release remains draft before verification"
-    )
-    download = workflow.index("- name: Redownload draft Release assets")
-    verification = workflow.index("- name: Verify redownloaded draft Release package")
-    publication = workflow.index("- name: Publish verified GitHub Release")
+    verify = workflow.index("- name: Verify redownloaded draft Release package")
+    record = workflow.index("- name: Record verified draft release")
 
-    assert early_guard < build < upload_guard < release_action
-    assert release_action < post_upload_guard < download < verification < publication
-    assert workflow.count("Refusing to overwrite public assets") == 2
-    assert "draft: true" in workflow
-    assert "overwrite_files: true" in workflow
+    assert early_guard < build < late_guard < create < verify < record
+    assert workflow.count("Refusing to reuse or overwrite") == 2
+    assert "./tools/create_draft_release.ps1" in workflow
+    assert "steps.draft_release.outputs.id" in workflow
+    assert "gh release edit" not in workflow
+    assert "draft=false" not in workflow
+    assert "overwrite_files" not in workflow
+    assert "Publish verified GitHub Release" not in workflow
     assert "cancel-in-progress: false" in workflow
 
 
-def test_release_workflow_rechecks_master_and_release_identity_before_publish() -> None:
-    workflow = _workflow_text()
-    publication = workflow.split("- name: Publish verified GitHub Release", maxsplit=1)[
-        1
-    ]
+def test_atomic_draft_creator_refuses_reuse_and_validates_asset_identity() -> None:
+    script = _text(REPOSITORY_ROOT / "tools" / "create_draft_release.ps1")
 
-    master_lookup = publication.index("git/ref/heads/master")
-    release_lookup = publication.index("releases/tags/$env:GITHUB_REF_NAME")
-    identity_check = publication.index("Release identity changed before publication")
-    publish_command = publication.index("gh release edit")
-
-    assert master_lookup < release_lookup < identity_check < publish_command
-    assert "steps.draft_release.outputs.id" in publication
-    assert "master advanced after release verification" in publication
+    assert "Exactly five release assets are required" in script
+    assert "Existing Releases are never reused or overwritten" in script
+    assert "-Method Post" in script
+    assert "release.upload_url" in script
+    assert "Release became public during asset upload" in script
+    assert "Draft Release asset count mismatch" in script
+    assert "Compare-Object $expectedNames $actualNames" in script
+    assert "-Method Patch" not in script
+    assert "draft=false" not in script
 
 
-def test_release_workflow_uses_shared_fail_closed_verifier() -> None:
-    workflow = _workflow_text()
+def test_tag_workflow_uses_shared_fail_closed_verifier() -> None:
+    workflow = _text(BUILD_PATH)
 
     assert "Invalid bundled checksum line" in workflow
     assert "Duplicate bundled checksum entry" in workflow
@@ -64,19 +78,58 @@ def test_release_workflow_uses_shared_fail_closed_verifier() -> None:
     assert "-ArtifactsDir 'artifacts/publication'" in workflow
 
 
-def test_release_workflow_requires_production_environment() -> None:
-    workflow = _workflow_text()
-    job_header = workflow.split("steps:", maxsplit=1)[0]
+def test_tag_workflow_requires_signed_production_artifacts() -> None:
+    workflow = _text(BUILD_PATH)
+    header = workflow.split("steps:", maxsplit=1)[0]
 
-    assert "environment:" in job_header
-    assert "name: production" in job_header
-
-
-def test_release_workflow_requires_signed_production_artifacts() -> None:
-    workflow = _workflow_text()
-
+    assert "environment:" in header
+    assert "name: production" in header
     assert "WINDOWS_SIGNING_MODE: required" in workflow
     assert "Validate Windows signing configuration" in workflow
     assert workflow.count("-Mode $env:WINDOWS_SIGNING_MODE") == 3
-    assert "environment:" in workflow
-    assert "name: production" in workflow
+
+
+def test_publication_workflow_is_manual_and_fixed_to_exact_evidence() -> None:
+    workflow = _text(PUBLISH_PATH)
+
+    _assert_manual_only(workflow)
+    _assert_actions_are_commit_pinned(workflow)
+    assert "PUBLISH_VERIFIED_RELEASE" in workflow
+    for input_name in ("tag:", "target_commit:", "release_id:", "build_run_id:"):
+        assert input_name in workflow
+    assert "environment:\n      name: production" in workflow
+    assert "actions: read" in workflow
+    assert "contents: write" in workflow
+    assert "refs/heads/master" in workflow
+    assert "git/ref/heads/master" in workflow
+    assert "git/ref/tags/$env:INPUT_TAG" in workflow
+    assert "releases/$env:INPUT_RELEASE_ID" in workflow
+    assert "actions/runs/$env:INPUT_BUILD_RUN_ID" in workflow
+    assert "gh run download" in workflow
+    assert "--name kaito-release-verification" in workflow
+    assert "gh release download" in workflow
+    assert "./tools/verify_release_package.ps1" in workflow
+    assert "-Profile production" in workflow
+    assert "-ReferenceChecksumsPath $env:KAITO_REFERENCE_CHECKSUMS" in workflow
+
+
+def test_publication_occurs_only_after_reverification_and_live_recheck() -> None:
+    workflow = _text(PUBLISH_PATH)
+
+    identity = workflow.index(
+        "- name: Bind master, tag, Draft Release, and build run identity"
+    )
+    evidence = workflow.index("- name: Download immutable build evidence")
+    download = workflow.index("- name: Redownload exact Draft Release assets")
+    verify = workflow.index("- name: Verify exact package before publication")
+    live = workflow.index(
+        "- name: Recheck live identity and publish only the same verified Draft Release"
+    )
+    patch = workflow.index("--method PATCH")
+
+    assert identity < evidence < download < verify < live < patch
+    assert "master changed before publication" in workflow
+    assert "Build run identity changed" in workflow
+    assert "Draft Release identity or asset set changed" in workflow
+    assert "-f draft=false" in workflow
+    assert "gh release edit" not in workflow
