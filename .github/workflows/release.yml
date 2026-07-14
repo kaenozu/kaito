@@ -1,4 +1,4 @@
-name: Release
+name: Build signed draft Release
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
 
-      - name: Reject an existing public Release
+      - name: Reject any existing Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,8 +87,8 @@ jobs:
               throw
             }
           }
-          if ($null -ne $existing -and -not [bool]$existing.draft) {
-            throw "Release $env:GITHUB_REF_NAME is already public. Refusing to overwrite public assets during a workflow re-run."
+          if ($null -ne $existing) {
+            throw "Release $env:GITHUB_REF_NAME already exists (id=$($existing.id), draft=$($existing.draft)). Refusing to reuse or overwrite any existing Release."
           }
 
       - name: Validate Windows signing configuration
@@ -321,7 +321,7 @@ jobs:
             dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Reconfirm Release is absent or still draft before asset upload
+      - name: Reconfirm Release is still absent before asset upload
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -341,26 +341,29 @@ jobs:
               throw
             }
           }
-          if ($null -ne $existing -and -not [bool]$existing.draft) {
-            throw "Release $env:GITHUB_REF_NAME became public before asset upload. Refusing to overwrite public assets."
+          if ($null -ne $existing) {
+            throw "Release $env:GITHUB_REF_NAME appeared before asset upload (id=$($existing.id), draft=$($existing.draft)). Refusing to reuse or overwrite it."
           }
 
-      - name: Create draft GitHub Release with verified assets
+      - name: Create a new draft GitHub Release with verified assets
         id: draft_release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          name: kaito v${{ env.KAITO_VERSION }}
-          draft: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          preserve_order: true
-          overwrite_files: true
-          files: |
-            dist/kaito.exe
-            dist/kaito-installer-*.exe
-            dist/kaito-sbom.cdx.json
-            dist/RELEASE-METADATA.json
-            dist/SHA256SUMS
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            'dist/kaito.exe',
+            $env:KAITO_INSTALLER,
+            'dist/kaito-sbom.cdx.json',
+            'dist/RELEASE-METADATA.json',
+            'dist/SHA256SUMS'
+          )
+          ./tools/create_draft_release.ps1 `
+            -Tag $env:GITHUB_REF_NAME `
+            -Commit $env:GITHUB_SHA `
+            -Version $env:KAITO_VERSION `
+            -AssetPaths $assets `
+            -OutputPath $env:GITHUB_OUTPUT
 
       - name: Confirm Release remains draft before verification
         shell: pwsh
@@ -408,69 +411,42 @@ jobs:
             dist/RELEASE-METADATA.json
             dist/SHA256SUMS
 
-      - name: Publish verified GitHub Release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $masterCommit = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha'
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($masterCommit)) {
-            throw "Unable to inspect master immediately before publication: $LASTEXITCODE"
-          }
-          $masterCommit = $masterCommit.Trim()
-          if ($env:GITHUB_SHA -ne $masterCommit) {
-            throw "master advanced after release verification; leaving the Release in draft state: tag=$env:GITHUB_SHA master=$masterCommit"
-          }
-
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
-          if ($LASTEXITCODE -ne 0) { throw "Unable to inspect draft Release before publication: $LASTEXITCODE" }
-          $release = $releaseJson | ConvertFrom-Json
-          if (-not [bool]$release.draft) { throw 'Release is no longer a draft immediately before publication.' }
-          if ([string]$release.id -ne '${{ steps.draft_release.outputs.id }}') {
-            throw 'Release identity changed before publication.'
-          }
-          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
-          if ($LASTEXITCODE -ne 0) { throw "Unable to publish verified release: $LASTEXITCODE" }
-
-      - name: Record completed release
+      - name: Record verified draft release
         continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $checksums = Get-Content 'dist/SHA256SUMS' -Raw
-          $releaseMetadata = Get-Content 'dist/RELEASE-METADATA.json' -Raw | ConvertFrom-Json
-          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $metadata = Get-Content 'dist/RELEASE-METADATA.json' -Raw | ConvertFrom-Json
           $body = @"
-          ## v$env:KAITO_VERSION release completed
+          ## v$env:KAITO_VERSION verified Draft Release ready
 
-          Stable tag and GitHub Release were published after the assets were downloaded again and verified by the shared production verifier.
+          Production-signed assets were uploaded to a newly created Draft Release, downloaded again, and verified. This workflow intentionally contains no publication command.
 
-          Signing mode: ``$($releaseMetadata.signing.mode)``
-          Signing result: ``$($releaseMetadata.signing.result)``
+          Release ID: ``${{ steps.draft_release.outputs.id }}``
+          Tag: ``$env:GITHUB_REF_NAME``
+          Commit: ``$env:GITHUB_SHA``
+          Build run ID: ``$env:GITHUB_RUN_ID``
+          Signing result: ``$($metadata.signing.result)``
 
-          ```text
-          $checksums
-          ```
-
-          Workflow: $runUrl
+          Publication requires the separate ``Publish verified Release`` workflow with these exact identities.
+          Draft Release: ${{ steps.draft_release.outputs.html_url }}
+          Build workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
           "@
           gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
 
-      - name: Record failed release workflow
+      - name: Record failed draft release workflow
         if: failure()
         continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $body = @"
-          ## v$env:KAITO_VERSION release workflow failed
+          ## v$env:KAITO_VERSION Draft Release workflow failed
 
-          The release was not promoted from draft to public by this workflow. Existing public releases are never overwritten, and existing tags are never moved or reused.
+          No Release was promoted to public. Existing Releases are never reused, existing public assets are never overwritten, and existing tags are never moved.
 
-          Signing mode: ``$env:WINDOWS_SIGNING_MODE``
-          Workflow: $runUrl
+          Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
           "@
           gh issue comment 6 --repo $env:GITHUB_REPOSITORY --body $body
