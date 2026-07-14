@@ -128,7 +128,6 @@ def test_zip_creation_preserves_an_empty_selected_root(tmp_path: Path) -> None:
     archive = tmp_path / "empty.zip"
 
     ArchiveService().create(CompressionOptions(sources=[source], output_path=archive))
-
     with zipfile.ZipFile(archive) as handle:
         assert handle.namelist() == ["empty-root/"]
 
@@ -231,6 +230,7 @@ def test_image_preview_rejects_pixel_count_before_full_decode() -> None:
 def test_release_and_ci_fail_closed_on_lock_and_signing() -> None:
     ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    publish = Path(".github/workflows/release-publish.yml").read_text(encoding="utf-8")
 
     assert 'branches: [master, "feature/**"]' in ci
     assert '"agent/**"' not in ci
@@ -240,9 +240,11 @@ def test_release_and_ci_fail_closed_on_lock_and_signing() -> None:
     assert "Validate Windows signing configuration" in release
     assert "Sign executable according to release mode" in release
     assert "Sign installer according to release mode" in release
-    assert "Create draft GitHub Release with verified assets" in release
+    assert "Create a new draft GitHub Release with verified assets" in release
     assert "Verify redownloaded draft Release package" in release
-    assert "Publish verified GitHub Release" in release
+    assert "Publish verified GitHub Release" not in release
+    assert "name: Publish verified Release" in publish
+    assert "-F draft=false" in publish
 
 
 def test_gui_acceptance_workflow_builds_and_launches_packaged_gui() -> None:
