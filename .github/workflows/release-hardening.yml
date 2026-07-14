@@ -5,22 +5,58 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-publish.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-approval-gate.yml"
+      - ".github/workflows/release-draft-roundtrip.yml"
+      - ".github/workflows/production-signing-canary.yml"
+      - "docs/RELEASE_OPERATIONS.md"
+      - "docs/RELEASE_PUBLICATION.md"
+      - "docs/PRODUCTION_SIGNING_AUTHORIZATION.md"
+      - "tools/create_draft_release.ps1"
+      - "tools/test_upgrade.ps1"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
+      - "tools/verify_pr_approval_gate.py"
+      - "tools/verify_production_signing_authorization.py"
+      - "tools/verify_release_package.ps1"
+      - "tools/test_verify_release_package.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_pr_approval_gate.py"
+      - "tests/test_production_signing_authorization.py"
+      - "tests/test_production_signing_workflow_policy.py"
       - "tests/test_release_workflow_policy.py"
+      - "tests/test_release_verifier_policy.py"
+      - "tests/test_release_operations_policy.py"
   push:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-publish.yml"
       - ".github/workflows/release-hardening.yml"
+      - ".github/workflows/release-approval-gate.yml"
+      - ".github/workflows/release-draft-roundtrip.yml"
+      - ".github/workflows/production-signing-canary.yml"
+      - "docs/RELEASE_OPERATIONS.md"
+      - "docs/RELEASE_PUBLICATION.md"
+      - "docs/PRODUCTION_SIGNING_AUTHORIZATION.md"
+      - "tools/create_draft_release.ps1"
+      - "tools/test_upgrade.ps1"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
+      - "tools/verify_pr_approval_gate.py"
+      - "tools/verify_production_signing_authorization.py"
+      - "tools/verify_release_package.ps1"
+      - "tools/test_verify_release_package.ps1"
       - "tools/generate_sbom.py"
       - "tests/test_generate_sbom.py"
+      - "tests/test_pr_approval_gate.py"
+      - "tests/test_production_signing_authorization.py"
+      - "tests/test_production_signing_workflow_policy.py"
       - "tests/test_release_workflow_policy.py"
+      - "tests/test_release_verifier_policy.py"
+      - "tests/test_release_operations_policy.py"
 
 permissions:
   contents: read
@@ -34,7 +70,7 @@ concurrency:
 jobs:
   signing-and-sbom:
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
 
     steps:
       - name: Check out repository
@@ -45,6 +81,9 @@ jobs:
 
       - name: Set up Python 3.12
         run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
 
       - name: Install locked dependencies
         run: uv sync --frozen
@@ -60,11 +99,30 @@ jobs:
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
 
+      - name: Test shared production release verifier
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & pwsh -NoProfile -File ./tools/test_verify_release_package.ps1 `
+            -ArtifactsDir artifacts/release-verifier-tests 2>&1 |
+            Tee-Object -FilePath artifacts/release-verifier-test-output.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
       - name: Test release policy and generate CycloneDX SBOM
         shell: pwsh
         run: |
-          uv run --frozen pytest -q tests/test_generate_sbom.py tests/test_release_workflow_policy.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & uv run --frozen pytest -q `
+            tests/test_generate_sbom.py `
+            tests/test_pr_approval_gate.py `
+            tests/test_production_signing_authorization.py `
+            tests/test_production_signing_workflow_policy.py `
+            tests/test_release_workflow_policy.py `
+            tests/test_release_verifier_policy.py `
+            tests/test_release_operations_policy.py 2>&1 |
+            Tee-Object -FilePath artifacts/release-policy-test-output.txt
+          $testCode = $LASTEXITCODE
+          if ($testCode -ne 0) { exit $testCode }
           uv run --frozen python tools/generate_sbom.py `
             --repository-root . `
             --output artifacts/kaito-sbom.cdx.json `
@@ -79,12 +137,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $logPath = 'artifacts/signing-test-output.txt'
-          $details = if (Test-Path $logPath) {
-            (Get-Content $logPath -Tail 80) -join "`n"
+          $outputs = @()
+          foreach ($logPath in @(
+            'artifacts/signing-test-output.txt',
+            'artifacts/release-verifier-test-output.txt',
+            'artifacts/release-policy-test-output.txt'
+          )) {
+            if (Test-Path $logPath) {
+              $outputs += "### $logPath"
+              $outputs += (Get-Content $logPath -Tail 80)
+            }
+          }
+          $details = if ($outputs.Count -gt 0) {
+            $outputs -join "`n"
           }
           else {
-            'The signing test did not produce a diagnostic output file.'
+            'The hardening tests did not produce a diagnostic output file.'
           }
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $body = @"

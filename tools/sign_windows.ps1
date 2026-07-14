@@ -87,28 +87,21 @@ function Protect-SigningPfx {
         throw "icacls.exe was not found: $icacls"
     }
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $aclOutput = @(
-            & $icacls $Path '/inheritance:r' '/grant:r' "*${sid}:F" '/Q' 2>&1
-        )
-        $aclExitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $aclOutput = @(
+        & $icacls $Path '/inheritance:r' '/grant:r' "*${sid}:F" '/Q' 2>&1
+    )
+    $aclExitCode = $LASTEXITCODE
     if ($aclExitCode -ne 0) {
         $details = ($aclOutput | ForEach-Object { $_.ToString() }) -join "`n"
         throw "Unable to restrict the temporary signing PFX ACL (exit code ${aclExitCode}): $details"
     }
 }
 
-$hasCertificate = -not [string]::IsNullOrWhiteSpace($CertificateBase64)
-$hasPassword = -not [string]::IsNullOrWhiteSpace($CertificatePassword)
+$certificateConfigured = -not [string]::IsNullOrWhiteSpace($CertificateBase64)
+$credentialConfigured = -not [string]::IsNullOrWhiteSpace($CertificatePassword)
 
 if ($Mode -eq 'disabled') {
-    if ($hasCertificate -or $hasPassword) {
+    if ($certificateConfigured -or $credentialConfigured) {
         Write-Warning 'Windows signing is disabled; configured certificate secrets are intentionally ignored.'
     }
     Write-SigningStatus @{
@@ -122,7 +115,7 @@ if ($Mode -eq 'disabled') {
     return
 }
 
-if (-not $hasCertificate -and -not $hasPassword) {
+if (-not $certificateConfigured -and -not $credentialConfigured) {
     if ($Mode -eq 'required') {
         throw 'Windows signing mode is required, but WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD are not configured.'
     }
@@ -137,7 +130,7 @@ if (-not $hasCertificate -and -not $hasPassword) {
     return
 }
 
-if (-not $hasCertificate -or -not $hasPassword) {
+if (-not $certificateConfigured -or -not $credentialConfigured) {
     throw 'Windows signing configuration is incomplete. Set both WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD, or set WINDOWS_SIGNING_MODE=disabled.'
 }
 
@@ -246,11 +239,8 @@ try {
     }
 
     $signedFiles = @()
-    $resolvedPaths = @()
     foreach ($Candidate in $FilePath) {
-        $resolvedPaths += @(Resolve-Path $Candidate | ForEach-Object { $_.Path })
-    }
-    foreach ($Resolved in $resolvedPaths) {
+        $Resolved = (Resolve-Path $Candidate).Path
         $Arguments = @(
             'sign',
             '/fd', 'SHA256',
@@ -274,15 +264,8 @@ try {
             }
         }
         else {
-            $previousErrorActionPreference = $ErrorActionPreference
-            try {
-                $ErrorActionPreference = 'Continue'
-                $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $Resolved 2>&1)
-                $verifyExitCode = $LASTEXITCODE
-            }
-            finally {
-                $ErrorActionPreference = $previousErrorActionPreference
-            }
+            $verifyLines = @(& $signTool 'verify' '/pa' '/all' '/v' $Resolved 2>&1)
+            $verifyExitCode = $LASTEXITCODE
             $verifyLines | ForEach-Object { Write-Host $_ }
             $verifyText = ($verifyLines | ForEach-Object { $_.ToString() }) -join "`n"
             $verifyNormalized = $verifyText -replace '\s+', ' '

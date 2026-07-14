@@ -1,0 +1,195 @@
+name: GUI acceptance
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/gui-acceptance.yml"
+      - "docs/GUI_ACCEPTANCE.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "build.spec"
+      - "installer/**"
+      - "src/kaito/archive/**"
+      - "src/kaito/gui/**"
+      - "src/kaito/diagnostics.py"
+      - "src/kaito/update_checker.py"
+      - "tests/test_full_review_fixes.py"
+      - "tests/test_productivity_services.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaged-gui-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Run focused GUI and safety regressions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $output = & uv run --frozen pytest -q tests/test_full_review_fixes.py tests/test_productivity_services.py 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/gui-regressions.txt
+          exit $code
+
+      - name: Build packaged GUI
+        run: uv run --frozen pyinstaller --clean --noconfirm build.spec
+
+      - name: Launch real window and capture evidence
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class KaitoNativeWindow {
+              [StructLayout(LayoutKind.Sequential)]
+              public struct RECT {
+                  public int Left;
+                  public int Top;
+                  public int Right;
+                  public int Bottom;
+              }
+
+              [DllImport("user32.dll")]
+              public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+              [DllImport("user32.dll")]
+              public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
+
+              [DllImport("user32.dll")]
+              public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+
+              [DllImport("user32.dll")]
+              public static extern bool SetForegroundWindow(IntPtr hWnd);
+          }
+          "@
+
+          $artifactRoot = (Resolve-Path artifacts).Path
+          $diagnosticPath = Join-Path $artifactRoot 'gui-launch.txt'
+          $exe = (Resolve-Path 'dist/kaito.exe').Path
+          $existingIds = @(
+            Get-Process -Name kaito -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Id }
+          )
+          $launcher = Start-Process -FilePath $exe -PassThru
+          $candidate = $null
+          $observed = @()
+
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 500
+              foreach ($item in @(Get-Process -Name kaito -ErrorAction SilentlyContinue)) {
+                if ($existingIds -contains $item.Id) { continue }
+                try { $item.Refresh() } catch { continue }
+                $observed += [ordered]@{
+                  time = [DateTimeOffset]::UtcNow.ToString('o')
+                  id = $item.Id
+                  handle = [int64]$item.MainWindowHandle
+                  title = $item.MainWindowTitle
+                  exited = $item.HasExited
+                }
+                if (-not $item.HasExited -and $item.MainWindowHandle -ne 0) {
+                  $candidate = $item
+                  break
+                }
+              }
+            } while ($null -eq $candidate -and [DateTime]::UtcNow -lt $deadline)
+
+            [ordered]@{
+              launcher_id = $launcher.Id
+              launcher_exited = $launcher.HasExited
+              launcher_exit_code = if ($launcher.HasExited) { $launcher.ExitCode } else { $null }
+              observed = $observed
+            } | ConvertTo-Json -Depth 8 | Set-Content $diagnosticPath -Encoding utf8
+
+            if ($null -eq $candidate) {
+              throw 'No packaged kaito process exposed a top-level window within 30 seconds.'
+            }
+
+            $handle = [IntPtr]$candidate.MainWindowHandle
+            [void][KaitoNativeWindow]::ShowWindowAsync($handle, 9)
+            [void][KaitoNativeWindow]::SetForegroundWindow($handle)
+            Start-Sleep -Seconds 1
+
+            $rect = New-Object KaitoNativeWindow+RECT
+            if (-not [KaitoNativeWindow]::GetWindowRect($handle, [ref]$rect)) {
+              throw 'Unable to determine the packaged GUI window bounds.'
+            }
+            $width = $rect.Right - $rect.Left
+            $height = $rect.Bottom - $rect.Top
+            if ($width -lt 100 -or $height -lt 100) {
+              throw "Packaged GUI window bounds are invalid: ${width}x${height}."
+            }
+
+            $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $hdc = $graphics.GetHdc()
+            try {
+              if (-not [KaitoNativeWindow]::PrintWindow($handle, $hdc, 2)) {
+                throw 'PrintWindow failed for the packaged GUI.'
+              }
+            }
+            finally {
+              $graphics.ReleaseHdc($hdc)
+              $graphics.Dispose()
+            }
+            try {
+              $bitmap.Save(
+                (Join-Path $artifactRoot 'gui-startup.png'),
+                [System.Drawing.Imaging.ImageFormat]::Png
+              )
+            }
+            finally {
+              $bitmap.Dispose()
+            }
+
+            @(
+              "process_id=$($candidate.Id)"
+              "window_handle=$($candidate.MainWindowHandle)"
+              "window_title=$($candidate.MainWindowTitle)"
+              "window_size=${width}x${height}"
+            ) | Set-Content (Join-Path $artifactRoot 'gui-window.txt') -Encoding utf8
+          }
+          finally {
+            foreach ($item in @(Get-Process -Name kaito -ErrorAction SilentlyContinue)) {
+              if ($existingIds -contains $item.Id) { continue }
+              Stop-Process -Id $item.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload GUI acceptance package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-gui-acceptance
+          if-no-files-found: error
+          path: |
+            artifacts/
+            dist/kaito.exe
+            docs/GUI_ACCEPTANCE.md

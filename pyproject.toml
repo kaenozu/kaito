@@ -1,6 +1,6 @@
 [project]
 name = "kaito"
-version = "0.11.0"
+version = "0.12.0"
 description = "アーカイブ解凍・圧縮ツール - GUI decompression/compression tool"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kaito = "kaito.gui.unzip_app:main"
+kaito = "kaito.__main__:main"
 
 [tool.uv]
 package = true
@@ -31,9 +31,6 @@ dev = [
 
 [tool.ruff]
 target-version = "py312"
-
-[tool.coverage.run]
-omit = ["src/kaito/__main__.py"]
 
 [tool.pyright]
 typeCheckingMode = "basic"
