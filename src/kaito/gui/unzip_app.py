@@ -23,6 +23,7 @@ import customtkinter as ctk
 from tkinterdnd2 import TkinterDnD
 
 from kaito.archive.service import ArchiveService
+from kaito.context_menu import install_context_menu, uninstall_context_menu
 from kaito.domain.errors import (
     ArchiveError,
     ArchiveBombError,
@@ -1447,100 +1448,6 @@ def _truncate_path(path: str, max_len: int = 60) -> str:
     remain = max_len - len(name) - 3
     parent = str(p.parent)
     return "..." + parent[-(remain - 3) :] + "\\" + name
-
-
-_CONTEXT_EXTENSIONS = [".zip", ".rar", ".7z"]
-
-
-def _get_exe_path() -> Path:
-    """kaito実行ファイルのパスを返す"""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable)
-    dev_exe = Path(sys.executable).parent.parent / "dist" / "kaito.exe"
-    if dev_exe.exists():
-        return dev_exe
-    return Path(sys.executable)
-
-
-def install_context_menu() -> None:
-    """Windowsコンテキストメニューにkaitoを登録"""
-    try:
-        from winreg import (  # type: ignore[attr-defined]
-            CreateKeyEx,
-            HKEY_CURRENT_USER,
-            KEY_SET_VALUE,
-            REG_SZ,
-            SetValueEx,
-        )
-    except ImportError:
-        return
-
-    exe = _get_exe_path()
-    exe_str = f'"{exe}"'
-    base = r"Software\Classes"
-
-    # 解凍: 対応拡張子のみ
-    for ext in _CONTEXT_EXTENSIONS:
-        key_path = f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract"
-        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, "kaitoで解凍")
-        cmd_path = f"{key_path}\\command"
-        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} "%1"')
-
-    # 圧縮: ファイル・フォルダ
-    for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
-        key_path = f"{shell_root}\\shell\\kaito_compress"
-        with CreateKeyEx(HKEY_CURRENT_USER, key_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, "kaitoで圧縮")
-        cmd_path = f"{key_path}\\command"
-        with CreateKeyEx(HKEY_CURRENT_USER, cmd_path, 0, KEY_SET_VALUE) as key:
-            SetValueEx(key, None, 0, REG_SZ, f'{exe_str} --compress "%1"')
-
-    print("コンテキストメニューを登録しました")
-
-
-def _delete_key_recursive(root_key, sub_key: str) -> None:
-    """レジストリキーをサブキーごと削除する"""
-    try:
-        from winreg import (  # type: ignore[attr-defined]
-            DeleteKey,
-            EnumKey,
-            KEY_SET_VALUE,
-            OpenKey,
-            QueryInfoKey,
-        )
-    except ImportError:
-        return
-    try:
-        with OpenKey(root_key, sub_key, 0, KEY_SET_VALUE) as key:
-            info = QueryInfoKey(key)
-            for _ in range(info[0]):
-                child = EnumKey(key, 0)
-                _delete_key_recursive(key, child)
-        DeleteKey(root_key, sub_key)
-    except (FileNotFoundError, OSError):
-        pass
-
-
-def uninstall_context_menu() -> None:
-    """Windowsコンテキストメニューからkaitoを削除"""
-    try:
-        from winreg import HKEY_CURRENT_USER
-    except ImportError:
-        return
-    base = r"Software\Classes"
-
-    for ext in _CONTEXT_EXTENSIONS:
-        _delete_key_recursive(
-            HKEY_CURRENT_USER,
-            f"{base}\\SystemFileAssociations\\{ext}\\shell\\kaito_extract",
-        )
-
-    for shell_root in [f"{base}\\*", f"{base}\\Directory"]:
-        _delete_key_recursive(HKEY_CURRENT_USER, f"{shell_root}\\shell\\kaito_compress")
-
-    print("コンテキストメニューを削除しました")
 
 
 def _resolve_extract_dest(
