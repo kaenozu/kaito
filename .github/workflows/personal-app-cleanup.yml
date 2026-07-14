@@ -71,7 +71,11 @@ jobs:
         run: uv python install 3.12
 
       - name: Apply personal application cleanup
-        run: python .github/scripts/personal_app_cleanup.py
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/personal-app-cleanup
+          python .github/scripts/personal_app_cleanup.py 2>&1 | tee artifacts/personal-app-cleanup/script.log
 
       - name: Refresh lockfile
         run: |
@@ -90,13 +94,14 @@ jobs:
           uv run --frozen pytest -ra
 
       - name: Upload cleanup evidence and CI replacement
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: personal-app-cleanup-output
           path: |
             artifacts/personal-app-cleanup/
             artifacts/personal-app-workflows/ci.yml
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Commit non-workflow cleanup
         shell: bash
