@@ -39,6 +39,7 @@ def test_release_workflow_is_create_only_and_pins_release_id() -> None:
     assert "release_id=$releaseId" in workflow
     assert "steps.create_draft_release.outputs.release_id" in workflow
     assert "current.upload_url" in workflow
+    assert "target_commitish = $env:GITHUB_SHA" not in workflow
     assert "An existing or concurrently created Release is never reused" in workflow
     assert "softprops/action-gh-release" not in workflow
     assert "overwrite_files" not in workflow
@@ -63,6 +64,8 @@ def test_release_workflow_rechecks_master_and_release_id_before_publish() -> Non
     assert publish_command < immutable_check
     assert "steps.create_draft_release.outputs.release_id" in publication
     assert "master advanced after release verification" in publication
+    assert "git ls-remote --tags origin" in publication
+    assert "Release tag target changed immediately before publication" in publication
     assert "releases/tags/$env:GITHUB_REF_NAME" not in publication
 
 
