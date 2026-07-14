@@ -5,12 +5,16 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-publish.yml"
       - ".github/workflows/release-hardening.yml"
       - ".github/workflows/release-approval-gate.yml"
       - ".github/workflows/release-draft-roundtrip.yml"
       - ".github/workflows/production-signing-canary.yml"
       - "docs/RELEASE_OPERATIONS.md"
+      - "docs/RELEASE_PUBLICATION.md"
       - "docs/PRODUCTION_SIGNING_AUTHORIZATION.md"
+      - "tools/create_draft_release.ps1"
+      - "tools/test_upgrade.ps1"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/verify_pr_approval_gate.py"
@@ -29,12 +33,16 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-publish.yml"
       - ".github/workflows/release-hardening.yml"
       - ".github/workflows/release-approval-gate.yml"
       - ".github/workflows/release-draft-roundtrip.yml"
       - ".github/workflows/production-signing-canary.yml"
       - "docs/RELEASE_OPERATIONS.md"
+      - "docs/RELEASE_PUBLICATION.md"
       - "docs/PRODUCTION_SIGNING_AUTHORIZATION.md"
+      - "tools/create_draft_release.ps1"
+      - "tools/test_upgrade.ps1"
       - "tools/sign_windows.ps1"
       - "tools/test_sign_windows.ps1"
       - "tools/verify_pr_approval_gate.py"
