@@ -77,3 +77,5 @@ jobs:
           fi
           git push origin HEAD:agent/unified-review-release-fixes
           git push origin --delete agent/release-finalize-staging
+
+# second-push trigger after workflow registration
