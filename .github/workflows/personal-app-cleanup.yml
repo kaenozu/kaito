@@ -17,8 +17,8 @@ concurrency:
 jobs:
   cleanup:
     if: github.head_ref == 'agent/personal-app-cleanup'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    runs-on: windows-latest
+    timeout-minutes: 35
 
     steps:
       - name: Check out exact cleanup branch
@@ -84,25 +84,25 @@ jobs:
           uv sync --frozen
 
       - name: Remove one-time script before validation
-        run: rm .github/scripts/personal_app_cleanup.py
+        shell: pwsh
+        run: Remove-Item '.github/scripts/personal_app_cleanup.py' -Force
 
       - name: Stage simplified CI definition for validation
-        run: cp artifacts/personal-app-workflows/ci.yml .github/workflows/ci.yml
+        shell: pwsh
+        run: Copy-Item 'artifacts/personal-app-workflows/ci.yml' '.github/workflows/ci.yml' -Force
 
       - name: Validate application source
-        shell: bash
+        shell: pwsh
         run: |
-          set -o pipefail
-          {
-            echo '## ruff check'
-            uv run --frozen ruff check .
-            echo '## ruff format check'
-            uv run --frozen ruff format --check .
-            echo '## pyright'
-            uv run --frozen pyright --pythonplatform Windows
-            echo '## pytest'
-            uv run --frozen pytest -ra
-          } 2>&1 | tee artifacts/personal-app-cleanup/validation.log
+          New-Item -ItemType Directory -Path artifacts/personal-app-cleanup -Force | Out-Null
+          & uv run --frozen ruff check . 2>&1 | Tee-Object artifacts/personal-app-cleanup/ruff-check.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & uv run --frozen ruff format --check . 2>&1 | Tee-Object artifacts/personal-app-cleanup/ruff-format.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & uv run --frozen pyright 2>&1 | Tee-Object artifacts/personal-app-cleanup/pyright.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & uv run --frozen pytest -ra 2>&1 | Tee-Object artifacts/personal-app-cleanup/pytest.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload cleanup evidence and CI replacement
         if: always()
