@@ -264,7 +264,7 @@ jobs:
             --method PATCH `
             -H 'Accept: application/vnd.github+json' `
             -H 'X-GitHub-Api-Version: 2022-11-28' `
-            -f draft=false `
+            -F draft=false `
             "repos/$env:GITHUB_REPOSITORY/releases/$env:INPUT_RELEASE_ID" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'GitHub rejected Release publication.' }
           if ([bool]$published.draft) { throw 'Release remained draft after publication request.' }
