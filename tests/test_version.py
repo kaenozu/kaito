@@ -9,7 +9,7 @@ from kaito.version import __version__
 
 def test_all_runtime_versions_use_package_metadata() -> None:
     expected = version("kaito")
-    assert expected == "0.11.0"
+    assert expected == "0.12.0"
     assert __version__ == expected
     assert gui_version == expected
     assert _version() == expected
