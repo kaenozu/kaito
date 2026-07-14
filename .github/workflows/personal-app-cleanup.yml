@@ -90,11 +90,19 @@ jobs:
         run: cp artifacts/personal-app-workflows/ci.yml .github/workflows/ci.yml
 
       - name: Validate application source
+        shell: bash
         run: |
-          uv run --frozen ruff check .
-          uv run --frozen ruff format --check .
-          uv run --frozen pyright
-          uv run --frozen pytest -ra
+          set -o pipefail
+          {
+            echo '## ruff check'
+            uv run --frozen ruff check .
+            echo '## ruff format check'
+            uv run --frozen ruff format --check .
+            echo '## pyright'
+            uv run --frozen pyright
+            echo '## pytest'
+            uv run --frozen pytest -ra
+          } 2>&1 | tee artifacts/personal-app-cleanup/validation.log
 
       - name: Upload cleanup evidence and CI replacement
         if: always()
