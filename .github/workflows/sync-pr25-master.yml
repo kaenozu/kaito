@@ -1,0 +1,33 @@
+name: Sync PR 25 with master
+
+on:
+  push:
+    branches:
+      - agent/unified-review-release-fixes
+    paths:
+      - .github/workflows/sync-pr25-master.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release-candidate branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Merge current master while preserving reviewed release-candidate tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          git merge --no-ff -s ours origin/master -m "Merge current master into unified release candidate"
+          git rm .github/workflows/sync-pr25-master.yml
+          git commit --amend --no-edit
+          git push origin HEAD:agent/unified-review-release-fixes
