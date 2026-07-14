@@ -72,21 +72,28 @@ jobs:
           PY
           uv run --frozen pytest -q tests/test_release_workflow_policy.py tests/test_release_operations_policy.py tests/test_production_signing_workflow_policy.py
 
-      - name: Remove one-time migration machinery
-        run: |
-          git rm .github/scripts/finalize_release_candidate.py
-          git rm .github/workflows/one-time-finalize-release-candidate.yml
+      - name: Upload validated workflow replacements
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: validated-release-workflow-replacements
+          if-no-files-found: error
+          path: |
+            .github/workflows/release.yml
+            .github/workflows/ci.yml
 
-      - name: Commit final tree and fast-forward PR branch
+      - name: Restore workflow files before token-authenticated push
+        run: git restore .github/workflows/release.yml .github/workflows/ci.yml
+
+      - name: Commit non-workflow finalization files
         env:
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           git config user.name 'release-finalizer[bot]'
           git config user.email 'release-finalizer[bot]@users.noreply.github.com'
-          git add -A
+          git add pyproject.toml uv.lock installer/kaito.iss CHANGELOG.md docs/RELEASE_OPERATIONS.md docs/RELEASE_SECURITY.md
           git diff --cached --check
-          git commit -m 'finalize v0.12.0 release candidate'
+          git commit -m 'finalize v0.12.0 release metadata'
           git fetch origin "$PR_BRANCH"
           actual=$(git rev-parse FETCH_HEAD)
           if [ "$actual" != "$EXPECTED_HEAD" ]; then
