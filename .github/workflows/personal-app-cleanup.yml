@@ -1,0 +1,111 @@
+name: One-time personal app cleanup
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/scripts/personal_app_cleanup.py"
+      - ".github/workflows/personal-app-cleanup.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-app-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'agent/personal-app-cleanup'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out exact cleanup branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Remove unneeded v0.12.0 draft and tag fail closed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/personal-app-cleanup
+          release_json=""
+          if release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.12.0" 2>artifacts/personal-app-cleanup/release-lookup-error.txt); then
+            printf '%s\n' "$release_json" > artifacts/personal-app-cleanup/release-before.json
+            is_draft=$(printf '%s' "$release_json" | jq -r '.draft')
+            release_id=$(printf '%s' "$release_json" | jq -r '.id')
+            if [[ "$is_draft" != "true" ]]; then
+              echo 'A public v0.12.0 Release exists. Refusing automatic deletion.' >&2
+              exit 1
+            fi
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+            echo "deleted_draft_release_id=$release_id" >> artifacts/personal-app-cleanup/cleanup.txt
+          else
+            if ! grep -Eqi '404|Not Found' artifacts/personal-app-cleanup/release-lookup-error.txt; then
+              cat artifacts/personal-app-cleanup/release-lookup-error.txt >&2
+              exit 1
+            fi
+            echo 'release_absent=true' >> artifacts/personal-app-cleanup/cleanup.txt
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.12.0" > artifacts/personal-app-cleanup/tag-before.json 2>artifacts/personal-app-cleanup/tag-lookup-error.txt; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v0.12.0"
+            echo 'tag_deleted=true' >> artifacts/personal-app-cleanup/cleanup.txt
+          else
+            if ! grep -Eqi '404|Not Found' artifacts/personal-app-cleanup/tag-lookup-error.txt; then
+              cat artifacts/personal-app-cleanup/tag-lookup-error.txt >&2
+              exit 1
+            fi
+            echo 'tag_absent=true' >> artifacts/personal-app-cleanup/cleanup.txt
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Apply personal application cleanup
+        run: python .github/scripts/personal_app_cleanup.py
+
+      - name: Refresh lockfile
+        run: |
+          uv lock
+          uv lock --check
+          uv sync --frozen
+
+      - name: Remove one-time script before validation
+        run: rm .github/scripts/personal_app_cleanup.py
+
+      - name: Validate application source
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+          uv run --frozen pyright
+          uv run --frozen pytest -ra
+
+      - name: Upload cleanup evidence and CI replacement
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: personal-app-cleanup-output
+          path: |
+            artifacts/personal-app-cleanup/
+            artifacts/personal-app-workflows/ci.yml
+          if-no-files-found: error
+
+      - name: Commit non-workflow cleanup
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          rm -rf artifacts/personal-app-cleanup artifacts/personal-app-workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'remove public release infrastructure for personal use'
+          git push origin "HEAD:$HEAD_BRANCH"
