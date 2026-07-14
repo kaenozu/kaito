@@ -114,3 +114,5 @@ jobs:
           git add -A
           git commit -m 'remove public release infrastructure for personal use'
           git push origin "HEAD:$HEAD_BRANCH"
+
+# retrigger via explicit ref update
