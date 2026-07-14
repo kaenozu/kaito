@@ -1,4 +1,4 @@
-name: Release PR approval gate
+name: Release PR fixed-head gate
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: release-pr-approval-gate-${{ inputs.pr_number }}
+  group: release-pr-fixed-head-gate-${{ inputs.pr_number }}
   cancel-in-progress: false
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
-      - name: Verify fixed-head approval gate
+      - name: Verify fixed-head audit gate
         shell: bash
         run: |
           mkdir -p artifacts
@@ -88,12 +88,12 @@ jobs:
             --expected-behind 0 \
             --expected-files "$GATE_EXPECTED_FILES" \
             --required-workflows "$GATE_REQUIRED_WORKFLOWS" \
-            --output artifacts/release-pr-approval-gate.json
+            --output artifacts/release-pr-fixed-head-gate.json
 
-      - name: Upload approval-gate evidence
+      - name: Upload fixed-head gate evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: kaito-release-pr-approval-gate
+          name: kaito-release-pr-fixed-head-gate
           if-no-files-found: error
-          path: artifacts/release-pr-approval-gate.json
+          path: artifacts/release-pr-fixed-head-gate.json
