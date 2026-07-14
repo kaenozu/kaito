@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: unified-review-finalizer
@@ -51,15 +51,12 @@ jobs:
           uv run --frozen pytest -ra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Publish clean unified tree atomically
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python tools/publish_unified_tree_once.py
+      - name: Export validated unified tree
+        run: python tools/export_unified_tree_once.py
 
-      - name: Upload publisher failure evidence
-        if: failure()
+      - name: Upload validated unified tree
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: unified-publisher-error
+          name: validated-unified-tree
           if-no-files-found: error
-          path: artifacts/publisher-error.txt
+          path: artifacts/unified-tree/
