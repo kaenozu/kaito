@@ -65,6 +65,38 @@ def _create_encrypted_zip(directory: Path) -> Path:
     return archive
 
 
+def _create_encrypted_7z(directory: Path, mhe: bool = False) -> Path:
+    """暗号化 7z を CLI で作成する (mhe=True で -mhe=on ヘッダー暗号化)。"""
+    source = directory / ("mhe-src" if mhe else "7z-src")
+    source.mkdir()
+    (source / "secret.txt").write_bytes(_CONTENT)
+    archive = directory / ("enc-headers.7z" if mhe else "encrypted.7z")
+    cmd = [
+        str(_SEVENZ),
+        "a",
+        f"-p{_TEST_SECRET}",
+        str(archive),
+        str(source / "*"),
+        "-y",
+        "-sccUTF-8",
+    ]
+    if mhe:
+        cmd.insert(2, "-mhe=on")
+    result = subprocess.run(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    return archive
+
+
 def _build_write_items(source: Path) -> list[dict]:
     """IOutArchive::UpdateItems 用のソース項目 (ディレクトリは末尾区切りなし)。"""
     items: list[dict] = []
@@ -163,6 +195,65 @@ def test_dll_handler_discovery() -> None:
     assert dll.find_handler_clsid("7z") is not None
     with pytest.raises(DllPocError):
         dll.find_handler_clsid("not-a-real-format")
+
+
+def test_dll_opens_header_encrypted_7z_requires_password_at_open(
+    tmp_path: Path,
+) -> None:
+    """ヘッダー暗号化 7z (-mhe=on) は Open 時パスワードが必須。
+
+    パスワードなしで開くと一覧が空になる (7-Zip の仕様: エラーではなく
+    0 項目)。Open コールバック経由でパスワードを供給すると一覧・展開できる。
+    """
+    archive_path = _create_encrypted_7z(tmp_path, mhe=True)
+    dll = SevenZipDll(_DLL)
+
+    with dll.open_archive(archive_path, "7z", password=None) as opened:
+        assert opened.list_items() == []
+
+    with dll.open_archive(archive_path, "7z", password=_TEST_SECRET) as opened:
+        files = [item for item in opened.list_items() if not item.is_dir]
+        assert [item.name for item in files] == ["secret.txt"]
+        assert (
+            opened.extract_to_memory(files[0].index, password=_TEST_SECRET) == _CONTENT
+        )
+
+
+def test_dll_open_callback_supplies_password_for_header_encryption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ヘッダー暗号化 7z の Open 時に Open コールバック経由でパスワードを供給する。
+
+    データ暗号化のみの 7z は Open 中にパスワードを要求しない (Extract 時のみ)。
+    ヘッダー暗号化 7z は Open フェーズで ICryptoGetTextPassword が呼ばれる
+    ことを実測で検証する。
+    """
+    data_path = _create_encrypted_7z(tmp_path, mhe=False)
+    mhe_path = _create_encrypted_7z(tmp_path, mhe=True)
+    dll = SevenZipDll(_DLL)
+
+    from sevenzip_dll import _CryptoPassword
+
+    calls = {"count": 0}
+    original = _CryptoPassword._crypto_get_text_password
+
+    def recording(self: _CryptoPassword, this: int, password_out: int) -> int:
+        calls["count"] += 1
+        return original(self, this, password_out)
+
+    monkeypatch.setattr(_CryptoPassword, "_crypto_get_text_password", recording)
+
+    # 対比: データ暗号化のみ → Open 中は呼ばれない
+    with dll.open_archive(data_path, "7z", password=_TEST_SECRET) as opened:
+        assert calls["count"] == 0
+
+    # ヘッダー暗号化 → Open 中に呼ばれる (Open コールバック経由)
+    with dll.open_archive(mhe_path, "7z", password=_TEST_SECRET) as opened:
+        assert calls["count"] == 1
+        files = [item for item in opened.list_items() if not item.is_dir]
+        assert (
+            opened.extract_to_memory(files[0].index, password=_TEST_SECRET) == _CONTENT
+        )
 
 
 # --- IOutArchive (圧縮) ---
