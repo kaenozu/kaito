@@ -13,7 +13,6 @@ on:
       - "src/kaito/archive/**"
       - "src/kaito/gui/**"
       - "src/kaito/diagnostics.py"
-      - "src/kaito/update_checker.py"
       - "tests/test_full_review_fixes.py"
       - "tests/test_productivity_services.py"
   workflow_dispatch:
