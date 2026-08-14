@@ -5,6 +5,7 @@ from __future__ import annotations
 import binascii
 import hashlib
 import shutil
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
@@ -12,8 +13,26 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+_SEVENZ = _REPO_ROOT / "bundled" / "7z.exe"
 _RAR_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "rar"
 _ARCHIVE_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "archive"
+
+
+def _run_7z(args: list[str]) -> None:
+    result = subprocess.run(
+        [str(_SEVENZ), *args, "-y", "-sccUTF-8"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"7z failed (code={result.returncode}): {result.stderr or result.stdout}"
+        )
 
 
 def _decode_uu(source: Path, destination: Path, expected_sha256: str) -> Path:
@@ -70,9 +89,9 @@ def empty_zip(tmp_dir: Path) -> Path:
 
 
 # 7z / 暗号化アーカイブは固定 (uuencode) バイナリからデコードする。
-# テスト実行時に 7z.exe を起動しない (コンソール窓を出さない・外部依存ゼロ)。
-# フィクスチャは tests/fixtures/archive/ にコミット済みで、生成コマンドは
-# 同ディレクトリの README.md を参照。
+# 不足するフィクスチャの生成のみ bundled/7z.exe を起動し、その際は
+# CREATE_NO_WINDOW でコンソール窓を出さない。読み取り系は 7z.dll に統一され
+# subprocess を生まない (src/kaito/archive/dll_backend.py)。
 
 
 @pytest.fixture
