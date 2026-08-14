@@ -1,37 +1,62 @@
-# 圧縮機能 + コンテキストメニュー設計
+# 圧縮機能 + コンテキストメニュー設計（実装済み）
+
+> ステータス: **実装済み**。当初計画（`unzip.py` への `create_archive()` 追加・`patoolib` 使用）は v0.10.1 で廃止され、現在はサービス層＋同梱7-Zip構成です。本稿は 2026-07-14 に現行アーキテクチャへ追従して改訂しました。
 
 ## 概要
-kaito に圧縮機能（ZIP/RAR/7z）と Windows 右クリックコンテキストメニュー統合を追加する。
 
-## アーキテクチャ
+kaito の圧縮機能（ZIP/7z の作成）と Windows 右クリックコンテキストメニュー統合の設計です。RAR は**作成非対応**（ライセンス上の制約。一覧・展開のみ）。`.rar` を出力先に指定した場合、ZIP へ自動変換せず `UnsupportedFormatError` で明示的に拒否します。
 
-### 1. `unzip.py` — `create_archive()` 追加
-- `sources: list[Path]`（圧縮対象）, `output: Path`（出力先）, `on_progress: ProgressCallback`
-- ZIP: `zipfile.ZipFile` + `ZIP_DEFLATED`
-- RAR/7z: `patoolib.create_archive()`
-- エラー時は `RuntimeError` を送出
+## アーキテクチャ（現行実装）
 
-### 2. GUI (`unzip_app.py`) — 圧縮UI
-- 「圧縮」ボタンを `bottom_frame` に追加（「解凍実行」の隣）
-- クリック → `filedialog.askopenfilenames()` または `askdirectory()` で対象選択
-- → `filedialog.asksaveasfilename()` で出力先 + 形式選択
-- → バックグラウンドスレッドで圧縮実行 → 進捗表示
-- D&D: アーカイブ未読込時のファイル/フォルダドロップ → 圧縮モード
+### 1. 圧縮サービス層
 
-### 3. CLI引数
-- `kaito.exe <archive>` — 現行通り（解凍UI）
-- `kaito.exe --compress <path>` — 圧縮UI
-- `kaito.exe --install-context-menu` — コンテキストメニュー登録
-- `kaito.exe --uninstall-context-menu` — コンテキストメニュー削除
+- `ArchiveService.create(CompressionOptions)` が形式別バックエンドへ振り分ける
+- `CompressionOptions`: `sources: list[Path]` / `output_path: Path` / `compression_level` (0–9) / `password` / `on_progress`
+- `.zip` → `ZipBackend.create`（`zipfile` 標準ライブラリ、`ZIP_DEFLATED`）
+  - パスワード付き ZIP は `SevenZipBackend.create` へ委譲し **AES-256**（`-mem=AES256`）で作成。ZipCrypto は使用しない
+- `.7z` → `SevenZipBackend.create`（同梱7-Zip CLI。パスワード時は `-mhe=on` でヘッダーも暗号化）
+- **原子的作成**: 出力先ディレクトリ内の一時ファイルへ作成 → 全エントリを再読込して検証（ZIP: `_verify_archive` / 7z: `7z t`）→ `os.replace` で確定。失敗時は一時ファイルを削除し、中途半端な出力を残さない
 
-### 4. コンテキストメニュー（Windows Registry）
-- 登録:
-  - `.zip` / `.rar` / `.7z` → "kaitoで解凍" → `kaito.exe "%1"`
-  - `*` / `Directory` → "kaitoで圧縮" → `kaito.exe --compress "%1"`
-- アイコン: `kaito.exe` のアイコンを各メニューに設定
-- 登録・削除は同梱の `.reg` ファイル出力 または 直接Registry操作
+### 2. 圧縮の安全対策
 
-### 5. テスト
-- `create_archive()` の単体テスト（ZIPのみ）
-- コンテキストメニュー登録/削除のテスト（モック）
-- GUIの圧縮ボタンテスト
+- 既存出力ファイルの**無断上書き拒否**: サービス層 `create()` と、Explorer 右クリック経由の `--compress` ガード（`_existing_context_compression_output`）の二重で担保
+- リンク / reparse point の圧縮拒否（`_validate_sources` / `_iter_source_items` が再帰中も検査）
+- Windows 展開で衝突する**名前重複の事前検出**（`find_duplicate_names`、大文字小文字正規化）
+- 自己包含の検出（出力先が圧縮対象に含まれる場合を拒否、`check_self_contained`）
+- 選択した**空フォルダーは ZIP 内に保持**（`_write_directory`）
+
+### 3. GUI 圧縮 UI（`gui/unzip_app.py`）
+
+- 「圧縮」ボタン、およびアーカイブ未読込時のファイル/フォルダー D&D で圧縮モードへ
+- バックグラウンドスレッドで実行し、進捗表示・キャンセル・処理中終了時の競合回避に対応（`test_gui_concurrency` で担保）
+
+### 4. CLI / エントリポイント（`__main__.py`）
+
+- `kaito.exe <archive>` — 解凍 UI（現行通り）
+- `kaito.exe --compress <path>` — 圧縮 UI。既定出力は `<stem>.zip`。**既存ファイルと衝突した場合は処理を開始せず**ネイティブメッセージで通知
+- `kaito.exe --install-context-menu` / `--uninstall-context-menu` — 登録 / 削除
+- 診断出力用の `--output PATH` は診断コマンド（`--version` など）でのみ有効
+
+### 5. コンテキストメニュー（`context_menu.py`）
+
+- `winreg` で **HKCU 直下**に登録（管理者権限不要・ユーザー単位）
+- `.zip` / `.rar` / `.7z` → `Software\Classes\SystemFileAssociations\<ext>\shell\`
+  - `kaito_extract`（"kaitoで解凍"）→ `kaito.exe "%1"`
+  - `kaito_test`（"kaitoで整合性を検査"）→ `kaito.exe --test-archive "%1"`
+- `*` / `Directory` → `...\shell\kaito_compress`（"kaitoで圧縮"）→ `kaito.exe --compress "%1"`
+- アンインストールはキーを再帰削除（過去にアクセス権不足のバグがあり修正済み。履歴は CHANGELOG 参照）
+- 当初計画していたメニューアイコン設定は現行実装では行わない
+
+### 6. テスト
+
+- `tests/test_compression_collisions.py` — 名前衝突（同一名・大文字小文字違い）と既存出力の上書き拒否
+- `tests/test_entrypoint_guards.py` — `--compress` の既存出力ガード（4件）
+- `tests/test_productivity_services.py` / `tests/test_integration.py` — 作成 → 一覧 → プレビュー → 展開の E2E（AES ZIP 含む）
+- `tests/test_unzip_app.py` — `--install-context-menu` / `--uninstall-context-menu` のルーティング
+
+**未整備**: コンテキストメニュー本体（`context_menu.py` のレジストリ操作）のモック単体テストは未実装です。当初計画に含まれていましたが、登録ロジックの検証は現状 CLI ルーティングと CI のインストーラー E2E（`tools/test_installer.ps1`）で担保しています。
+
+## 残課題・制約
+
+- 暗号化 ZIP / 7z の作成パスワードは 7-Zip CLI の仕様上、プロセス引数へ渡る（kaito はログ・例外・診断から伏せる。詳細は SECURITY.md）
+- RAR 作成は引き続き非対応
