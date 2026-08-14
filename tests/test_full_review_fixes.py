@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import io
-import urllib.error
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,75 +17,6 @@ from kaito.diagnostics import _sanitize_error
 from kaito.domain.errors import CompressionFailedError
 from kaito.domain.models import CompressionOptions, SafetyLimits
 from kaito.gui.productivity import _ArchivePasswordDialog, ProductivityFeatures
-from kaito.update_checker import LATEST_RELEASE_API, _version_key, check_for_update
-
-
-class _Response:
-    def __init__(self, payload: bytes) -> None:
-        self._payload = payload
-
-    def __enter__(self) -> _Response:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self) -> bytes:
-        return self._payload
-
-
-def test_update_checker_uses_runtime_token_without_persisting_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, str | None] = {}
-
-    def fake_urlopen(request: object, *, timeout: float) -> _Response:
-        captured["authorization"] = getattr(request, "get_header")("Authorization")
-        captured["timeout"] = str(timeout)
-        return _Response(
-            b'{"tag_name":"v0.12.0","html_url":"https://example.invalid/release"}'
-        )
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    result = check_for_update("0.11.0", token="temporary-token", timeout=2.5)
-
-    assert result.checked
-    assert result.update_available
-    assert captured == {
-        "authorization": "Bearer temporary-token",
-        "timeout": "2.5",
-    }
-
-
-def test_private_default_update_endpoint_has_actionable_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("KAITO_GITHUB_TOKEN", raising=False)
-    monkeypatch.delenv("KAITO_UPDATE_ENDPOINT", raising=False)
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise urllib.error.HTTPError(
-            LATEST_RELEASE_API,
-            404,
-            "Not Found",
-            hdrs=None,
-            fp=None,
-        )
-
-    monkeypatch.setattr("urllib.request.urlopen", fail)
-    result = check_for_update("0.11.0")
-
-    assert not result.checked
-    assert not result.update_available
-    assert result.error is not None
-    assert "KAITO_UPDATE_ENDPOINT" in result.error
-
-
-def test_update_version_ordering_handles_prereleases_and_trailing_zeroes() -> None:
-    assert _version_key("1.2rc1") < _version_key("1.2.0")
-    assert _version_key("1.2.0-rc.2") > _version_key("1.2.0-rc.1")
-    assert _version_key("1.2") == _version_key("1.2.0")
-    assert _version_key("1.2-unexpected") < _version_key("1.2")
 
 
 def test_diagnostics_redact_split_passwords_and_forward_slash_paths() -> None:

@@ -82,17 +82,6 @@ class SettingsDialog(ctk.CTkToplevel):
             anchor="w",
         ).grid(row=1, column=0, columnspan=2, padx=12, pady=(2, 10), sticky="w")
 
-        update_frame = ctk.CTkFrame(self)
-        update_frame.grid(row=4, column=0, padx=24, pady=4, sticky="ew")
-        self._update_var = ctk.BooleanVar(
-            value=bool(self._settings.get("check_updates", True))
-        )
-        ctk.CTkCheckBox(
-            update_frame,
-            text="起動時に更新を確認する",
-            variable=self._update_var,
-        ).grid(row=0, column=0, padx=12, pady=10, sticky="w")
-
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
         button_frame.grid(row=5, column=0, padx=24, pady=(12, 20), sticky="e")
         button_frame.grid_columnconfigure((0, 1), weight=0)
@@ -109,7 +98,6 @@ class SettingsDialog(ctk.CTkToplevel):
         self._settings.set_many(
             theme=theme,
             compression_level=self._compression_level(),
-            check_updates=self._update_var.get(),
         )
         if self._on_theme_changed is not None:
             self._on_theme_changed(theme)

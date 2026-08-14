@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import io
-import time
 import warnings
-import webbrowser
 from pathlib import Path
 from threading import Thread
 from tkinter import messagebox
@@ -23,8 +21,6 @@ from kaito.archive.service import ArchiveService
 from kaito.diagnostics import build_diagnostic_report
 from kaito.domain.errors import ArchiveError, CancelledError
 from kaito.domain.models import ArchiveInfo, ExtractionOptions
-from kaito.update_checker import UpdateCheckResult, check_for_update
-from kaito.version import __version__
 
 if TYPE_CHECKING:
     from kaito.gui.unzip_app import UnzipApp
@@ -257,14 +253,6 @@ class ProductivityFeatures:
             toolbar, text="診断コピー", width=92, command=self.copy_diagnostics
         )
         self._diagnostics_button.grid(row=0, column=4, padx=3)
-        self._update_button = ctk.CTkButton(
-            toolbar,
-            text="更新確認",
-            width=82,
-            command=lambda: self.check_updates(False),
-        )
-        self._update_button.grid(row=0, column=5, padx=(3, 0))
-
         app._tree.configure(selectmode="extended")
         app._tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         app._recent_menu.configure(command=self.on_recent_selected)
@@ -274,7 +262,6 @@ class ProductivityFeatures:
         setattr(app, "_set_ui_enabled", self.set_ui_enabled)
         setattr(app, "_ask_password", self.ask_password)
         setattr(app, "_show_password_error", self.show_password_error)
-        app.after(1500, lambda: self.check_updates(True))
 
     def ask_password(self, archive_name: str) -> str | None:
         return _ArchivePasswordDialog(
@@ -674,51 +661,6 @@ class ProductivityFeatures:
             parent=self.app,
         )
 
-    def check_updates(self, automatic: bool) -> None:
-        if automatic and not bool(self.app._settings.get("check_updates", True)):
-            return
-        now = int(time.time())
-        last_check = int(self.app._settings.get("last_update_check", 0) or 0)
-        if automatic and now - last_check < 24 * 60 * 60:
-            return
-
-        def worker() -> None:
-            result = check_for_update(__version__)
-            self.app.after(0, lambda: self._finish_update_check(result, automatic, now))
-
-        Thread(target=worker, daemon=True).start()
-
-    def _finish_update_check(
-        self, result: UpdateCheckResult, automatic: bool, checked_at: int
-    ) -> None:
-        if result.checked or automatic:
-            self.app._settings.set("last_update_check", checked_at)
-        if result.update_available:
-            open_release = messagebox.askyesno(
-                "kaitoの更新",
-                f"新しいバージョンがあります。\n\n"
-                f"現在: {result.current_version}\n最新: {result.latest_version}\n\n"
-                "GitHub Releasesを開きますか？",
-                parent=self.app,
-            )
-            if open_release and result.release_url:
-                webbrowser.open(result.release_url)
-            return
-        if automatic:
-            return
-        if result.checked:
-            messagebox.showinfo(
-                "kaitoの更新",
-                f"最新版です（{result.current_version}）。",
-                parent=self.app,
-            )
-        else:
-            messagebox.showwarning(
-                "kaitoの更新",
-                f"更新情報を取得できませんでした。\n{result.error or 'network error'}",
-                parent=self.app,
-            )
-
     def start_compress(self, output: Path) -> None:
         setattr(self.app, "_compress_password", None)
         if not self.app._compress_no_dialog and output.suffix.lower() in {
@@ -751,7 +693,6 @@ class ProductivityFeatures:
         self._safety_button.configure(state=state)
         self._integrity_button.configure(state=state)
         self._diagnostics_button.configure(state=state)
-        self._update_button.configure(state=state)
         self._apply_safety_controls(enabled=enabled)
 
 
