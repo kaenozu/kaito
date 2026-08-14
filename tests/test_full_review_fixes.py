@@ -228,3 +228,24 @@ def test_7zip_pinned_definition_is_single_source_of_truth() -> None:
     # 同梱チェックサム記録（SHA256SUMS）とも一致させる
     assert f"{pinned['exe_sha256']}  7z.exe" in sums
     assert f"{pinned['dll_sha256']}  7z.dll" in sums
+
+
+def test_test_suite_does_not_spawn_bundled_7z() -> None:
+    """テスト実行時に bundled/7z.exe を subprocess で起動しない (回帰ガード)。
+
+    コンソール窓のポップアップ防止と外部依存ゼロのため、テストコードから
+    7z.exe を起動してはならない。アーカイブフィクスチャは
+    tests/fixtures/archive/ の uuencode 済み固定バイナリからデコードする。
+    """
+    conftest = Path("tests/conftest.py").read_text(encoding="utf-8")
+    assert "_run_7z" not in conftest
+    assert "subprocess" not in conftest
+
+    dll_poc = Path("tests/test_dll_poc.py").read_text(encoding="utf-8")
+    assert "bundled/7z.exe" not in dll_poc
+    assert "_create_encrypted_zip" not in dll_poc
+    assert "_create_encrypted_7z" not in dll_poc
+
+    encrypted_zip = Path("tests/test_encrypted_zip.py").read_text(encoding="utf-8")
+    assert "subprocess" not in encrypted_zip
+    assert "_create_aes_zip" not in encrypted_zip

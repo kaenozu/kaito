@@ -9,6 +9,8 @@
   2. DLL 操作中に subprocess が一切呼ばれないこと (プロセスを生まない)
   3. 操作前後の全プロセスのコマンドラインにパスワードが現れないこと
   4. (対比) 現行 CLI パスは -p<password> をプロセス引数に渡すことを実演する
+  5. IOutArchive で ZIP / 7z を圧縮できる (平文・AES-256・ヘッダー暗号化)
+     — 圧縮も subprocess ゼロ・コマンドライン露出ゼロ
 
 リターンコード: すべて成功で 0、失敗で 1。
 """
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +33,48 @@ _CONTENT = b"DLL PoC secret content\n"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sevenzip_dll import DllPocError, SevenZipDll  # noqa: E402
+
+
+def _norm_name(name: str) -> str:
+    """読み取り側が Windows では '\\' を返すため '/' に正規化する。"""
+    return name.replace("\\", "/")
+
+
+def _build_write_items(source: Path) -> list[dict]:
+    """IOutArchive::UpdateItems 用のソース項目リスト。
+
+    ディレクトリ名の末尾区切りは付けない (7-Zip CLI と同じ挙動で、
+    読み取り時にハンドラが区切りを補完する)。
+    """
+    items: list[dict] = []
+    for item in sorted(source.rglob("*")):
+        rel = item.relative_to(source).as_posix()
+        st = item.stat()
+        items.append(
+            {
+                "path": item,
+                "name": rel,
+                "is_dir": item.is_dir(),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime),
+                "attrib": None,
+            }
+        )
+    return items
+
+
+def _read_back(
+    dll: SevenZipDll, path: Path, handler: str, password: str | None
+) -> tuple[list[str], dict[str, bytes]]:
+    """作成したアーカイブを DLL で読み直し、(ファイル名, 内容) を返す。"""
+    with dll.open_archive(path, handler, password=password) as opened:
+        listing = opened.list_items()
+    files = {_norm_name(item.name): item for item in listing if not item.is_dir}
+    contents: dict[str, bytes] = {}
+    for fname, item in files.items():
+        with dll.open_archive(path, handler, password=password) as opened:
+            contents[fname] = opened.extract_to_memory(item.index, password=password)
+    return sorted(files), contents
 
 
 def _create_encrypted_zip(directory: Path) -> Path:
@@ -56,6 +101,7 @@ def _create_encrypted_zip(directory: Path) -> Path:
         errors="replace",
         timeout=30,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout)
@@ -84,6 +130,7 @@ def _create_encrypted_7z(directory: Path) -> Path:
         errors="replace",
         timeout=30,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout)
@@ -103,6 +150,7 @@ def _scan_cmdlines_with(password: str) -> list[str]:
         text=True,
         timeout=60,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     return [line for line in result.stdout.splitlines() if password in line]
 
@@ -126,6 +174,7 @@ def _demonstrate_cli_exposure(directory: Path) -> bool:
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     try:
         deadline = time.monotonic() + 15
@@ -265,12 +314,92 @@ def main() -> int:
             return 1
         print("    [OK] 操作後: 露出ゼロ")
 
+        # 7. IOutArchive で圧縮 (平文 / AES-256 / ヘッダー暗号化)
+        print("\n[7] 7z.dll (IOutArchive) で圧縮...")
+        write_src = work / "write-src"
+        (write_src / "dir1").mkdir(parents=True)
+        (write_src / "dir1" / "file.txt").write_bytes(_CONTENT * 3)
+        (write_src / "top.bin").write_bytes(b"\x00\x01\x02" * 50)
+        write_items = _build_write_items(write_src)
+        expected_files = {
+            "dir1/file.txt": _CONTENT * 3,
+            "top.bin": b"\x00\x01\x02" * 50,
+        }
+        write_cases: list[dict] = [
+            {"label": "write-plain.zip", "handler": "zip"},
+            {
+                "label": "write-enc.zip",
+                "handler": "zip",
+                "password": _TEST_SECRET,
+                "encrypt_method": "AES256",
+            },
+            {"label": "write-plain.7z", "handler": "7z"},
+            {
+                "label": "write-enc.7z",
+                "handler": "7z",
+                "password": _TEST_SECRET,
+            },
+            {
+                "label": "write-enc-headers.7z",
+                "handler": "7z",
+                "password": _TEST_SECRET,
+                "encrypt_headers": True,
+            },
+        ]
+
+        write_calls: list[object] = []
+        subprocess.Popen = _recording_popen  # type: ignore[assignment]
+        try:
+            for case in write_cases:
+                out = work / case["label"]
+                kwargs = {
+                    key: case[key]
+                    for key in ("password", "encrypt_method", "encrypt_headers")
+                    if key in case
+                }
+                dll.create_archive(out, case["handler"], write_items, **kwargs)
+                names, contents = _read_back(
+                    dll, out, case["handler"], case.get("password")
+                )
+                ok_names = set(names) == set(expected_files)
+                ok_data = contents == expected_files
+                header_note = (
+                    " ヘッダー暗号化=ON" if case.get("encrypt_headers") else ""
+                )
+                print(
+                    f"    {case['label']}: 項目={names} 一致={ok_names and ok_data}"
+                    f"{header_note}"
+                )
+                if not (ok_names and ok_data):
+                    print(f"    [FAIL] {case['label']} の往復検証が一致しません")
+                    return 1
+        finally:
+            subprocess.Popen = original_popen  # type: ignore[assignment]
+
+        if write_calls:
+            print(
+                f"    [FAIL] 圧縮中に subprocess が {len(write_calls)} 回呼ばれました"
+            )
+            return 1
+        print("    [OK] 圧縮中の subprocess 呼び出しゼロ (パスワードはプロセス内供給)")
+
+        # 8. 圧縮後のコマンドライン走査
+        print("\n[8] 圧縮後の全プロセス・コマンドライン走査...")
+        after_write = _scan_cmdlines_with(_TEST_SECRET)
+        if after_write:
+            print(f"    [FAIL] 圧縮後に露出: {after_write}")
+            return 1
+        print("    [OK] 圧縮後: 露出ゼロ")
+
     print("\n" + "=" * 72)
     print("結果: 全チェック PASS — 7z.dll 直接統合で")
     print("  • ZIP (stdlib パスを含む) / 7z を 1 つの DLL バックエンドで処理")
+    print("  • 読み取り・書き込みともパスワードはプロセス内で供給")
     print(
-        "  • パスワードはプロセス内 (ICryptoGetTextPassword) で供給 → コマンドライン露出ゼロ"
+        "    (IInArchive: ICryptoGetTextPassword / IOutArchive: ICryptoGetTextPassword2)"
     )
+    print("  • 圧縮も対応: 平文 / AES-256 ZIP / 暗号化 7z / ヘッダー暗号化 7z")
+    print("  • subprocess ゼロ → コマンドライン露出ゼロ")
     print("=" * 72)
     return 0
 

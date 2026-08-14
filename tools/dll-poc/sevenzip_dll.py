@@ -8,13 +8,14 @@ kaito の展開バックエンドは現在 7z.exe CLI を subprocess で実行�
 パスワードをプロセス内 (ICryptoGetTextPassword / BSTR) で直接渡すことで
 「コマンドラインへの露出ゼロ」を実証する。
 
-対象スコープ (読み取り系)
-  - Open / Close
-  - GetNumberOfItems / GetProperty (パス・サイズ・暗号化フラグ等)
+対象スコープ (読み取り系 + 作成系)
+  - Open / Close / GetNumberOfItems / GetProperty (パス・サイズ・暗号化フラグ等)
   - Extract (メモリ展開、パスワードは ICryptoGetTextPassword で供給)
+  - IOutArchive::UpdateItems による新規作成 (zip / 7z)
+  - 作成時のパスワードは ICryptoGetTextPassword2 (passwordIsDefined + BSTR) で供給
 
 非対象 (次のステップ)
-  - IOutArchive (圧縮・更新) / 7z ヘッダー暗号化の展開
+  - 既存アーカイブの更新 (UpdateItems の newData=0 / indexInArchive 指定)
   - 実バックエンドへの組み込み (ArchiveBackend インターフェースの統一)
 
 注意: これは PoC であり、プロダクションコードではありません。
@@ -25,7 +26,8 @@ from __future__ import annotations
 import ctypes
 import sys
 from pathlib import Path
-from typing import Optional
+from datetime import datetime
+from typing import Callable, Optional, TypedDict
 
 if sys.platform != "win32":
     raise ImportError("7z.dll 統合 PoC は Windows 専用です")
@@ -36,6 +38,8 @@ __all__ = [
     "OpenedArchive",
     "ArchiveItem",
     "OP_WRONG_PASSWORD",
+    "OP_OK",
+    "UpdateItem",
 ]
 
 # ---------------------------------------------------------------------------
@@ -100,11 +104,19 @@ IID_ISequentialOutStream = GUID.from_string("{23170F69-40C1-278A-0000-0003000200
 IID_IArchiveOpenCallback = GUID.from_string("{23170F69-40C1-278A-0000-000600400000}")
 IID_IArchiveExtractCallback = GUID.from_string("{23170F69-40C1-278A-0000-000600500000}")
 IID_ICryptoGetTextPassword = GUID.from_string("{23170F69-40C1-278A-0000-000500100000}")
+IID_ICryptoGetTextPassword2 = GUID.from_string("{23170F69-40C1-278A-0000-000500110000}")
+IID_ISequentialInStream = GUID.from_string("{23170F69-40C1-278A-0000-000300010000}")
+IID_IOutStream = GUID.from_string("{23170F69-40C1-278A-0000-000300040000}")
+IID_ISetProperties = GUID.from_string("{23170F69-40C1-278A-0000-000600030000}")
+IID_IProgress = GUID.from_string("{23170F69-40C1-278A-0000-000000050000}")
+IID_IOutArchive = GUID.from_string("{23170F69-40C1-278A-0000-000600A00000}")
+IID_IArchiveUpdateCallback = GUID.from_string("{23170F69-40C1-278A-0000-000600800000}")
 
 # アーカイブ項目のプロパティID (7-Zip PropID.h)
 kpidPath = 3
 kpidIsDir = 6
 kpidSize = 7
+kpidAttrib = 9
 kpidMTime = 12
 kpidEncrypted = 15
 
@@ -257,6 +269,7 @@ class _ComImpl:
         self._vtbl_refs: list[object] = []
         self._refcount = 1
         self._primary_iid = IID_IUnknown
+        self._secondary_iids: set[GUID] = set()
         self._body = _ComBody()
         self._body.lpVtbl = ctypes.cast(
             self._vtbl_array, ctypes.POINTER(ctypes.c_void_p)
@@ -287,7 +300,7 @@ class _ComImpl:
     # --- IUnknown ---
     def _query_interface(self, this: int, riid: int, ppv: int) -> int:
         iid = ctypes.cast(riid, ctypes.POINTER(GUID)).contents
-        if iid in (IID_IUnknown, self._primary_iid):
+        if iid in (IID_IUnknown, self._primary_iid) or iid in self._secondary_iids:
             self._add_ref(this)
             ctypes.cast(ppv, ctypes.POINTER(ctypes.c_void_p))[0] = self.ptr
             return S_OK
@@ -307,10 +320,16 @@ class FileInStream(_ComImpl):
 
     _slots = 3 + 2  # IUnknown + Read + Seek
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        cancel_check: Optional[Callable[[], None]] = None,
+    ) -> None:
         super().__init__()
         self._file = open(path, "rb")
+        self._cancel_check = cancel_check
         self._install_iunknown(IID_IInStream)
+        self._secondary_iids = {IID_ISequentialInStream}
         self._register(
             3,
             HRESULT,
@@ -325,6 +344,8 @@ class FileInStream(_ComImpl):
         )
 
     def _read(self, this: int, data: int, size: int, processed: int) -> int:
+        if self._cancel_check is not None:
+            self._cancel_check()
         chunk = self._file.read(size)
         if chunk:
             ctypes.memmove(data, chunk, len(chunk))
@@ -662,6 +683,17 @@ class OpenedArchive:
         return False
 
 
+class UpdateItem(TypedDict):
+    """IOutArchive::UpdateItems に渡すソース項目 (CreateObject 側から見た新規エントリ)。"""
+
+    path: Path
+    name: str
+    is_dir: bool
+    size: int
+    mtime: Optional[datetime]
+    attrib: Optional[int]
+
+
 class SevenZipDll:
     """bundled/7z.dll の読み取り系ハンドラ (IInArchive) へのエントリポイント。"""
 
@@ -723,6 +755,76 @@ class SevenZipDll:
             return clsid
         raise DllPocError(f"handler '{handler_name}' が見つかりません")
 
+    def create_archive(
+        self,
+        output_path: Path,
+        handler_name: str,
+        items: list[UpdateItem],
+        password: Optional[str] = None,
+        *,
+        level: Optional[int] = None,
+        encrypt_method: Optional[str] = None,
+        encrypt_headers: bool = False,
+        cancel_check: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """IOutArchive::UpdateItems で新規アーカイブを作成する。
+
+        パスワードは ICryptoGetTextPassword2 (passwordIsDefined + BSTR) で
+        プロセス内供給され、subprocess を一切生まない。
+
+        - zip: encrypt_method="AES256" で AES 暗号化
+        - 7z : password 指定で AES-256 データ暗号化、encrypt_headers=True で
+          ヘッダー暗号化 (-mhe=on 相当)
+        """
+        clsid = self.find_handler_clsid(handler_name)
+        out_ptr = ctypes.c_void_p()
+        _check_hr(
+            self._dll.CreateObject(
+                ctypes.byref(clsid),
+                ctypes.byref(IID_IOutArchive),
+                ctypes.byref(out_ptr),
+            ),
+            "CreateObject(IOutArchive)",
+        )
+        if not out_ptr.value:
+            raise DllPocError("CreateObject が NULL を返しました")
+        out_archive = _OutArchive(out_ptr.value)
+
+        props: list[tuple[str, PROPVARIANT]] = []
+        if level is not None:
+            pv = PROPVARIANT()
+            pv.vt = VT_UI4
+            pv._union.ulVal = level
+            props.append(("x", pv))
+        if encrypt_method:
+            pv = PROPVARIANT()
+            pv.vt = VT_BSTR
+            pv._union.bstrVal = _oleaut32.SysAllocString(encrypt_method)
+            props.append(("em", pv))
+        if encrypt_headers:
+            pv = PROPVARIANT()
+            pv.vt = VT_BOOL
+            pv._union.boolVal = -1  # VARIANT_TRUE
+            props.append(("he", pv))
+        out_archive.set_properties(props)
+
+        callback = _UpdateCallback(items, password=password, cancel_check=cancel_check)
+        try:
+            with output_path.open("wb") as output:
+                out_stream = _FileOutStream(output)
+                out_archive.update_items(out_stream, len(items), callback)
+        except Exception:
+            output_path.unlink(missing_ok=True)
+            raise
+        finally:
+            callback.close()
+        for position, result in callback.results.items():
+            if result != OP_OK:
+                output_path.unlink(missing_ok=True)
+                raise DllPocError(
+                    f"圧縮が失敗しました (index={position}, operationResult={result})"
+                )
+
     def open_archive(
         self,
         path: Path,
@@ -746,3 +848,316 @@ class SevenZipDll:
         open_cb = _OpenCallback(password) if password is not None else None
         archive.open(stream, open_cb)
         return OpenedArchive(archive, stream, open_cb)
+
+
+# ---------------------------------------------------------------------------
+# 作成系 (IOutArchive)
+# ---------------------------------------------------------------------------
+
+
+def _datetime_to_filetime(value: datetime) -> FILETIME:
+    """naive datetime を FILETIME (1601-01-01 からの 100ns 単位) に変換する。"""
+    seconds = int(value.timestamp()) + 11644473600
+    hundred_ns = seconds * 10_000_000
+    ft = FILETIME()
+    ft.dwLowDateTime = hundred_ns & 0xFFFFFFFF
+    ft.dwHighDateTime = (hundred_ns >> 32) & 0xFFFFFFFF
+    return ft
+
+
+class _FileOutStream(_ComImpl):
+    """IOutStream (ISequentialOutStream + Seek + SetSize): 書き込み先ファイル。
+
+    7z ハンドラは出力ストリームに IOutStream (シーク可能) を要求する
+    (7zUpdate.cpp の IStreamSetRestriction / IOutStream QI)。zip は
+    ISequentialOutStream のみで動作するが、共通実装として IOutStream を返す。
+    """
+
+    _slots = 3 + 3  # IUnknown + Write/Seek/SetSize
+
+    def __init__(self, fileobj: object) -> None:
+        super().__init__()
+        self._fileobj = fileobj
+        self._write_file = fileobj.write  # type: ignore[attr-defined]
+        self._seek_file = fileobj.seek  # type: ignore[attr-defined]
+        self._truncate_file = fileobj.truncate  # type: ignore[attr-defined]
+        self._tell_file = fileobj.tell  # type: ignore[attr-defined]
+        self._install_iunknown(IID_ISequentialOutStream)
+        self._secondary_iids = {IID_IOutStream}
+        self._register(
+            3,
+            HRESULT,
+            (ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)),
+            self._write,
+        )
+        self._register(
+            4,
+            HRESULT,
+            (ctypes.c_int64, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)),
+            self._seek,
+        )
+        self._register(
+            5,
+            HRESULT,
+            (ctypes.c_uint64,),
+            self._set_size,
+        )
+
+    def _write(self, this: int, data: int, size: int, processed: int) -> int:
+        if size:
+            self._write_file(ctypes.string_at(data, size))
+        ctypes.cast(processed, ctypes.POINTER(ctypes.c_uint32))[0] = size
+        return S_OK
+
+    def _seek(self, this: int, offset: int, origin: int, new_position: int) -> int:
+        self._seek_file(offset, origin)
+        if new_position:
+            ctypes.cast(new_position, ctypes.POINTER(ctypes.c_uint64))[0] = (
+                self._tell_file()
+            )
+        return S_OK
+
+    def _set_size(self, this: int, new_size: int) -> int:
+        self._truncate_file(new_size)
+        return S_OK
+
+
+class _CryptoPassword2(_ComImpl):
+    """ICryptoGetTextPassword2: 作成時のパスワード供給 (passwordIsDefined + BSTR)。"""
+
+    _slots = 3 + 1
+
+    def __init__(self, password: Optional[str]) -> None:
+        super().__init__()
+        self._password = password
+        self._install_iunknown(IID_ICryptoGetTextPassword2)
+        self._register(
+            3,
+            HRESULT,
+            (
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_void_p),
+            ),
+            self._crypto_get_text_password2,
+        )
+
+    def _crypto_get_text_password2(
+        self, this: int, password_is_defined: int, password_out: int
+    ) -> int:
+        ctypes.cast(password_is_defined, ctypes.POINTER(ctypes.c_int32))[0] = (
+            1 if self._password is not None else 0
+        )
+        bstr = _oleaut32.SysAllocString(self._password or "")
+        ctypes.cast(password_out, ctypes.POINTER(ctypes.c_void_p))[0] = bstr
+        return S_OK
+
+
+class _UpdateCallback(_ComImpl):
+    """IArchiveUpdateCallback (+ ICryptoGetTextPassword2: 作成時のパスワード供給)。
+
+    新規アーカイブ作成用。各 item の GetProperty / GetStream に応答し、
+    操作結果 (NOperationResult) を位置順で記録する。
+    """
+
+    _slots = 3 + 2 + 4  # IUnknown + IProgress + 更新4メソッド
+
+    def __init__(
+        self,
+        items: list[UpdateItem],
+        password: Optional[str] = None,
+        cancel_check: Optional[Callable[[], None]] = None,
+    ) -> None:
+        super().__init__()
+        self._items = items
+        self._password = password
+        self._cancel_check = cancel_check
+        self._crypto = _CryptoPassword2(password) if password is not None else None
+        self.results: dict[int, int] = {}
+        self._current_stream: Optional[FileInStream] = None
+        self._streams: list[FileInStream] = []
+        self._install_iunknown(IID_IArchiveUpdateCallback)
+        self._register(3, HRESULT, (ctypes.c_uint64,), self._set_total)
+        self._register(
+            4, HRESULT, (ctypes.POINTER(ctypes.c_uint64),), self._set_completed
+        )
+        self._register(
+            5,
+            HRESULT,
+            (
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_uint32),
+            ),
+            self._get_update_item_info,
+        )
+        self._register(
+            6,
+            HRESULT,
+            (ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(PROPVARIANT)),
+            self._get_property,
+        )
+        self._register(
+            7,
+            HRESULT,
+            (ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)),
+            self._get_stream,
+        )
+        self._register(8, HRESULT, (ctypes.c_int32,), self._set_operation_result)
+
+    def _check_cancel(self) -> None:
+        if self._cancel_check is not None:
+            self._cancel_check()
+
+    def _set_total(self, this: int, total: int) -> int:
+        self._check_cancel()
+        return S_OK
+
+    def _set_completed(self, this: int, complete: int) -> int:
+        self._check_cancel()
+        return S_OK
+
+    def _get_update_item_info(
+        self,
+        this: int,
+        index: int,
+        new_data: int,
+        new_props: int,
+        index_in_archive: int,
+    ) -> int:
+        # 新規作成: 全アイテムを追加、既存アーカイブ内のインデックスは無し
+        ctypes.cast(new_data, ctypes.POINTER(ctypes.c_int32))[0] = 1
+        ctypes.cast(new_props, ctypes.POINTER(ctypes.c_int32))[0] = 1
+        ctypes.cast(index_in_archive, ctypes.POINTER(ctypes.c_uint32))[0] = 0xFFFFFFFF
+        return S_OK
+
+    def _get_property(self, this: int, index: int, propid: int, value_ptr: int) -> int:
+        item = self._items[index]
+        pv = ctypes.cast(value_ptr, ctypes.POINTER(PROPVARIANT)).contents
+        if propid == kpidPath:
+            bstr = _oleaut32.SysAllocString(item["name"])
+            pv.vt = VT_BSTR
+            pv._union.bstrVal = bstr
+        elif propid == kpidIsDir:
+            pv.vt = VT_BOOL
+            pv._union.boolVal = -1 if item["is_dir"] else 0
+        elif propid == kpidSize:
+            pv.vt = VT_UI8
+            pv._union.uhVal = item["size"]
+        elif propid == kpidAttrib:
+            if item.get("attrib") is not None:
+                pv.vt = VT_UI4
+                pv._union.ulVal = item["attrib"]
+        elif propid == kpidMTime:
+            if item.get("mtime") is not None:
+                pv.vt = VT_FILETIME
+                pv._union.filetime = _datetime_to_filetime(item["mtime"])
+        return S_OK
+
+    def _get_stream(self, this: int, index: int, in_stream: int) -> int:
+        item = self._items[index]
+        if item["is_dir"]:
+            ctypes.cast(in_stream, ctypes.POINTER(ctypes.c_void_p))[0] = 0
+            return S_OK
+        self._current_stream = FileInStream(
+            item["path"], cancel_check=self._cancel_check
+        )
+        self._streams.append(self._current_stream)
+        self._current_stream._add_ref(this)
+        ctypes.cast(in_stream, ctypes.POINTER(ctypes.c_void_p))[0] = (
+            self._current_stream.ptr
+        )
+        return S_OK
+
+    def close(self) -> None:
+        """DLL へ渡した全ソースストリームを閉じる (ハンドルリーク防止)。"""
+        for stream in self._streams:
+            stream.close()
+        self._streams.clear()
+
+    def _set_operation_result(self, this: int, result: int) -> int:
+        self.results[len(self.results)] = int(result)
+        return S_OK
+
+    def _query_interface(self, this: int, riid: int, ppv: int) -> int:
+        iid = ctypes.cast(riid, ctypes.POINTER(GUID)).contents
+        if iid in (IID_IUnknown, IID_IArchiveUpdateCallback):
+            self._add_ref(this)
+            ctypes.cast(ppv, ctypes.POINTER(ctypes.c_void_p))[0] = self.ptr
+            return S_OK
+        if self._crypto is not None and iid == IID_ICryptoGetTextPassword2:
+            self._crypto._add_ref(this)
+            ctypes.cast(ppv, ctypes.POINTER(ctypes.c_void_p))[0] = self._crypto.ptr
+            return S_OK
+        return E_NOINTERFACE
+
+
+class _OutArchive:
+    """7z.dll が生成した IOutArchive オブジェクトの Python ラッパー。"""
+
+    def __init__(self, ptr: int) -> None:
+        self._ptr = ptr
+        self._vtbl = _vtable_of(ptr)
+
+    def set_properties(self, props: list[tuple[str, PROPVARIANT]]) -> None:
+        """ISetProperties::SetProperties (圧縮オプション: x / em / he 等)。"""
+        if not props:
+            return
+        iset = ctypes.c_void_p()
+        _check_hr(
+            _com_call(
+                self._vtbl,
+                0,
+                (ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)),
+                self._ptr,
+                ctypes.byref(IID_ISetProperties),
+                ctypes.byref(iset),
+            ),
+            "QueryInterface(ISetProperties)",
+        )
+        if not iset.value:
+            raise DllPocError("ISetProperties の取得に失敗しました")
+        vtbl = _vtable_of(iset.value)
+        names = (ctypes.c_wchar_p * len(props))(*[name for name, _ in props])
+        values = (PROPVARIANT * len(props))(*[value for _, value in props])
+        try:
+            _check_hr(
+                _com_call(
+                    vtbl,
+                    3,
+                    (
+                        ctypes.POINTER(ctypes.c_wchar_p),
+                        ctypes.POINTER(PROPVARIANT),
+                        ctypes.c_uint32,
+                    ),
+                    iset.value,
+                    names,
+                    values,
+                    len(props),
+                ),
+                "ISetProperties::SetProperties",
+            )
+        finally:
+            # "em" の BSTR はハンドラが読み取り後に保持しないため解放する
+            for _, value in props:
+                if value.vt == VT_BSTR and value._union.bstrVal:
+                    _oleaut32.SysFreeString(value._union.bstrVal)
+
+    def update_items(
+        self,
+        out_stream: _FileOutStream,
+        num_items: int,
+        callback: _UpdateCallback,
+    ) -> None:
+        _check_hr(
+            _com_call(
+                self._vtbl,
+                3,
+                (ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p),
+                self._ptr,
+                out_stream.ptr,
+                num_items,
+                callback.ptr,
+            ),
+            "IOutArchive::UpdateItems",
+        )
