@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes are applied to the latest released version and the active development branch.
+Security fixes are applied to the active development branch. kaito has no public releases; the current version is the internal development version `0.12.0.dev0`.
 
 ## Reporting a vulnerability
 
@@ -29,8 +29,8 @@ No validation can make an archive parser risk-free. Keep kaito and its bundled 7
 - 7-Zip CLI requires the password to be supplied through its command-line `-p` switch. On Windows, another process running as the same user may be able to inspect process command lines while an encrypted archive is being processed.
 - Avoid handling sensitive encrypted archives on shared or untrusted Windows sessions.
 
-A future direct 7z.dll integration may remove the command-line exposure, but that is not implemented in the current release.
+A future direct 7z.dll integration may remove the command-line exposure, but that is not implemented in the current version.
 
 ## Bundled backend integrity
 
-Release builds only use the bundled `7z.exe` and `7z.dll`. Their SHA-256 values are fixed in source and in `bundled/SHA256SUMS`. A frozen executable does not fall back to a system-installed 7-Zip when the bundled copy is missing or has the wrong hash.
+Packaged builds only use the bundled `7z.exe` and `7z.dll`. Their SHA-256 values are fixed in source and in `bundled/SHA256SUMS`. A frozen executable does not fall back to a system-installed 7-Zip when the bundled copy is missing or has the wrong hash.

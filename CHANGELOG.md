@@ -18,6 +18,7 @@
 - コンソールスクリプトを診断CLIとExplorerガードを持つ`kaito.__main__:main`へ統一
 - CIで`uv lock --check`を必須化
 - 個人利用向けの内部開発版として`0.12.0.dev0`を使用
+- プレビューの上限（ファイルサイズ・画像画素数）を`SafetyLimits`に一元化
 
 ### Fixed
 
