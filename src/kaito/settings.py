@@ -22,8 +22,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "close_on_done": False,
     "recent_files": [],
     "compression_level": 1,
-    "check_updates": True,
-    "last_update_check": 0,
     "safety_max_entries": SafetyLimits.max_entries,
     "safety_max_total_size": SafetyLimits.max_total_size,
     "safety_max_file_size": SafetyLimits.max_single_file_size,
@@ -82,20 +80,11 @@ def _validate_settings(data: object) -> dict[str, Any]:
     last_dest = data.get("last_dest")
     defaults["last_dest"] = last_dest if isinstance(last_dest, str) else ""
 
-    for key in ("open_on_done", "close_on_done", "check_updates"):
+    for key in ("open_on_done", "close_on_done"):
         value = data.get(key)
         defaults[key] = value if isinstance(value, bool) else DEFAULT_SETTINGS[key]
 
     defaults["recent_files"] = _validate_recent_files(data.get("recent_files"))
-    last_update_check = data.get("last_update_check")
-    defaults["last_update_check"] = (
-        last_update_check
-        if isinstance(last_update_check, int)
-        and not isinstance(last_update_check, bool)
-        and last_update_check >= 0
-        else 0
-    )
-
     compression_level = data.get("compression_level")
     defaults["compression_level"] = (
         compression_level
