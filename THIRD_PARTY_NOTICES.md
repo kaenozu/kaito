@@ -11,7 +11,7 @@ Upstream release: `https://github.com/ip7z/7zip/releases/tag/26.02`
 
 The 7-Zip license includes GNU LGPL terms, BSD 2-Clause components, BSD 3-Clause components, and the unRAR license restriction. The complete redistributed notice is in `bundled/7-ZIP-LICENSE.txt`.
 
-The official 26.02 x64 installer used as the source package is not Authenticode-signed. kaito therefore pins both the official GitHub Release URL and its SHA-256 in `bundled/SOURCE-PACKAGE.txt`. `tools/update_7zip.ps1` verifies the package digest before extraction, then independently verifies the extracted `7z.exe` and `7z.dll` against `bundled/SHA256SUMS` before replacing repository files.
+The official 26.02 x64 installer used as the source package is not Authenticode-signed. kaito therefore pins the version, download URL, license URL, and SHA-256 digests in `bundled/7zip-pinned.json`, which is the single source of truth read by both `tools/update_7zip.ps1` and `.github/workflows/ci.yml`. `tools/update_7zip.ps1` verifies the package digest before extraction, then independently verifies the extracted `7z.exe` and `7z.dll` against `bundled/SHA256SUMS` before replacing repository files. The human-readable acquisition record is `bundled/SOURCE-PACKAGE.txt`.
 
 RAR support is extraction-only. kaito does not implement or expose RAR creation.
 

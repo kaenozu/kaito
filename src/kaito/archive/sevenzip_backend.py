@@ -41,6 +41,9 @@ from kaito.domain.models import (
     is_reparse_or_link,
 )
 
+# 同梱 7-Zip のピン留め定義（バージョン・URL・SHA-256）は bundled/7zip-pinned.json が唯一の管理場所
+# （tools/update_7zip.ps1 と ci.yml が参照）。ここでの期待ハッシュは frozen 実行ファイルに焼き込み、
+# 同梱バイナリ差し替えを検出するためのもの。JSON との一致は test_full_review_fixes.py で担保する。
 SEVENZIP_VERSION = "26.02"
 SEVENZIP_URL = "https://github.com/ip7z/7zip/releases/tag/26.02"
 SEVENZIP_EXE_SHA256 = "83967f1b02b43c4efeda302795722c809e0e81b8307de73558d10484d5676a7d"

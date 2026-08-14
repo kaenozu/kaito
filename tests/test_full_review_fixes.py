@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -202,3 +203,28 @@ def test_preview_size_limit_comes_from_safety_limits() -> None:
 
     assert "_MAX_PREVIEW_FILE_SIZE" not in source
     assert "safety_limits.preview_max_size" in source
+
+
+def test_7zip_pinned_definition_is_single_source_of_truth() -> None:
+    pinned = json.loads(Path("bundled/7zip-pinned.json").read_text(encoding="utf-8"))
+    ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    update = Path("tools/update_7zip.ps1").read_text(encoding="utf-8")
+    backend = Path("src/kaito/archive/sevenzip_backend.py").read_text(encoding="utf-8")
+    sums = Path("bundled/SHA256SUMS").read_text(encoding="utf-8")
+
+    # ピン留め値（バージョン・URL・SHA-256）は JSON に一元化し、ci.yml / update_7zip.ps1 には直書きしない
+    assert "bundled/7zip-pinned.json" in ci
+    assert "bundled/7zip-pinned.json" in update
+    assert pinned["package_sha256"] not in ci
+    assert pinned["exe_sha256"] not in ci
+    assert pinned["package_sha256"] not in update
+    assert pinned["exe_sha256"] not in update
+
+    # ランタイム整合性チェックの期待ハッシュ（frozen exe への焼き込み）は JSON と一致させる
+    assert f'SEVENZIP_VERSION = "{pinned["version"]}"' in backend
+    assert f'SEVENZIP_EXE_SHA256 = "{pinned["exe_sha256"]}"' in backend
+    assert f'SEVENZIP_DLL_SHA256 = "{pinned["dll_sha256"]}"' in backend
+
+    # 同梱チェックサム記録（SHA256SUMS）とも一致させる
+    assert f"{pinned['exe_sha256']}  7z.exe" in sums
+    assert f"{pinned['dll_sha256']}  7z.dll" in sums

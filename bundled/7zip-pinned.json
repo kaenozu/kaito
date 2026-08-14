@@ -1,0 +1,8 @@
+{
+  "version": "26.02",
+  "package_url": "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe",
+  "license_url": "https://raw.githubusercontent.com/ip7z/7zip/26.02/DOC/License.txt",
+  "package_sha256": "6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0",
+  "exe_sha256": "83967f1b02b43c4efeda302795722c809e0e81b8307de73558d10484d5676a7d",
+  "dll_sha256": "69fd4df057985c40e510e2fac182881c7f85e90aa13ec703f763a8fdb2ce61f8"
+}
