@@ -41,9 +41,10 @@ jobs:
       - name: Verify pinned 7-Zip source package identity
         shell: pwsh
         run: |
-          $url = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
-          $expected = '6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0'
-          $package = Join-Path $env:RUNNER_TEMP '7z2602-x64.exe'
+          $pinned = Get-Content 'bundled/7zip-pinned.json' -Raw | ConvertFrom-Json
+          $url = $pinned.package_url
+          $expected = $pinned.package_sha256
+          $package = Join-Path $env:RUNNER_TEMP ([System.IO.Path]::GetFileName($url))
           Invoke-WebRequest -Uri $url -OutFile $package -UseBasicParsing
           $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne $expected) { throw "7-Zip source package hash mismatch: $hash" }

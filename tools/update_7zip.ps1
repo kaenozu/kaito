@@ -4,15 +4,23 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$Version = '26.02'
-$PackageUrl = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe'
-$LicenseUrl = 'https://raw.githubusercontent.com/ip7z/7zip/26.02/DOC/License.txt'
-$ExpectedPackageSha256 = '6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0'
-$ExpectedExeSha256 = '83967f1b02b43c4efeda302795722c809e0e81b8307de73558d10484d5676a7d'
-$ExpectedDllSha256 = '69fd4df057985c40e510e2fac182881c7f85e90aa13ec703f763a8fdb2ce61f8'
-
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $BundledDir = Join-Path $RepoRoot 'bundled'
+
+# 7-Zip のピン留め定義（バージョン・URL・SHA-256）は bundled/7zip-pinned.json に一元管理。
+# tools/update_7zip.ps1 と ci.yml の両方がこの JSON を参照する。
+$PinnedPath = Join-Path $BundledDir '7zip-pinned.json'
+if (-not (Test-Path $PinnedPath -PathType Leaf)) {
+    throw "Pinned 7-Zip definition not found: $PinnedPath"
+}
+$Pinned = Get-Content $PinnedPath -Raw | ConvertFrom-Json
+
+$Version = $Pinned.version
+$PackageUrl = $Pinned.package_url
+$LicenseUrl = $Pinned.license_url
+$ExpectedPackageSha256 = $Pinned.package_sha256
+$ExpectedExeSha256 = $Pinned.exe_sha256
+$ExpectedDllSha256 = $Pinned.dll_sha256
 $ExistingExtractor = Join-Path $BundledDir '7z.exe'
 
 if (-not (Test-Path $ExistingExtractor -PathType Leaf)) {
@@ -92,6 +100,7 @@ try {
         "Source: $PackageUrl"
         'Authenticode: NotSigned'
         "SHA-256: $PackageHash"
+        "Pinned definition: bundled/7zip-pinned.json"
         "Verified on: $([DateTime]::UtcNow.ToString('yyyy-MM-dd'))"
         ''
         'The package is verified before extraction. Extracted binaries are verified against SHA256SUMS before replacement.'
