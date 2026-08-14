@@ -96,3 +96,35 @@ def test_service_preview_limit_reaches_backend_read_entry(tmp_path: Path) -> Non
 
     default_service = ArchiveService()
     assert default_service.read_entry(archive_path, "hello.txt") == b"Hello World"
+
+
+def test_extraction_defaults_match_safety_limits() -> None:
+    """ExtractionOptions と SafetyLimits の既定値が一致することを保証する。
+
+    ArchiveService._effective_extraction_options は両者の min を取るため、
+    既定値がズレると「既定のオプション」の意味が暗黙に変わってしまう。
+    フィールド名は SafetyLimits.max_single_file_size ↔ ExtractionOptions.max_file_size
+    のように対応が異なるので、名前ではなく値で比較する。
+    """
+    limits = SafetyLimits()
+    options = ExtractionOptions(dest_dir=Path("."))
+
+    assert options.max_total_size == limits.max_total_size
+    assert options.max_file_size == limits.max_single_file_size
+    assert options.max_entries == limits.max_entries
+    assert options.max_compression_ratio == limits.max_compression_ratio
+    assert options.max_path_length == limits.max_path_length
+
+
+def test_default_limits_do_not_tighten_default_options() -> None:
+    """既定の SafetyLimits による min マージが既定 ExtractionOptions を変えないこと。"""
+    service = ArchiveService()
+    options = ExtractionOptions(dest_dir=Path("."))
+
+    effective = service._effective_extraction_options(options)
+
+    assert effective.max_total_size == options.max_total_size
+    assert effective.max_file_size == options.max_file_size
+    assert effective.max_entries == options.max_entries
+    assert effective.max_compression_ratio == options.max_compression_ratio
+    assert effective.max_path_length == options.max_path_length
