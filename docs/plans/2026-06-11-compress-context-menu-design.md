@@ -53,8 +53,9 @@ kaito の圧縮機能（ZIP/7z の作成）と Windows 右クリックコンテ�
 - `tests/test_entrypoint_guards.py` — `--compress` の既存出力ガード（4件）
 - `tests/test_productivity_services.py` / `tests/test_integration.py` — 作成 → 一覧 → プレビュー → 展開の E2E（AES ZIP 含む）
 - `tests/test_unzip_app.py` — `--install-context-menu` / `--uninstall-context-menu` のルーティング
+- `tests/test_context_menu.py` — レジストリ操作のモック単体テスト（12件）: 登録キー16件（3拡張子×2アクション + 2ルート×1アクション、各 `\command` サブキー込み）/ ラベルとコマンドの書き分け / 再帰削除の順序とエラー握りつぶし / winreg 不在ガード / exe パス解決（開発・frozen・フォールバック）
 
-**未整備**: コンテキストメニュー本体（`context_menu.py` のレジストリ操作）のモック単体テストは未実装です。当初計画に含まれていましたが、登録ロジックの検証は現状 CLI ルーティングと CI のインストーラー E2E（`tools/test_installer.ps1`）で担保しています。
+**実装済み（v0.12.0 開発版以降）**: コンテキストメニュー本体（`context_menu.py` のレジストリ操作）のモック単体テストを `tests/test_context_menu.py` に実装しました（winreg をモックし実レジストリには触れません）。登録・削除ロジックは上記テストで、CLI ルーティングと CI のインストーラー E2E（`tools/test_installer.ps1`）と合わせて担保しています。
 
 ## 残課題・制約
 
