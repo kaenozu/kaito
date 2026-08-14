@@ -148,3 +148,14 @@ def test_running_7z_process_is_terminated_on_cancel() -> None:
     assert len(captured) == 1
     assert isinstance(captured[0], CancelledError)
     assert backend._current_process is None
+
+
+def test_read_entry_respects_configured_preview_max_size(
+    normal_7z: Path,
+) -> None:
+    backend = SevenZipBackend(preview_max_size=4)
+
+    assert backend.read_entry(normal_7z, "hello.txt") is None
+
+    default = SevenZipBackend()
+    assert default.read_entry(normal_7z, "hello.txt") == b"Hello World"

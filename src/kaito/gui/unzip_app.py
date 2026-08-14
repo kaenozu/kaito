@@ -67,7 +67,6 @@ _TEXT_EXTENSIONS = {
 }
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
 _MAX_PREVIEW_CHARS = 2000
-_MAX_PREVIEW_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -741,7 +740,10 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             if e.name == name:
                 entry = e
                 break
-        if entry is not None and entry.size > _MAX_PREVIEW_FILE_SIZE:
+        if (
+            entry is not None
+            and entry.size > self._archive_service.safety_limits.preview_max_size
+        ):
             self._preview_label.configure(
                 text=f"ファイルが大きすぎてプレビューできません ({_format_size(entry.size)})"
             )

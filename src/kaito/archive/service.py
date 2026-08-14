@@ -44,9 +44,15 @@ class ArchiveService:
         cancel_event: Optional[threading.Event] = None,
     ) -> None:
         self._cancel_event = cancel_event or threading.Event()
-        self._zip_backend = ZipBackend(cancel_event=self._cancel_event)
-        self._sevenzip_backend = SevenZipBackend(cancel_event=self._cancel_event)
         self._safety_limits = safety_limits or SafetyLimits()
+        self._zip_backend = ZipBackend(
+            cancel_event=self._cancel_event,
+            preview_max_size=self._safety_limits.preview_max_size,
+        )
+        self._sevenzip_backend = SevenZipBackend(
+            cancel_event=self._cancel_event,
+            preview_max_size=self._safety_limits.preview_max_size,
+        )
 
     @property
     def safety_limits(self) -> SafetyLimits:
