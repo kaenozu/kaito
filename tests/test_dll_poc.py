@@ -19,8 +19,6 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _POC_DIR = _REPO_ROOT / "tools" / "dll-poc"
 _DLL = _REPO_ROOT / "bundled" / "7z.dll"
-_SEVENZ = _REPO_ROOT / "bundled" / "7z.exe"
-
 pytestmark = [
     pytest.mark.skipif(
         sys.platform != "win32", reason="7z.dll 統合 PoC は Windows 専用"
@@ -33,68 +31,6 @@ from sevenzip_dll import DllPocError, SevenZipDll  # noqa: E402
 
 _TEST_SECRET = "Kaito-Dll-Poc-2026!"
 _CONTENT = b"DLL PoC secret content\n"
-
-
-def _create_encrypted_zip(directory: Path) -> Path:
-    source = directory / "zip-src"
-    source.mkdir()
-    (source / "secret.txt").write_bytes(_CONTENT)
-    archive = directory / "encrypted.zip"
-    result = subprocess.run(
-        [
-            str(_SEVENZ),
-            "a",
-            "-tzip",
-            "-mem=AES256",
-            f"-p{_TEST_SECRET}",
-            str(archive),
-            str(source / "*"),
-            "-y",
-            "-sccUTF-8",
-        ],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
-    return archive
-
-
-def _create_encrypted_7z(directory: Path, mhe: bool = False) -> Path:
-    """暗号化 7z を CLI で作成する (mhe=True で -mhe=on ヘッダー暗号化)。"""
-    source = directory / ("mhe-src" if mhe else "7z-src")
-    source.mkdir()
-    (source / "secret.txt").write_bytes(_CONTENT)
-    archive = directory / ("enc-headers.7z" if mhe else "encrypted.7z")
-    cmd = [
-        str(_SEVENZ),
-        "a",
-        f"-p{_TEST_SECRET}",
-        str(archive),
-        str(source / "*"),
-        "-y",
-        "-sccUTF-8",
-    ]
-    if mhe:
-        cmd.insert(2, "-mhe=on")
-    result = subprocess.run(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
-    return archive
 
 
 def _build_write_items(source: Path) -> list[dict]:
@@ -137,8 +73,10 @@ def _read_back(
     return contents
 
 
-def test_dll_lists_and_extracts_encrypted_zip(tmp_path: Path) -> None:
-    archive_path = _create_encrypted_zip(tmp_path)
+def test_dll_lists_and_extracts_encrypted_zip(
+    dll_encrypted_aes_zip: Path,
+) -> None:
+    archive_path = dll_encrypted_aes_zip
     dll = SevenZipDll(_DLL)
 
     with dll.open_archive(archive_path, "zip", password=_TEST_SECRET) as opened:
@@ -165,8 +103,8 @@ def test_dll_extracts_encrypted_7z(encrypted_7z: Path) -> None:
         )
 
 
-def test_dll_rejects_wrong_password(tmp_path: Path) -> None:
-    archive_path = _create_encrypted_zip(tmp_path)
+def test_dll_rejects_wrong_password(dll_encrypted_aes_zip: Path) -> None:
+    archive_path = dll_encrypted_aes_zip
     dll = SevenZipDll(_DLL)
 
     with dll.open_archive(archive_path, "zip", password=_TEST_SECRET) as opened:
@@ -175,9 +113,11 @@ def test_dll_rejects_wrong_password(tmp_path: Path) -> None:
             opened.extract_to_memory(index, password="wrong-password")
 
 
-def test_dll_operations_spawn_no_subprocess(tmp_path: Path) -> None:
+def test_dll_operations_spawn_no_subprocess(
+    dll_encrypted_aes_zip: Path,
+) -> None:
     """DLL 操作中は subprocess.Popen が一度も呼ばれない (プロセスを生まない)。"""
-    archive_path = _create_encrypted_zip(tmp_path)
+    archive_path = dll_encrypted_aes_zip
     dll = SevenZipDll(_DLL)
 
     with patch("subprocess.Popen", wraps=subprocess.Popen) as popen_mock:
@@ -198,14 +138,14 @@ def test_dll_handler_discovery() -> None:
 
 
 def test_dll_opens_header_encrypted_7z_requires_password_at_open(
-    tmp_path: Path,
+    dll_enc_headers_7z: Path,
 ) -> None:
     """ヘッダー暗号化 7z (-mhe=on) は Open 時パスワードが必須。
 
     パスワードなしで開くと一覧が空になる (7-Zip の仕様: エラーではなく
     0 項目)。Open コールバック経由でパスワードを供給すると一覧・展開できる。
     """
-    archive_path = _create_encrypted_7z(tmp_path, mhe=True)
+    archive_path = dll_enc_headers_7z
     dll = SevenZipDll(_DLL)
 
     with dll.open_archive(archive_path, "7z", password=None) as opened:
@@ -220,7 +160,9 @@ def test_dll_opens_header_encrypted_7z_requires_password_at_open(
 
 
 def test_dll_open_callback_supplies_password_for_header_encryption(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    dll_encrypted_7z: Path,
+    dll_enc_headers_7z: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ヘッダー暗号化 7z の Open 時に Open コールバック経由でパスワードを供給する。
 
@@ -228,8 +170,8 @@ def test_dll_open_callback_supplies_password_for_header_encryption(
     ヘッダー暗号化 7z は Open フェーズで ICryptoGetTextPassword が呼ばれる
     ことを実測で検証する。
     """
-    data_path = _create_encrypted_7z(tmp_path, mhe=False)
-    mhe_path = _create_encrypted_7z(tmp_path, mhe=True)
+    data_path = dll_encrypted_7z
+    mhe_path = dll_enc_headers_7z
     dll = SevenZipDll(_DLL)
 
     from sevenzip_dll import _CryptoPassword

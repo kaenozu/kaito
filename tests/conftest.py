@@ -5,7 +5,6 @@ from __future__ import annotations
 import binascii
 import hashlib
 import shutil
-import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
@@ -13,25 +12,8 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SEVENZ = _REPO_ROOT / "bundled" / "7z.exe"
 _RAR_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "rar"
-
-
-def _run_7z(args: list[str]) -> None:
-    result = subprocess.run(
-        [str(_SEVENZ), *args, "-y", "-sccUTF-8"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"7z failed (code={result.returncode}): {result.stderr or result.stdout}"
-        )
+_ARCHIVE_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "archive"
 
 
 def _decode_uu(source: Path, destination: Path, expected_sha256: str) -> Path:
@@ -46,7 +28,7 @@ def _decode_uu(source: Path, destination: Path, expected_sha256: str) -> Path:
     digest = hashlib.sha256(output).hexdigest()
     if digest != expected_sha256:
         raise RuntimeError(
-            f"RAR fixture hash mismatch: {source.name}: {digest} != {expected_sha256}"
+            f"fixture hash mismatch: {source.name}: {digest} != {expected_sha256}"
         )
     destination.write_bytes(output)
     return destination
@@ -87,36 +69,73 @@ def empty_zip(tmp_dir: Path) -> Path:
     return path
 
 
-@pytest.fixture
-def sevenz_available() -> bool:
-    if not _SEVENZ.is_file():
-        pytest.fail(f"required bundled 7-Zip is missing: {_SEVENZ}")
-    return True
+# 7z / 暗号化アーカイブは固定 (uuencode) バイナリからデコードする。
+# テスト実行時に 7z.exe を起動しない (コンソール窓を出さない・外部依存ゼロ)。
+# フィクスチャは tests/fixtures/archive/ にコミット済みで、生成コマンドは
+# 同ディレクトリの README.md を参照。
 
 
 @pytest.fixture
-def normal_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    assert sevenz_available
-    source = tmp_dir / "7zsrc"
-    source.mkdir()
-    (source / "hello.txt").write_text("Hello World", encoding="utf-8")
-    sub = source / "sub"
-    sub.mkdir()
-    (sub / "file.txt").write_text("Nested file", encoding="utf-8")
-    path = tmp_dir / "test.7z"
-    _run_7z(["a", str(path), str(source / "*")])
-    return path
+def normal_7z(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "normal.7z.uu",
+        tmp_dir / "normal.7z",
+        "b6a158526223e792ad0f22addb8d504cb7acc974b46274edcbfdd5df97151187",
+    )
 
 
 @pytest.fixture
-def encrypted_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    assert sevenz_available
-    source = tmp_dir / "encsrc"
-    source.mkdir()
-    (source / "secret.txt").write_text("Secret Data", encoding="utf-8")
-    path = tmp_dir / "encrypted.7z"
-    _run_7z(["a", "-psecret123", str(path), str(source / "*")])
-    return path
+def encrypted_7z(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "encrypted.7z.uu",
+        tmp_dir / "encrypted.7z",
+        "513c3f6769c637562ac20e4778b9c7ab2c699fc922f0dede7e0b107a162fb026",
+    )
+
+
+@pytest.fixture
+def japanese_7z(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "japanese.7z.uu",
+        tmp_dir / "japanese.7z",
+        "eb6c83d52cf42527f84c4c639aab33a3b17bc679501045584d7b808e6dad0afb",
+    )
+
+
+@pytest.fixture
+def dll_encrypted_aes_zip(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "dll-encrypted-aes.zip.uu",
+        tmp_dir / "dll-encrypted-aes.zip",
+        "1cc6e013574a650cd8b6feb4dc9c7fb8562bb122ea6c717503ae83f4224e17b3",
+    )
+
+
+@pytest.fixture
+def dll_encrypted_7z(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "dll-encrypted.7z.uu",
+        tmp_dir / "dll-encrypted.7z",
+        "f201db1aa1c45855f20674be72ea7afab74f0ca0b30575584dea6917c004ef6d",
+    )
+
+
+@pytest.fixture
+def dll_enc_headers_7z(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "dll-enc-headers.7z.uu",
+        tmp_dir / "dll-enc-headers.7z",
+        "1be2edb04e9adeb797bebcfb99d307669aa5347801f1492bac4af7cca8478f29",
+    )
+
+
+@pytest.fixture
+def aes_acceptance_zip(tmp_dir: Path) -> Path:
+    return _decode_uu(
+        _ARCHIVE_FIXTURES / "aes-acceptance.zip.uu",
+        tmp_dir / "aes-acceptance.zip",
+        "c5721e02ce5d9f5fb867a0a1fceedfca156553d85857fc0ae5aff404f38da176",
+    )
 
 
 @pytest.fixture
@@ -147,17 +166,6 @@ def symlink_rar(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def japanese_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    assert sevenz_available
-    source = tmp_dir / "jp_src"
-    source.mkdir()
-    (source / "日本語.txt").write_text("Japanese filename test", encoding="utf-8")
-    path = tmp_dir / "japanese.7z"
-    _run_7z(["a", str(path), str(source / "*")])
-    return path
-
-
-@pytest.fixture
 def corrupt_zip(tmp_dir: Path) -> Path:
     path = tmp_dir / "corrupt.zip"
     path.write_bytes(b"not a zip file at all\x00\x01\x02")
@@ -165,16 +173,14 @@ def corrupt_zip(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def corrupt_7z(tmp_dir: Path, sevenz_available: bool) -> Path:
-    assert sevenz_available
+def corrupt_7z(tmp_dir: Path) -> Path:
     path = tmp_dir / "corrupt.7z"
     path.write_bytes(b"\x00" * 100)
     return path
 
 
 @pytest.fixture
-def corrupt_rar(tmp_dir: Path, sevenz_available: bool) -> Path:
-    assert sevenz_available
+def corrupt_rar(tmp_dir: Path) -> Path:
     path = tmp_dir / "corrupt.rar"
     path.write_bytes(b"Rar!\x00" + b"\x00" * 100)
     return path
