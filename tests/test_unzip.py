@@ -80,23 +80,43 @@ class TestListEntries:
         assert "empty_dir/" in dir_names
 
     def test_encrypted_flag(self, tmp_dir: Path) -> None:
-        import zipfile
+        """DLL バックエンドは実際の暗号化方式 (AES) を検出して encrypted を返す。"""
+        import subprocess
+        from pathlib import Path as _Path
 
+        repo_root = _Path(__file__).resolve().parents[1]
+        seven_zip = repo_root / "bundled" / "7z.exe"
+        source = tmp_dir / "source"
+        source.mkdir()
+        (source / "secret.txt").write_text("data", encoding="utf-8")
         z = tmp_dir / "encrypted.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("secret.txt", "data")
-        raw = bytearray(z.read_bytes())
-        patched = False
-        for i in range(len(raw) - 4):
-            if raw[i : i + 4] == b"PK\x01\x02":
-                raw[i + 8] |= 0x01
-                patched = True
-                break
-        assert patched, "central directory PK\\x01\\x02 not found"
-        z.write_bytes(raw)
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            [
+                str(seven_zip),
+                "a",
+                "-tzip",
+                "-mem=AES256",
+                "-pKaito-Acceptance-2026!",
+                str(z),
+                str(source / "*"),
+                "-y",
+                "-sccUTF-8",
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            creationflags=creation_flags,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
         entries, encrypted = list_entries(z)
         assert encrypted
         assert len(entries) == 1
+        assert entries[0].is_encrypted
 
     def test_empty_zip(self, empty_zip: Path) -> None:
         entries, encrypted = list_entries(empty_zip)

@@ -26,11 +26,11 @@ No validation can make an archive parser risk-free. Keep kaito and its bundled 7
 
 - Passwords are kept in memory for the current session only and are not written to settings.
 - kaito redacts passwords from returned command arguments, application errors, stdout/stderr captured for diagnostics, and tests.
-- 7-Zip CLI requires the password to be supplied through its command-line `-p` switch. On Windows, another process running as the same user may be able to inspect process command lines while an encrypted archive is being processed.
+- Reading archives (listing, extraction, preview, integrity checks) is handled in-process through the bundled `7z.dll` (`IInArchive`). Passwords are supplied via `ICryptoGetTextPassword` and no subprocess is spawned, so passwords never appear in process command lines during reads.
+- Creating encrypted archives still invokes the bundled `7z.exe` CLI, whose `-p` switch places the password in the process command line. On Windows, another process running as the same user may be able to inspect process command lines while an encrypted archive is being created.
 - Avoid handling sensitive encrypted archives on shared or untrusted Windows sessions.
 
-A future direct 7z.dll integration may remove the command-line exposure, but that is not implemented in the current version.
-
+>>>>>>> 129b429 (feat: 読み取り系バックエンドを同梱 7z.dll (IInArchive) に一本化)
 ## Bundled backend integrity
 
 Packaged builds only use the bundled `7z.exe` and `7z.dll`. Their SHA-256 values are fixed in source and in `bundled/SHA256SUMS`. A frozen executable does not fall back to a system-installed 7-Zip when the bundled copy is missing or has the wrong hash.

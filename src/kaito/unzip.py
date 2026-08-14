@@ -1,9 +1,9 @@
 """
 src/kaito/unzip.py
-ZIP/RAR/7zファイルの解凍・圧縮コアロジック (新アーキテクチャへの委譲)
-ZIP: zipfile 標準ライブラリ
-RAR/7z: 7-Zip CLI (7z.exe)
-関連: archive/service.py, archive/zip_backend.py, archive/sevenzip_backend.py
+ZIP/RAR/7zファイルの解凍・圧縮コアロジック (ArchiveServiceへの委譲)
+読み取り (ZIP/RAR/7z): 同梱 7z.dll (archive/dll_backend.py)
+作成 (平文 ZIP): zipfile / 作成 (暗号化 ZIP・7z): 7z.exe CLI
+関連: archive/service.py, archive/dll_backend.py, archive/zip_backend.py, archive/sevenzip_backend.py
 """
 
 from __future__ import annotations

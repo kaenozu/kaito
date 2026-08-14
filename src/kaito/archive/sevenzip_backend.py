@@ -1,6 +1,7 @@
-"""同梱7-Zip CLIを使用するRAR/7zバックエンド。
+"""同梱7-Zip CLIを使用する作成バックエンド。
 
-RARは一覧・展開のみ、7zは一覧・展開・作成に対応する。
+暗号化ZIP・7zの作成を担う。読み取り系 (一覧・展開・プレビュー・整合性検査) は
+DllArchiveBackend (同梱 7z.dll / IInArchive) に一本化されている。
 """
 
 from __future__ import annotations
