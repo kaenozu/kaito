@@ -24,6 +24,11 @@ class TestSettingsManager:
             assert settings.get("open_on_done") is True
             assert settings.get("compression_level") == 1
             assert settings.get("recent_files") == []
+            assert settings.get("preview_max_size") == SafetyLimits.preview_max_size
+            assert (
+                settings.get("preview_max_image_pixels")
+                == SafetyLimits.preview_max_image_pixels
+            )
 
     def test_load_existing(self, tmp_path: Path) -> None:
         config = tmp_path / "kaito" / "settings.json"
@@ -131,6 +136,8 @@ class TestSettingsManager:
                     "recent_files": ["a.zip", 1, "A.ZIP", ""],
                     "safety_max_entries": -1,
                     "safety_max_compression_ratio": 0,
+                    "preview_max_size": 0,
+                    "preview_max_image_pixels": -5,
                 }
             ),
             encoding="utf-8",
@@ -146,6 +153,11 @@ class TestSettingsManager:
             assert (
                 settings.get("safety_max_compression_ratio")
                 == SafetyLimits.max_compression_ratio
+            )
+            assert settings.get("preview_max_size") == SafetyLimits.preview_max_size
+            assert (
+                settings.get("preview_max_image_pixels")
+                == SafetyLimits.preview_max_image_pixels
             )
 
     def test_default_recent_lists_are_not_shared(self, tmp_path: Path) -> None:
@@ -220,6 +232,18 @@ class TestSettingsManager:
             sm = SettingsManager()
             assert sm.get("dest_mode") == "archive"
             assert sm.get("fixed_dest") == ""
+
+    def test_preview_limits_set_and_persist(self, tmp_path: Path) -> None:
+        config = tmp_path / "kaito" / "settings.json"
+        with patch.object(SettingsManager, "_get_path", return_value=config):
+            settings = SettingsManager()
+            settings.set("preview_max_size", 5 * 1024 * 1024)
+            settings.set("preview_max_image_pixels", 2_000_000)
+            assert settings.get("preview_max_size") == 5 * 1024 * 1024
+            assert settings.get("preview_max_image_pixels") == 2_000_000
+            raw = json.loads(config.read_text(encoding="utf-8"))
+            assert raw["preview_max_size"] == 5 * 1024 * 1024
+            assert raw["preview_max_image_pixels"] == 2_000_000
 
     def test_get_with_default(self, tmp_path: Path) -> None:
         config = tmp_path / "kaito" / "settings.json"

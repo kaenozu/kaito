@@ -29,6 +29,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "safety_max_file_size": SafetyLimits.max_single_file_size,
     "safety_max_compression_ratio": SafetyLimits.max_compression_ratio,
     "safety_max_path_length": SafetyLimits.max_path_length,
+    "preview_max_size": SafetyLimits.preview_max_size,
+    "preview_max_image_pixels": SafetyLimits.preview_max_image_pixels,
 }
 
 MAX_RECENT_FILES = 10
@@ -128,6 +130,16 @@ def _validate_settings(data: object) -> dict[str, Any]:
         data.get("safety_max_path_length"),
         SafetyLimits.max_path_length,
         maximum=32_767,
+    )
+    defaults["preview_max_size"] = _positive_int(
+        data.get("preview_max_size"),
+        SafetyLimits.preview_max_size,
+        maximum=1024 * 1024 * 1024,
+    )
+    defaults["preview_max_image_pixels"] = _positive_int(
+        data.get("preview_max_image_pixels"),
+        SafetyLimits.preview_max_image_pixels,
+        maximum=268_435_456,
     )
     return defaults
 

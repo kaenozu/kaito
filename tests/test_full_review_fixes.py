@@ -246,3 +246,23 @@ def test_extraction_options_defaults_derive_from_safety_limits() -> None:
     assert source.count("max_entries: int = 100000") == 1
     assert source.count("max_compression_ratio: float = 1000.0") == 1
     assert source.count("max_path_length: int = 260") == 1
+
+
+def test_preview_limits_are_user_configurable() -> None:
+    """プレビュー上限は設定スキーマ・GUI 配線・ダイアログの3層で設定可能にする。"""
+    settings_src = Path("src/kaito/settings.py").read_text(encoding="utf-8")
+    unzip_src = Path("src/kaito/gui/unzip_app.py").read_text(encoding="utf-8")
+    dialog_src = Path("src/kaito/gui/settings_dialog.py").read_text(encoding="utf-8")
+
+    # 設定スキーマの既定値は SafetyLimits から導出する（リテラルの二重定義なし）
+    assert '"preview_max_size": SafetyLimits.preview_max_size' in settings_src
+    assert (
+        '"preview_max_image_pixels": SafetyLimits.preview_max_image_pixels'
+        in settings_src
+    )
+
+    # GUI は設定値を SafetyLimits 構築に渡し、ダイアログに編集欄を持つ（ラベルは i18n キー）
+    unzip_compact = "".join(unzip_src.split())
+    assert 'self._settings.get("preview_max_size"' in unzip_compact
+    assert 'self._settings.get("preview_max_image_pixels"' in unzip_compact
+    assert 'tr("settings.preview")' in dialog_src
