@@ -3,12 +3,14 @@
 PoC の主張を回帰テストとして固定する:
   - 暗号化 ZIP / 7z を DLL (IInArchive) で一覧・展開できる
   - パスワードはプロセス内で供給され、subprocess を一切生まない
+  - IOutArchive で平文 / 暗号化 ZIP・7z / ヘッダー暗号化 7z を圧縮できる
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,9 +59,50 @@ def _create_encrypted_zip(directory: Path) -> Path:
         errors="replace",
         timeout=30,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     assert result.returncode == 0, result.stderr or result.stdout
     return archive
+
+
+def _build_write_items(source: Path) -> list[dict]:
+    """IOutArchive::UpdateItems 用のソース項目 (ディレクトリは末尾区切りなし)。"""
+    items: list[dict] = []
+    for item in sorted(source.rglob("*")):
+        rel = item.relative_to(source).as_posix()
+        st = item.stat()
+        items.append(
+            {
+                "path": item,
+                "name": rel,
+                "is_dir": item.is_dir(),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime),
+                "attrib": None,
+            }
+        )
+    return items
+
+
+def _norm(name: str) -> str:
+    """読み取り側が Windows では '\\' を返すため '/' に正規化する。"""
+    return name.replace("\\", "/")
+
+
+def _read_back(
+    dll: SevenZipDll, path: Path, handler: str, password: str | None
+) -> dict[str, bytes]:
+    with dll.open_archive(path, handler, password=password) as opened:
+        listing = opened.list_items()
+    contents: dict[str, bytes] = {}
+    for item in listing:
+        if item.is_dir:
+            continue
+        with dll.open_archive(path, handler, password=password) as opened:
+            contents[_norm(item.name)] = opened.extract_to_memory(
+                item.index, password=password
+            )
+    return contents
 
 
 def test_dll_lists_and_extracts_encrypted_zip(tmp_path: Path) -> None:
@@ -120,3 +163,84 @@ def test_dll_handler_discovery() -> None:
     assert dll.find_handler_clsid("7z") is not None
     with pytest.raises(DllPocError):
         dll.find_handler_clsid("not-a-real-format")
+
+
+# --- IOutArchive (圧縮) ---
+
+
+def _write_source(tmp_path: Path) -> Path:
+    source = tmp_path / "src"
+    (source / "dir1").mkdir(parents=True)
+    (source / "dir1" / "file.txt").write_bytes(_CONTENT)
+    (source / "top.bin").write_bytes(b"\x00\x01\x02" * 50)
+    return source
+
+
+def test_dll_creates_plain_and_encrypted_archives(tmp_path: Path) -> None:
+    """IOutArchive で ZIP / 7z を圧縮し、DLL 読み取りで往復検証できる。"""
+    items = _build_write_items(_write_source(tmp_path))
+    dll = SevenZipDll(_DLL)
+    expected = {"dir1/file.txt": _CONTENT, "top.bin": b"\x00\x01\x02" * 50}
+
+    cases = [
+        ("plain.zip", "zip", None),
+        ("enc.zip", "zip", _TEST_SECRET),
+        ("plain.7z", "7z", None),
+        ("enc.7z", "7z", _TEST_SECRET),
+    ]
+    for name, handler, password in cases:
+        kwargs: dict[str, object] = {}
+        if password:
+            kwargs["password"] = password
+        if handler == "zip" and password:
+            kwargs["encrypt_method"] = "AES256"
+        out = tmp_path / name
+        dll.create_archive(out, handler, items, **kwargs)
+        assert _read_back(dll, out, handler, password) == expected
+
+
+def test_dll_creates_header_encrypted_7z(tmp_path: Path) -> None:
+    """ヘッダー暗号化 7z (-mhe=on 相当): パスワードなしでは一覧が空になる。"""
+    items = _build_write_items(_write_source(tmp_path))
+    dll = SevenZipDll(_DLL)
+    out = tmp_path / "enc-headers.7z"
+    dll.create_archive(out, "7z", items, password=_TEST_SECRET, encrypt_headers=True)
+
+    with dll.open_archive(out, "7z", password=None) as opened:
+        assert opened.list_items() == []
+    assert _read_back(dll, out, "7z", _TEST_SECRET) == {
+        "dir1/file.txt": _CONTENT,
+        "top.bin": b"\x00\x01\x02" * 50,
+    }
+
+
+def test_dll_write_spawns_no_subprocess(tmp_path: Path) -> None:
+    """圧縮中も subprocess.Popen が呼ばれない (パスワードはプロセス内供給)。"""
+    items = _build_write_items(_write_source(tmp_path))
+    dll = SevenZipDll(_DLL)
+
+    with patch("subprocess.Popen", wraps=subprocess.Popen) as popen_mock:
+        dll.create_archive(
+            tmp_path / "enc.zip",
+            "zip",
+            items,
+            password=_TEST_SECRET,
+            encrypt_method="AES256",
+        )
+        dll.create_archive(tmp_path / "enc.7z", "7z", items, password=_TEST_SECRET)
+    assert popen_mock.call_count == 0
+
+
+def test_dll_created_archive_rejects_wrong_password(tmp_path: Path) -> None:
+    """DLL で作成した暗号化 ZIP も誤パスワードを拒否する。"""
+    items = _build_write_items(_write_source(tmp_path))
+    dll = SevenZipDll(_DLL)
+    out = tmp_path / "enc.zip"
+    dll.create_archive(
+        out, "zip", items, password=_TEST_SECRET, encrypt_method="AES256"
+    )
+
+    with dll.open_archive(out, "zip", password=_TEST_SECRET) as opened:
+        index = next(item.index for item in opened.list_items() if not item.is_dir)
+        with pytest.raises(DllPocError):
+            opened.extract_to_memory(index, password="wrong-password")
