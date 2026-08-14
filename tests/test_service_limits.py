@@ -85,3 +85,14 @@ def test_service_limit_does_not_mutate_original_options(tmp_path: Path) -> None:
     assert options.max_total_size == 100
     assert options.max_path_length == 100
     assert (tmp_path / "out" / "small.txt").read_bytes() == b"ok"
+
+
+def test_service_preview_limit_reaches_backend_read_entry(tmp_path: Path) -> None:
+    archive_path = _make_zip(tmp_path / "preview.zip", "hello.txt", b"Hello World")
+
+    service = ArchiveService(safety_limits=SafetyLimits(preview_max_size=4))
+
+    assert service.read_entry(archive_path, "hello.txt") is None
+
+    default_service = ArchiveService()
+    assert default_service.read_entry(archive_path, "hello.txt") == b"Hello World"

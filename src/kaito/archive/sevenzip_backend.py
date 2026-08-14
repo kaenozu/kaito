@@ -37,6 +37,7 @@ from kaito.domain.models import (
     ArchiveInfo,
     CompressionOptions,
     ExtractionOptions,
+    SafetyLimits,
     is_reparse_or_link,
 )
 
@@ -90,8 +91,18 @@ class SevenZipBackend:
     )
     _BUNDLED_NAME = "7z.exe"
 
-    def __init__(self, cancel_event: Optional[threading.Event] = None) -> None:
+    def __init__(
+        self,
+        cancel_event: Optional[threading.Event] = None,
+        *,
+        preview_max_size: Optional[int] = None,
+    ) -> None:
         self._tool_path: Optional[Path] = None
+        self._preview_max_size = (
+            preview_max_size
+            if preview_max_size is not None
+            else SafetyLimits().preview_max_size
+        )
         self._tool_source: Optional[str] = None
         self._current_process: Optional[subprocess.Popen[str]] = None
         self._process_lock = threading.Lock()
@@ -574,7 +585,7 @@ class SevenZipBackend:
             entry is None
             or entry.is_dir
             or entry.is_link
-            or entry.size > 10 * 1024 * 1024
+            or entry.size > self._preview_max_size
         ):
             return None
 
@@ -589,6 +600,6 @@ class SevenZipBackend:
             target = validate_entry_path(entry_name, staging)
             if not target.is_file() or is_reparse_or_link(target):
                 return None
-            if target.stat().st_size > 10 * 1024 * 1024:
+            if target.stat().st_size > self._preview_max_size:
                 return None
             return target.read_bytes()

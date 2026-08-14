@@ -31,6 +31,7 @@ from kaito.domain.models import (
     ArchiveInfo,
     CompressionOptions,
     ExtractionOptions,
+    SafetyLimits,
     is_reparse_or_link,
 )
 
@@ -50,8 +51,18 @@ class ZipBackend:
     _FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "shift_jis", "euc-kr"]
     _IO_CHUNK_SIZE = 1024 * 1024
 
-    def __init__(self, cancel_event: Optional[threading.Event] = None) -> None:
+    def __init__(
+        self,
+        cancel_event: Optional[threading.Event] = None,
+        *,
+        preview_max_size: Optional[int] = None,
+    ) -> None:
         self._cancel_event = cancel_event or threading.Event()
+        self._preview_max_size = (
+            preview_max_size
+            if preview_max_size is not None
+            else SafetyLimits().preview_max_size
+        )
 
     def _check_cancelled(self) -> None:
         if self._cancel_event.is_set():
@@ -384,7 +395,7 @@ class ZipBackend:
     ) -> Optional[bytes]:
         def read(archive: zipfile.ZipFile) -> bytes:
             info = archive.getinfo(entry_name)
-            if self._is_link(info) or info.file_size > 10 * 1024 * 1024:
+            if self._is_link(info) or info.file_size > self._preview_max_size:
                 raise ValueError("preview entry is unsafe or too large")
             if password is not None:
                 archive.setpassword(password.encode("utf-8"))

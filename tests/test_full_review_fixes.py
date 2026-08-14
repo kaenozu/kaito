@@ -265,3 +265,10 @@ def test_project_and_lock_versions_match() -> None:
     kaito_section = lockfile.split('name = "kaito"', 1)[1]
     locked_version = kaito_section.split('version = "', 1)[1].split('"', 1)[0]
     assert locked_version == project_version
+
+
+def test_preview_size_limit_comes_from_safety_limits() -> None:
+    source = Path("src/kaito/gui/unzip_app.py").read_text(encoding="utf-8")
+
+    assert "_MAX_PREVIEW_FILE_SIZE" not in source
+    assert "safety_limits.preview_max_size" in source
