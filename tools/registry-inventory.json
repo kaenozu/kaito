@@ -1,0 +1,23 @@
+{
+  "app_id": "B8F4C3D2-E1A0-4F6B-9C8D-7E5A3B2C1D0F",
+  "extensions": [
+    ".zip",
+    ".rar",
+    ".7z"
+  ],
+  "probe_extensions": [
+    ".txt"
+  ],
+  "extract_action": "kaito_extract",
+  "test_action": "kaito_test",
+  "compress_action": "kaito_compress",
+  "compress_roots": [
+    "*",
+    "Directory"
+  ],
+  "labels": {
+    "kaito_extract": "kaitoで解凍",
+    "kaito_test": "kaitoで整合性を検査",
+    "kaito_compress": "kaitoで圧縮"
+  }
+}
