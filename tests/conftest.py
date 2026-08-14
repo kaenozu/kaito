@@ -26,6 +26,7 @@ def _run_7z(args: list[str]) -> None:
         errors="replace",
         timeout=30,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(
