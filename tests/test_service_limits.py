@@ -101,11 +101,10 @@ def test_service_preview_limit_reaches_backend_read_entry(tmp_path: Path) -> Non
 def test_extraction_defaults_match_safety_limits() -> None:
     """ExtractionOptions と SafetyLimits の既定値が一致することを保証する。
 
-    ArchiveService._effective_extraction_options は両者の min を取るため、
-    既定値がズレると「既定のオプション」の意味が暗黙に変わってしまう。
-    フィールド名は SafetyLimits.max_single_file_size ↔ ExtractionOptions.max_file_size
-    のように対応が異なるので、名前ではなく値で比較する。
-    """
+    ExtractionOptions の上限既定値は SafetyLimits から default_factory で導出される
+    （models.py にリテラルの二重定義はない）。ここでは導出結果の値が対応関係
+    （SafetyLimits.max_single_file_size ↔ ExtractionOptions.max_file_size など）を
+    満たしていることを値で確認する。"""
     limits = SafetyLimits()
     options = ExtractionOptions(dest_dir=Path("."))
 
