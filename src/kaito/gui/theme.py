@@ -68,7 +68,9 @@ FONT_FAMILY = "Segoe UI"
 # こちらは正数 = ピクセル単位。CTkFont を ttk スタイルに渡さないこと（GC で名前付き
 # フォントが削除され Tk デフォルトへフォールバックする）。
 TREE_FONT_FAMILY = "Segoe UI"
-TREE_FONT_SIZE = 12
+# 実機計測: Tk の正数フォント指定 N は dpi/72 倍（96dpi で 4/3）に拡大されて描画される
+# （spec 12 → 実約16px em）。真の 12px em（CTkFont 12 と同一）にするには 9 を指定する。
+TREE_FONT_SIZE = 9
 UI_FONT_FAMILY = "Segoe UI"
 UI_FONT_SIZE = 12
 
