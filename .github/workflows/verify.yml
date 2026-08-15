@@ -1,0 +1,102 @@
+name: Verify
+
+# ローカル作業（feature/ui-i18n-worker 等）を origin/master へ統合するための
+# 軽量検証ゲート。テスト・pyright・ruff・モック検証（tools/check_all.py で
+# モック i18n 辞書・テーマ突合・実描画突合・フォント実測監査を一括実行）のみを扱い、
+# アーキテクチャに依存しない（patool ベースの旧ブランチでも 7z.dll ベースの
+# master でも動作する）。
+# master 統合後は origin/master の ci.yml（ビルド・インストーラ・GUI acceptance
+# を含む本格CI）が担うため、本ワークフローは feature ブランチと PR のみで実行する。
+
+on:
+  push:
+    branches: ["feature/**"]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Verify lockfile is current
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Prepare artifacts directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen ruff check . 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/ruff-check.txt
+          exit $code
+
+      - name: Format check
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen ruff format --check . 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/ruff-format.txt
+          exit $code
+
+      - name: Type check
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen pyright 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/pyright-output.txt
+          exit $code
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen pytest -ra --junitxml=artifacts/test-results.xml 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/pytest-output.txt
+          exit $code
+
+      # tools/ の検査スクリプト一式を実行する（tools/check_all.py）。
+      # Makefile の make check と同一コマンド（uv run --frozen python tools/check_all.py）。
+      # 内容: モック i18n 辞書の整合（gen_mock_i18n --check）/ モック CSS と theme.py
+      # トークンの突合（check_mock_theme）/ 実アプリ描画との突合（check_mock_render）/
+      # フォント実測監査（font_audit）。check_mock_render と font_audit は実 Tk ルートと
+      # 画面キャプチャを使うため windows-latest でのみ実行。キャプチャ不可環境では
+      # 実描画/インク計測が N/A に自動降格し、判定は決定的な項目に基づく。
+      - name: Mock verification (tools/check_all.py)
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen python tools/check_all.py --json artifacts/check-all.json 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/check-all.txt
+          exit $code
+
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kaito-verify
+          if-no-files-found: warn
+          path: artifacts/

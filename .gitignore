@@ -14,3 +14,6 @@ a.txt
 
 # test artifacts
 README.zip
+.pytest-tmp-*/
+.pytest-tmp-slice2/
+.pytest-tmp-unzip/

@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kaito v0.9.3 — プロジェクトプレビュー</title>
+<style>
+  :root {
+    --bg: #f3f5fa;
+    --panel: #ffffff;
+    --panel-2: #eef1f6;
+    --text: #16181d;
+    --muted: #677085;
+    --border: #e2e6ef;
+    --accent: #3b82f6;
+    --accent-hover: #2f6ee0;
+    --accent-soft: #eaf1ff;
+    --ok: #15803d;
+    --warn: #b45309;
+    --err: #c0392b;
+    --tree-head-bg: #f4f6fa;
+    --tree-head-active: #e4e8f0;
+    --tree-fg: #16181d;
+    --tree-sel-bg: #dce9ff;
+    --tree-sel-fg: #16181d;
+    --drop-border: #bcc9e6;
+    --drop-hl: #3b82f6;
+    --mono: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+    --sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+    --tree-sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+  }
+  html[data-theme="dark"] {
+    --bg: #0f1117;
+    --panel: #1b1e27;
+    --panel-2: #272c38;
+    --text: #e7ecf5;
+    --muted: #9aa4b4;
+    --border: #2d3341;
+    --accent-soft: #1c2b4a;
+    --ok: #7ed6a0;
+    --warn: #f5c76a;
+    --err: #f1948a;
+    --tree-head-bg: #212530;
+    --tree-head-active: #2a303e;
+    --tree-fg: #dce4ee;
+    --tree-sel-bg: #2b4d78;
+    --tree-sel-fg: #ffffff;
+    --drop-border: #3b4b6a;
+    --drop-hl: #6fa3ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  /* header */
+  header.top {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 14px 0 10px;
+  }
+  .logo-chip {
+    width: 42px; height: 42px; border-radius: 12px;
+    background: var(--accent); color: #fff;
+    font-size: 22px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(59,130,246,.35);
+  }
+  .logo-chip.mini { width: 20px; height: 20px; border-radius: 6px; font-size: 12px; box-shadow: none; }
+  .mock-title { display: inline-flex; align-items: center; gap: 8px; }
+  .logo { font-size: 30px; font-weight: 800; color: var(--accent); letter-spacing: .5px; }
+  .tagline { color: var(--muted); font-size: 14px; }
+  .spacer { flex: 1; }
+  button.theme-toggle {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer; font-family: var(--sans);
+  }
+  button.theme-toggle:hover { border-color: var(--accent); }
+
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 18px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 12px; font-size: 12.5px; color: var(--muted);
+  }
+  .badge b { color: var(--text); font-weight: 700; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+
+  section.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  h2 {
+    font-size: 17px; margin: 0 0 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2 .hash { color: var(--accent); }
+  h3 { font-size: 14px; margin: 14px 0 6px; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); }
+  code, pre {
+    font-family: var(--mono);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  code { padding: 1px 6px; font-size: 12.5px; }
+  pre { padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  tr.file:hover td { background: var(--accent-soft); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+  ul.features { margin: 6px 0; padding-left: 20px; }
+  ul.features li { margin: 3px 0; }
+  .ok-text { color: var(--ok); font-weight: 600; }
+  .warn-text { color: var(--warn); font-weight: 600; }
+  .err-text { color: var(--err); font-weight: 600; }
+
+  /* ---- GUI mock ---- */
+  .mock-wrap { margin-top: 6px; }
+  .mock-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .mock-toolbar button, .mock button {
+    font-family: var(--sans); font-size: 12.5px; cursor: pointer;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 7px 14px;
+  }
+  .mock-toolbar button:hover, .mock button:hover:not(:disabled) { border-color: var(--accent); }
+  .mock button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700;
+  }
+  .mock button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .mock button:disabled { opacity: .45; cursor: default; }
+
+  .mock {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+    font-size: 13px;
+    box-shadow: 0 12px 34px rgba(20,30,60,.10);
+  }
+  .mock-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .mock-titlebar {
+    background: var(--panel-2); border-bottom: 1px solid var(--border);
+    padding: 8px 14px; font-size: 12px; color: var(--muted);
+    display: flex; justify-content: space-between;
+  }
+  .mock-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px 0;
+  }
+  .mock-head-text { display: flex; flex-direction: column; line-height: 1.25; }
+  .mock-title { font-size: 22px; font-weight: 700; color: var(--text); }
+  .mock-sub { font-size: 12px; color: var(--muted); }
+  .mock-header .spacer { flex: 1; }
+  .mock-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  .mock-row { display: flex; align-items: center; gap: 8px; }
+  .mock-label { font-weight: 700; white-space: nowrap; }
+  .mock-entry {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 12px; color: var(--muted);
+    font-family: var(--tree-sans); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mock-btn {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 16px; cursor: pointer; font-family: var(--sans); font-size: 12.5px; color: var(--text);
+    white-space: nowrap;
+  }
+  .mock-btn:hover:not(:disabled) { border-color: var(--accent); }
+  .mock-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .mock-btn:disabled { opacity: .45; cursor: default; }
+
+  /* drop zone */
+  .dropzone {
+    border: 2px dashed var(--drop-border);
+    border-radius: 18px;
+    padding: 36px 20px;
+    text-align: center;
+    color: var(--muted);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    transition: border-color .2s, background .2s;
+  }
+  .dropzone.hl { border-color: var(--drop-hl); background: var(--accent-soft); color: var(--accent); }
+  .dz-icon {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 28px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 6px;
+  }
+  .dropzone .main { font-size: 17px; font-weight: 700; color: var(--text); }
+
+  /* file list */
+  .mock-list { display: none; flex-direction: column; gap: 8px; }
+  .search-row { display: flex; gap: 8px; align-items: center; }
+  .search-row input {
+    flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; color: var(--text); font-family: var(--tree-sans); font-size: 12px;
+  }
+  .tree {
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: var(--panel);
+  }
+  .tree-head, .tree-row {
+    display: grid;
+    grid-template-columns: 30px 44px 1fr 84px 84px 130px;
+    gap: 6px; padding: 6px 10px; align-items: center;
+  }
+  .tree-head {
+    background: var(--tree-head-bg); color: var(--muted); font-weight: 700; font-size: 11.5px;
+    font-family: var(--tree-sans);
+    border-bottom: 1px solid var(--border);
+  }
+  .tree-head:hover { background: var(--tree-head-active); }
+  .tree-row {
+    border-bottom: 1px solid var(--border); cursor: pointer;
+    font-family: var(--tree-sans); font-size: 12px; color: var(--tree-fg);
+  }
+  .tree-row:last-child { border-bottom: none; }
+  .tree-row:nth-child(even) { background: var(--bg); }
+  .tree-row:hover { background: var(--accent-soft); }
+  .tree-row.sel { background: var(--tree-sel-bg); color: var(--tree-sel-fg); outline: 1px solid var(--accent); outline-offset: -1px; }
+  .tree-row .ic { font-size: 13px; text-align: center; }
+  .tree-row .n { color: var(--muted); font-family: var(--mono); font-size: 11.5px; text-align: right; }
+  .tree-row .sz { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .tree-row.dir .nm { color: var(--muted); }
+  .tree-row.dir .nm::after { content: " /"; color: var(--accent); }
+
+  .preview-pane {
+    display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; font-size: 12px;
+    font-family: var(--tree-sans); white-space: pre-wrap; max-height: 150px; overflow: auto;
+    color: var(--text);
+  }
+
+  .dest-row { margin-top: 2px; }
+
+  /* bottom */
+  .mock-bottom {
+    margin: 0 16px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 12px 16px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .progress-wrap { height: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; display: none; }
+  .progress-bar { height: 100%; width: 0%; background: var(--accent); border-radius: 999px; transition: width .15s linear; }
+  .checks { display: flex; gap: 18px; font-size: 12.5px; align-items: center; }
+  .checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .checks input { accent-color: var(--accent); }
+  .status { font-size: 12px; color: var(--muted); min-height: 18px; font-family: var(--tree-sans); }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .status.warn { color: var(--warn); }
+  .btns { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ---- 設定ダイアログ（settings_dialog.py のカードベース UI 再現） ---- */
+  .dlg-overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(8, 12, 20, .5);
+    display: none; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .dlg-overlay.open { display: flex; }
+  .dlg {
+    width: min(440px, 94vw);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .4);
+    padding: 20px 22px 18px;
+    display: flex; flex-direction: column; gap: 12px;
+    font-family: var(--sans);
+  }
+  .dlg-title { font-size: 20px; font-weight: 700; color: var(--text); }
+  .dlg-sub { font-size: 12.5px; color: var(--muted); margin-top: -8px; }
+  .dlg-card {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 4px 14px 10px;
+  }
+  .dlg-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .dlg-row.comp { justify-content: space-between; }
+  .dlg-label { font-size: 13px; color: var(--text); min-width: 88px; }
+  .dlg-select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-family: var(--sans); font-size: 12.5px;
+    cursor: pointer; min-width: 130px;
+  }
+  .dlg-entry {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; font-size: 12px; color: var(--muted); font-family: var(--tree-sans);
+    min-width: 0;
+  }
+  .dlg-btn {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-family: var(--sans); font-size: 12px; color: var(--text); cursor: pointer;
+    white-space: nowrap;
+  }
+  .dlg-btn:hover { border-color: var(--accent); }
+  .dlg-hint { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+  .dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+  footer { color: var(--muted); font-size: 12px; margin-top: 26px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <span class="logo-chip">k</span>
+    <div class="logo">kaito</div>
+    <div class="tagline">ZIP / RAR / 7z 解凍・圧縮 GUIツール — CustomTkinter</div>
+    <div class="spacer"></div>
+    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">🌓 ダーク/ライト</button>
+  </header>
+
+  <div class="badges">
+    <span class="badge"><span class="dot ok"></span> pytest <b>294 passed</b></span>
+    <span class="badge"><span class="dot ok"></span> ruff <b>パス</b></span>
+    <span class="badge"><span class="dot ok"></span> pyright <b>0 errors</b></span>
+    <span class="badge"><span class="dot ok"></span> i18n <b>ja / en</b></span>
+    <span class="badge"><span class="dot ok"></span> UI <b>リデザイン</b></span>
+    <span class="badge">Python <b>3.12+</b></span>
+    <span class="badge">v<b>0.9.3</b></span>
+  </div>
+
+  <section class="card">
+    <h2><span class="hash">#</span> 概要</h2>
+    <p>kaito はドラッグ&amp;ドロップ対応の解凍GUIです。<code>ZIP</code> は標準 <code>zipfile</code>、<code>RAR / 7z</code> は <code>patool</code> 経由で処理します。バッチ解凍（キュー）、パスワード保護ZIP、テキスト/画像プレビュー、ダークモード、Windows コンテキストメニュー統合、圧縮機能（ZIP/RAR/7z）を備えています。</p>
+    <div class="grid2">
+      <div>
+        <h3>主な機能</h3>
+        <ul class="features">
+          <li>ZIP / RAR / 7z に対応（RAR/7z は patool 経由）</li>
+          <li>ドラッグ＆ドロップ、複数ファイル同時ドロップ</li>
+          <li>パスワード保護アーカイブ対応（ZIP）</li>
+          <li>バッチ解凍（キューに追加して一括実行・キャンセル可）</li>
+          <li>ファイル内容プレビュー（テキスト・画像）</li>
+          <li>ダークモード切替（System / Light / Dark）</li>
+          <li>設定永続化・最近使ったファイル</li>
+          <li>圧縮機能 + Windows 右クリックメニュー登録</li>
+        </ul>
+      </div>
+      <div>
+        <h3>依存パッケージ</h3>
+        <pre>customtkinter &gt;= 5.2.2
+patool       &gt;= 4.0.5
+pillow       &gt;= 12.2.0
+platformdirs &gt;= 4.10.0
+tkinterdnd2  &gt;= 0.4.4.1</pre>
+        <h3>使い方</h3>
+        <pre># GUIを起動
+uv run kaito
+# ファイルを指定して起動
+uv run kaito path/to/archive.zip
+# 右クリックメニュー登録/削除
+uv run kaito --install-context-menu
+uv run kaito --uninstall-context-menu</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="hash">#</span> ソース構成</h2>
+    <table>
+      <tr><th>ファイル</th><th class="num">行数</th><th>役割</th></tr>
+      <tr class="file"><td><code>src/kaito/unzip.py</code></td><td class="num">357</td><td>解凍・圧縮コア（ZIP/RAR/7z、エンコーディング対応、ZIP slip 対策）</td></tr>
+      <tr class="file"><td><code>src/kaito/worker.py</code></td><td class="num">146</td><td>バッチ解凍ワーカー（キャンセル・エラー集計）</td></tr>
+      <tr class="file"><td><code>src/kaito/settings.py</code></td><td class="num">110</td><td>設定の JSON 永続化（パスワードはメモリのみ）</td></tr>
+      <tr class="file"><td><code>src/kaito/gui/unzip_app.py</code></td><td class="num">1147</td><td>GUI 本体（CustomTkinter + tkinterdnd2）</td></tr>
+      <tr class="file"><td><code>src/kaito/gui/settings_dialog.py</code></td><td class="num">208</td><td>設定ダイアログ</td></tr>
+      <tr class="file"><td><code>src/kaito/gui/theme.py</code></td><td class="num">52</td><td>ビジュアルトークン（色・フォント）</td></tr>
+      <tr class="file"><td><code>tests/</code> (4ファイル)</td><td class="num">2375</td><td>pytest（解凍・ワーカー・設定・GUIモック）</td></tr>
+      <tr class="file"><td><code>build.spec</code> / <code>installer/kaito.iss</code></td><td class="num">—</td><td>PyInstaller / Inno Setup ビルド設定</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2><span class="hash">#</span> 品質チェック</h2>
+    <div class="grid2">
+      <div>
+        <h3>実行結果（本ワークスペースで実測）</h3>
+        <ul class="features">
+          <li><span class="ok-text">pytest:</span> 239 passed / 0 failed</li>
+          <li><span class="ok-text">ruff check:</span> All checks passed</li>
+          <li><span class="ok-text">pyright:</span> 0 errors / 0 warnings</li>
+        </ul>
+      </div>
+      <div>
+        <h3>v0.9.3 の改善</h3>
+        <ul class="features">
+          <li>陳腐化テスト（旧 <code>_archive_paths</code>）を修正し全テストグリーン化</li>
+          <li>デッドコード削除と <code>_resolve_extract_dest</code> の一本化</li>
+          <li><code>_truncate_path</code> のスライスバグ修正</li>
+          <li>i18n 対応（日本語 / English 切替）</li>
+          <li>UI リデザイン（カードベース、アイコンヘッダー、モダンなドロップゾーン）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="hash">#</span> GUI プレビュー（インタラクティブモック）</h2>
+    <p class="muted">本物のアプリはデスクトップGUI（CustomTkinter）のため、ここではレイアウトを再現した HTML モックで操作感を確認できます。</p>
+
+    <div class="mock-wrap">
+      <div class="mock-toolbar">
+        <button onclick="loadSample()">📦 サンプルZIPを読み込む</button>
+        <button onclick="startExtract()" id="extractBtn" disabled>▶ 解凍する（デモ）</button>
+        <button onclick="openSettings()">⚙ 設定ダイアログ</button>
+        <button onclick="toggleLang()" id="langToggle">🌐 English</button>
+        <button onclick="resetApp()">✕ リセット</button>
+      </div>
+
+      <div class="mock">
+        <div class="mock-titlebar"><span>kaito v0.9.3</span></div>
+        <div class="mock-header">
+          <span class="logo-chip">k</span>
+          <div class="mock-head-text">
+            <div class="mock-title">kaito</div>
+            <div class="mock-sub" data-i18n="app.subtitle">ZIP / RAR / 7z 解凍</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="mock-btn" onclick="openSettings()" data-i18n="app.settings">⚙ 設定</button>
+        </div>
+        <div class="mock-body">
+
+          <div class="mock-card">
+            <div class="mock-row">
+              <span class="mock-label" data-i18n="app.archive_label">アーカイブ</span>
+              <div class="mock-entry" id="pathEntry">（未選択）</div>
+              <button class="mock-btn" onclick="loadSample()" data-i18n="app.open">開く</button>
+              <button class="mock-btn" data-i18n="app.recent_files">最近のファイル ▾</button>
+            </div>
+          </div>
+
+          <!-- 未選択時 -->
+          <div class="dropzone" id="dropzone">
+            <div class="dz-icon">⇩</div>
+            <div class="main" data-i18n="app.drop_hint">ZIP / RAR / 7z ファイルをここにドロップ</div>
+            <div data-i18n="app.drop_sub">または「開く」ボタンでファイルを選択できます</div>
+          </div>
+
+          <!-- 読み込み後 -->
+          <div class="mock-list" id="mockList">
+            <div class="search-row">
+              <span class="mock-label" data-i18n="app.contents">内容:</span>
+              <input type="text" id="searchBox" placeholder="絞り込み..." data-i18n-ph="app.search_placeholder" oninput="renderTree()">
+            </div>
+            <div class="tree">
+              <div class="tree-head">
+                <span></span><span>#</span><span data-i18n="tree.name">名前</span><span style="text-align:right" data-i18n="tree.size">サイズ</span><span style="text-align:right" data-i18n="tree.compressed">圧縮後</span><span data-i18n="tree.date">更新日時</span>
+              </div>
+              <div id="treeRows"></div>
+            </div>
+            <div class="preview-pane" id="previewPane"></div>
+          </div>
+
+          <div class="mock-card">
+            <div class="mock-row dest-row">
+              <span class="mock-label" data-i18n="app.dest_label">展開先:</span>
+              <div class="mock-entry" id="destEntry">…</div>
+              <button class="mock-btn" data-i18n="app.browse">参照</button>
+            </div>
+          </div>
+
+        </div>
+        <div class="mock-bottom">
+          <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+          <div class="checks">
+            <label><input type="checkbox" checked> <span data-i18n="app.open_folder_on_done">完了後にフォルダを開く</span></label>
+            <label><input type="checkbox"> <span data-i18n="app.close_on_done">解凍後に閉じる</span></label>
+          </div>
+          <div class="status" id="statusText">ファイルを選択してください</div>
+          <div class="btns">
+            <button class="mock-btn" id="compressBtn" onclick="compressDemo()" data-i18n="app.compress">圧縮する</button>
+            <button class="mock-btn" id="cancelBtn" style="display:none" onclick="cancelExtract()" data-i18n="app.cancel">キャンセル</button>
+            <button class="mock-btn primary" onclick="startExtract()" id="extractBtn3" style="display:none" disabled data-i18n="app.extract">解凍する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 設定ダイアログ（settings_dialog.py の再現・モーダル） -->
+  <div class="dlg-overlay" id="dlgOverlay">
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+      <div class="dlg-title" id="dlgTitle" data-i18n="settings.heading">kaito の設定</div>
+      <div class="dlg-sub" data-i18n="settings.subtitle">使い方に合わせて外観と圧縮速度を調整できます</div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.theme">テーマ:</span>
+          <select class="dlg-select" id="dlgThemeSelect">
+            <option value="system">system</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.language">言語:</span>
+          <select class="dlg-select" id="dlgLangSelect">
+            <option>日本語</option>
+            <option>English</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.dest_mode">展開先:</span>
+          <select class="dlg-select" id="dlgDestSelect"></select>
+        </div>
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.fixed_dest">固定先:</span>
+          <input class="dlg-entry" id="dlgFixedEntry" readonly value="">
+          <button class="dlg-btn" onclick="pickFixedDest()" data-i18n="settings.pick">選択...</button>
+        </div>
+        <div class="dlg-hint" data-i18n="settings.dest_hint">アーカイブを開くたびに展開先をどう決めるか</div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row comp">
+          <span class="dlg-label" data-i18n="settings.compression">圧縮速度:</span>
+          <select class="dlg-select" id="dlgCompSelect"></select>
+        </div>
+        <div class="dlg-hint" data-i18n="settings.compression_hint">最速を選ぶと圧縮処理が軽くなります</div>
+      </div>
+
+      <div class="dlg-btns">
+        <button class="mock-btn" onclick="closeSettings()" data-i18n="app.cancel">キャンセル</button>
+        <button class="mock-btn primary" onclick="saveSettings()" data-i18n="settings.save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>kaito — このページは <code>kaito/preview/index.html</code> の自己完結型スタティックプレビューです（サーバー不要）。</footer>
+</div>
+
+<script>
+  // ---- サンプルデータ（tests の内容を反映） ----
+  const SAMPLE = [
+    { name: "hello.txt",            size: 11,  comp: 11,  date: "2026-06-02 10:00", dir: false, content: "Hello World" },
+    { name: "folder/",              size: 0,   comp: 0,   date: "2026-01-01 00:00", dir: true,  content: null },
+    { name: "folder/a.txt",         size: 1,   comp: 1,   date: "2026-01-01 00:00", dir: false, content: "A" },
+    { name: "sub/file.txt",         size: 11,  comp: 11,  date: "2026-06-02 10:00", dir: false, content: "Nested file" },
+    { name: "sub/deep/secret.md",   size: 9,   comp: 9,   date: "2026-06-02 10:00", dir: false, content: "# Secret" },
+  ];
+  const loaded = false;
+  let entries = [];
+  let selected = null;
+  let extracting = false;
+
+  // ---- モック設定（アプリの settings.json 相当） ----
+  const mockSettings = {
+    theme: "system",
+    language: "ja",
+    dest_mode: "archive",
+    fixed_dest: "",
+    compression: 1,
+  };
+
+  // [GENERATED_I18N_START]
+// 生成元: src/kaito/i18n.py (STRINGS) — 手編集禁止。再生成: uv run python tools/gen_mock_i18n.py
+const I18N = {
+  "app.archive_label": { ja: "アーカイブ", en: "Archive" },
+  "app.browse": { ja: "参照", en: "Browse..." },
+  "app.cancel": { ja: "キャンセル", en: "Cancel" },
+  "app.close_on_done": { ja: "解凍後に閉じる", en: "Close after extraction" },
+  "app.compress": { ja: "圧縮する", en: "Compress" },
+  "app.contents": { ja: "内容:", en: "Contents:" },
+  "app.dest_label": { ja: "展開先:", en: "Destination:" },
+  "app.drop_hint": { ja: "ZIP / RAR / 7z ファイルをここにドロップ", en: "Drop ZIP / RAR / 7z files here" },
+  "app.drop_sub": { ja: "または「開く」ボタンでファイルを選択できます", en: "or use the Open button to select a file" },
+  "app.extract": { ja: "解凍する", en: "Extract" },
+  "app.open": { ja: "開く", en: "Open" },
+  "app.open_folder_on_done": { ja: "完了後にフォルダを開く", en: "Open folder when done" },
+  "app.recent_files": { ja: "最近のファイル", en: "Recent Files" },
+  "app.search_placeholder": { ja: "絞り込み...", en: "Filter..." },
+  "app.settings": { ja: "⚙ 設定", en: "⚙ Settings" },
+  "app.status_ready": { ja: "ファイルを選択してください", en: "Select a file to get started" },
+  "app.subtitle": { ja: "ZIP / RAR / 7z 解凍", en: "ZIP / RAR / 7z Extraction" },
+  "comp.fast": { ja: "最速（サイズ大）", en: "Fastest (larger size)" },
+  "comp.max": { ja: "高圧縮（時間長）", en: "Maximum (slower)" },
+  "comp.normal": { ja: "標準", en: "Normal" },
+  "ctx.compress": { ja: "kaitoで圧縮", en: "Compress with kaito" },
+  "ctx.extract": { ja: "kaitoで解凍", en: "Extract with kaito" },
+  "ctx.installed": { ja: "コンテキストメニューを登録しました", en: "Context menu registered" },
+  "ctx.removed": { ja: "コンテキストメニューを削除しました", en: "Context menu removed" },
+  "dest.archive": { ja: "アーカイブと同じフォルダー", en: "Same folder as archive" },
+  "dest.fixed": { ja: "固定フォルダー", en: "Fixed folder" },
+  "dest.last": { ja: "最後に使用したフォルダー", en: "Last used folder" },
+  "dialog.choose_dest": { ja: "展開先フォルダを選択", en: "Select destination folder" },
+  "dialog.choose_fixed_dest": { ja: "固定展開先フォルダを選択", en: "Select fixed destination folder" },
+  "dialog.compress_files": { ja: "圧縮するファイルを選択", en: "Select files to compress" },
+  "dialog.open_archive": { ja: "アーカイブファイルを選択", en: "Select archive file" },
+  "dialog.password": { ja: "パスワード", en: "Password" },
+  "dialog.save_archive": { ja: "圧縮ファイルの保存先", en: "Save archive as" },
+  "filetype.all": { ja: "すべてのファイル", en: "All Files" },
+  "filetype.archive": { ja: "アーカイブ", en: "Archives" },
+  "msg.canceled": { ja: "解凍をキャンセルしました ({n}アーカイブ完了)", en: "Extraction canceled ({n} archive(s) done)" },
+  "msg.canceling": { ja: "解凍をキャンセルしています...", en: "Canceling extraction..." },
+  "msg.compress_candidates": { ja: "{n}個のファイルを圧縮できます", en: "{n} file(s) ready to compress" },
+  "msg.compress_done": { ja: "圧縮完了", en: "Compression complete" },
+  "msg.compress_progress": { ja: "圧縮中: {pct} ({cur}/{total}) - {name}", en: "Compressing: {pct} ({cur}/{total}) - {name}" },
+  "msg.entries": { ja: "{n} 個のエントリ ({size})", en: "{n} entries ({size})" },
+  "msg.error_open": { ja: "エラー: ファイルを開けません ({e})", en: "Error: cannot open file ({e})" },
+  "msg.error_prefix": { ja: "エラー: {msg}", en: "Error: {msg}" },
+  "msg.error_summary": { ja: "{n}アーカイブでエラー", en: "Errors in {n} archive(s)" },
+  "msg.extract_done": { ja: "解凍完了 ({n}アーカイブ)", en: "Extraction complete ({n} archive(s))" },
+  "msg.load_canceled": { ja: "アーカイブの読み込みをキャンセルしました", en: "Archive loading canceled" },
+  "msg.password_prompt": { ja: "{name} はパスワードで保護されています\nパスワードを入力してください:", en: "{name} is password protected\nEnter the password:" },
+  "msg.password_protected": { ja: " (パスワード保護)", en: " (password protected)" },
+  "msg.preview_image_error": { ja: "画像をプレビューできません ({e})", en: "Could not preview image ({e})" },
+  "msg.preview_read_error": { ja: "プレビューを読み込めませんでした ({e})", en: "Could not load preview ({e})" },
+  "msg.preview_too_large": { ja: "ファイルが大きすぎてプレビューできません ({size})", en: "File too large to preview ({size})" },
+  "msg.preview_unavailable": { ja: "プレビュー不可 ({ext})", en: "Preview unavailable ({ext})" },
+  "msg.queue_status": { ja: "[{q}アーカイブ] {current}", en: "[{q} archive(s)] {current}" },
+  "settings.compression": { ja: "圧縮速度:", en: "Compression speed:" },
+  "settings.compression_hint": { ja: "最速を選ぶと圧縮処理が軽くなります", en: "Choosing Fastest makes compression lighter" },
+  "settings.dest_hint": { ja: "アーカイブを開くたびに展開先をどう決めるか", en: "How to choose the destination each time you open an archive" },
+  "settings.dest_mode": { ja: "展開先:", en: "Destination:" },
+  "settings.fixed_dest": { ja: "固定先:", en: "Fixed path:" },
+  "settings.heading": { ja: "kaito の設定", en: "kaito Settings" },
+  "settings.language": { ja: "言語:", en: "Language:" },
+  "settings.pick": { ja: "選択...", en: "Choose..." },
+  "settings.save": { ja: "保存", en: "Save" },
+  "settings.subtitle": { ja: "使い方に合わせて外観と圧縮速度を調整できます", en: "Adjust appearance and compression speed to your needs" },
+  "settings.theme": { ja: "テーマ:", en: "Theme:" },
+  "settings.title": { ja: "設定", en: "Settings" },
+  "tree.compressed": { ja: "圧縮後", en: "Compressed" },
+  "tree.date": { ja: "更新日時", en: "Modified" },
+  "tree.name": { ja: "名前", en: "Name" },
+  "tree.size": { ja: "サイズ", en: "Size" },
+};
+// [GENERATED_I18N_END]
+
+  // デモ専用の文言（アプリの i18n 辞書に存在しないモック限定キー）
+  const MOCK_ONLY = {
+    "status.extracting": { ja: "解凍中: {n} 個のエントリ...", en: "Extracting: {n} entries..." },
+    "status.canceled":   { ja: "解凍をキャンセルしました",     en: "Extraction canceled" },
+    "status.saved":      { ja: "設定を保存しました",           en: "Settings saved" },
+    "status.compress":   { ja: "圧縮モード（ファイル選択ダイアログはデモ未対応）", en: "Compress mode (file picker not in demo)" },
+    "search.none":       { ja: "該当なし",                     en: "No match" },
+  };
+  // 選択肢は i18n キー参照（dest.* / comp.* はアプリ辞書から生成）
+  const DEST_MODES = [
+    { code: "archive", key: "dest.archive" },
+    { code: "last",    key: "dest.last" },
+    { code: "fixed",   key: "dest.fixed" },
+  ];
+  const COMP_LEVELS = [
+    { code: 1, key: "comp.fast" },
+    { code: 6, key: "comp.normal" },
+    { code: 9, key: "comp.max" },
+  ];
+  const curLang = () => mockSettings.language;
+  function t(key, vars) {
+    const entry = I18N[key] || MOCK_ONLY[key] || {};
+    let s = entry[curLang()] || entry.ja || key;
+    if (vars) for (const k in vars) s = s.replace("{" + k + "}", vars[k]);
+    return s;
+  }
+
+  // ステータスは「キー + 変数」で管理し、言語切替後に再翻訳できるようにする
+  let statusKey = null, statusVars = null, statusKind = null;
+  function setStatusKey(key, vars, kind) {
+    statusKey = key; statusVars = vars || null; statusKind = kind || null;
+    setStatus(t(key, vars), statusKind);
+  }
+
+  function fmtSize(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024**2) return (n/1024).toFixed(1) + " KB";
+    return (n/1024**2).toFixed(1) + " MB";
+  }
+  function totalSize() { return entries.reduce((s, e) => s + e.size, 0); }
+  function setStatus(msg, kind) {
+    // 生メッセージ表示用（statusKey は setStatusKey が管理するためここでは消さない）
+    const el = document.getElementById("statusText");
+    el.textContent = msg;
+    el.className = "status" + (kind ? " " + kind : "");
+  }
+
+  // ---- テーマ / 言語の適用（アプリの on_theme_changed / on_language_changed 相当） ----
+  function applyTheme(mode) {
+    if (mode === "system") {
+      mode = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.dataset.theme = mode;
+  }
+  function applyLang() {
+    document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+    renderSelectOptions("dlgDestSelect", DEST_MODES);
+    renderSelectOptions("dlgCompSelect", COMP_LEVELS);
+    if (statusKey) setStatus(t(statusKey, statusVars), statusKind);
+  }
+  function renderSelectOptions(id, config) {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    sel.innerHTML = "";
+    config.forEach(opt => {
+      const o = document.createElement("option");
+      o.value = String(opt.code);
+      o.textContent = t(opt.key);
+      sel.appendChild(o);
+    });
+    if (config.some(o => String(o.code) === prev)) sel.value = prev;
+  }
+
+  function setButtons(mode) {
+    // mode: "rest" | "extract" | "extracting" — アプリの状態遷移に合わせる
+    const comp = document.getElementById("compressBtn");
+    const ext = document.getElementById("extractBtn3");
+    const cancel = document.getElementById("cancelBtn");
+    comp.style.display = mode === "extract" || mode === "extracting" ? "none" : "";
+    comp.disabled = mode === "extracting";
+    ext.style.display = mode === "rest" ? "none" : "";
+    ext.disabled = mode === "extracting" || !entries.length;
+    cancel.style.display = mode === "extracting" ? "" : "none";
+  }
+
+  function loadSample() {
+    entries = SAMPLE.map(e => ({ ...e }));
+    selected = null;
+    extracting = false;
+    document.getElementById("pathEntry").textContent = "C:\\Users\\demo\\Downloads\\test.zip";
+    document.getElementById("destEntry").textContent = "C:\\Users\\demo\\Downloads\\test";
+    document.getElementById("dropzone").style.display = "none";
+    const list = document.getElementById("mockList");
+    list.style.display = "flex";
+    document.getElementById("searchBox").value = "";
+    document.getElementById("extractBtn").disabled = false;
+    document.getElementById("progressWrap").style.display = "none";
+    document.getElementById("progressBar").style.width = "0%";
+    document.getElementById("previewPane").style.display = "none";
+    setButtons("extract");
+    renderTree();
+    setStatusKey("msg.entries", { n: entries.length, size: fmtSize(totalSize()) });
+  }
+
+  function renderTree() {
+    const q = document.getElementById("searchBox").value.trim().toLowerCase();
+    const rows = document.getElementById("treeRows");
+    rows.innerHTML = "";
+    let n = 0;
+    entries.forEach((e, i) => {
+      if (q && !e.name.toLowerCase().includes(q)) return;
+      n++;
+      const row = document.createElement("div");
+      row.className = "tree-row" + (e.dir ? " dir" : "") + (i === selected ? " sel" : "");
+      row.innerHTML =
+        '<span class="ic">' + (e.dir ? '&#128193;' : '&#128196;') + '</span>' +
+        '<span class="n">' + n + '</span>' +
+        '<span class="nm"></span>' +
+        '<span class="sz">' + fmtSize(e.size) + '</span>' +
+        '<span class="sz">' + fmtSize(e.comp) + '</span>' +
+        '<span class="muted" style="font-size:11.5px">' + e.date + '</span>';
+      row.querySelector(".nm").textContent = e.name;
+      row.onclick = () => selectEntry(i);
+      rows.appendChild(row);
+    });
+    if (n === 0) rows.innerHTML = '<div class="tree-row" style="cursor:default"><span class="muted" style="grid-column:1/-1">' + t("search.none") + '</span></div>';
+  }
+
+  function selectEntry(i) {
+    selected = i;
+    renderTree();
+    const e = entries[i];
+    const pane = document.getElementById("previewPane");
+    if (e.dir || e.content == null) {
+      pane.style.display = "none";
+      pane.textContent = "";
+    } else {
+      pane.textContent = "// " + e.name + " (" + fmtSize(e.size) + ")\n\n" + e.content;
+      pane.style.display = "block";
+    }
+  }
+
+  function startExtract() {
+    if (!entries.length || extracting) return;
+    extracting = true;
+    const wrap = document.getElementById("progressWrap");
+    const bar = document.getElementById("progressBar");
+    wrap.style.display = "block";
+    document.getElementById("extractBtn").disabled = true;
+    setButtons("extracting");
+    setStatusKey("status.extracting", { n: entries.length }, "warn");
+    let p = 0;
+    const timer = setInterval(() => {
+      p += 4 + Math.random() * 9;
+      if (p >= 100) {
+        p = 100;
+        clearInterval(timer);
+        bar.style.width = "100%";
+        setTimeout(() => {
+          setStatusKey("msg.extract_done", { n: 1 }, "ok");
+          setTimeout(() => {
+            wrap.style.display = "none";
+            bar.style.width = "0%";
+            extracting = false;
+            document.getElementById("extractBtn").disabled = false;
+            setButtons("extract");
+          }, 900);
+        }, 200);
+      } else {
+        bar.style.width = p + "%";
+      }
+    }, 120);
+  }
+
+  function cancelExtract() {
+    extracting = false;
+    document.getElementById("progressWrap").style.display = "none";
+    document.getElementById("progressBar").style.width = "0%";
+    document.getElementById("extractBtn").disabled = false;
+    setButtons("extract");
+    setStatusKey("status.canceled", null, "warn");
+  }
+
+  function compressDemo() {
+    setStatusKey("status.compress", null, "warn");
+  }
+
+  // ---- 設定ダイアログ（settings_dialog.py の再現） ----
+  function openSettings() {
+    document.getElementById("dlgThemeSelect").value = mockSettings.theme;
+    document.getElementById("dlgLangSelect").value = mockSettings.language === "en" ? "English" : "日本語";
+    renderSelectOptions("dlgDestSelect", DEST_MODES);
+    document.getElementById("dlgDestSelect").value = mockSettings.dest_mode;
+    renderSelectOptions("dlgCompSelect", COMP_LEVELS);
+    document.getElementById("dlgCompSelect").value = String(mockSettings.compression);
+    document.getElementById("dlgFixedEntry").value = mockSettings.fixed_dest;
+    document.getElementById("dlgOverlay").classList.add("open");
+  }
+  function closeSettings() {
+    document.getElementById("dlgOverlay").classList.remove("open");
+  }
+  function saveSettings() {
+    mockSettings.theme = document.getElementById("dlgThemeSelect").value;
+    mockSettings.language = document.getElementById("dlgLangSelect").value === "English" ? "en" : "ja";
+    mockSettings.dest_mode = document.getElementById("dlgDestSelect").value;
+    mockSettings.compression = Number(document.getElementById("dlgCompSelect").value);
+    const fd = document.getElementById("dlgFixedEntry").value.trim();
+    if (fd) mockSettings.fixed_dest = fd;
+    applyTheme(mockSettings.theme);
+    applyLang();
+    saveMockSettings();
+    closeSettings();
+    setStatusKey("status.saved", null, "ok");
+  }
+  function pickFixedDest() {
+    document.getElementById("dlgFixedEntry").value = "C:\\Users\\demo\\Downloads\\extract";
+  }
+
+  function resetApp() {
+    entries = [];
+    selected = null;
+    extracting = false;
+    document.getElementById("pathEntry").textContent = "（未選択）";
+    document.getElementById("destEntry").textContent = "…";
+    document.getElementById("dropzone").style.display = "";
+    document.getElementById("mockList").style.display = "none";
+    document.getElementById("extractBtn").disabled = true;
+    document.getElementById("progressWrap").style.display = "none";
+    document.getElementById("progressBar").style.width = "0%";
+    document.getElementById("previewPane").style.display = "none";
+    setButtons("rest");
+    setStatusKey("app.status_ready");
+  }
+
+  // ドロップゾーンのハイライト（デモ）
+  const dz = document.getElementById("dropzone");
+  dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("hl"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("hl"));
+  dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("hl"); loadSample(); });
+
+  // テーマ（トグルはライト/ダークを直接切替、設定ダイアログと同期）
+  function toggleTheme() {
+    mockSettings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(mockSettings.theme);
+    saveMockSettings();
+  }
+
+  // 言語トグル（モック全体を ja/en で切替・設定ダイアログの言語セレクタと同期）
+  function toggleLang() {
+    mockSettings.language = mockSettings.language === "ja" ? "en" : "ja";
+    applyLang();
+    updateLangToggle();
+    saveMockSettings();
+  }
+  function updateLangToggle() {
+    const b = document.getElementById("langToggle");
+    if (b) b.textContent = mockSettings.language === "ja" ? "🌐 English" : "🌐 日本語";
+  }
+
+  // モック設定の localStorage 永続化（アプリの settings.json 相当）
+  function saveMockSettings() {
+    try { localStorage.setItem("kaito-mock-settings", JSON.stringify(mockSettings)); } catch (e) {}
+  }
+  function loadMockSettings() {
+    try {
+      const raw = localStorage.getItem("kaito-mock-settings");
+      if (raw) Object.assign(mockSettings, JSON.parse(raw));
+    } catch (e) {}
+  }
+
+  // 初期化（アプリ起動時の settings 適用相当・言語/テーマは localStorage から復元）
+  loadMockSettings();
+  applyTheme(mockSettings.theme);
+  applyLang();
+  updateLangToggle();
+  setStatusKey("app.status_ready");
+</script>
+</body>
+</html>

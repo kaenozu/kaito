@@ -1,4 +1,11 @@
-"""GUIのパスワード同期、展開先、終了処理の回帰テスト。"""
+"""GUIのパスワード同期、展開先、終了処理の回帰テスト。
+
+origin/master 版は「オープン時パスワード再試行・ワーカー終了待ち」を
+UnzipApp の自前ワーカースレッド（_worker_thread / _wait_for_worker_then_destroy）で
+実装していた。統合後（feature 版 UI + ArchiveService バックエンド）は
+ExtractWorker 経由のため、ここでは feature 版の API に合わせて
+「ヘッダー暗号化のオープン時パスワード再試行」と「圧縮フローのフラグ保持」を固定する。
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from kaito.domain.errors import PasswordRequiredError
-from kaito.domain.models import ArchiveEntry, ArchiveInfo
+from kaito.domain.models import ArchiveEntry
 from kaito.gui.unzip_app import UnzipApp
 
 
@@ -20,18 +27,17 @@ def _bare_app() -> UnzipApp:
             "_is_encrypted": False,
             "_is_busy": False,
             "_closing": False,
-            "_worker_thread": None,
             "_compress_sources": [],
             "_compress_no_dialog": False,
-            "_passwords": {},
-            "_failed_passwords": set(),
-            "_current_archive_path": None,
+            "_zip_path": None,
             "_temp_dir": None,
             "_archive_service": MagicMock(),
             "_dest_var": MagicMock(),
             "_status_var": MagicMock(),
+            "_status_label": MagicMock(),
             "_progress": MagicMock(),
             "_settings": MagicMock(),
+            "_settings.get_password.return_value": None,
             "_path_var": MagicMock(),
             "_search_var": MagicMock(),
             "_extract_btn": MagicMock(),
@@ -55,67 +61,54 @@ def _bare_app() -> UnzipApp:
     return app
 
 
-def test_password_dialog_cancel_completes_worker_wait() -> None:
-    app = _bare_app()
-    app._ask_password = MagicMock(return_value=None)
-
-    assert app._request_password_from_worker("secret.rar") is None
-    app._ask_password.assert_called_once_with("secret.rar")
-
-
-def test_password_retry_uses_error_dialog() -> None:
-    app = _bare_app()
-    app._show_password_error = MagicMock(return_value="correct")
-
-    assert app._request_password_from_worker("secret.rar", retry=True) == "correct"
-    app._show_password_error.assert_called_once_with("secret.rar")
-
-
 def test_header_encrypted_archive_prompts_and_retries(tmp_path: Path) -> None:
+    """ヘッダー暗号化7zはオープン時にパスワードを要求し、再試行で開ける"""
     app = _bare_app()
     archive = tmp_path / "header-encrypted.7z"
     archive.touch()
-    info = ArchiveInfo(
-        path=archive,
-        entries=[
-            ArchiveEntry(
-                name="secret.txt",
-                size=1,
-                compressed_size=1,
-                modified=datetime(2026, 1, 1),
-                is_dir=False,
-                is_encrypted=True,
-            )
-        ],
-        is_encrypted=True,
-        format_name="7z",
-    )
-    app._archive_service.list_archive.side_effect = [
-        PasswordRequiredError(str(archive)),
-        info,
+    entries = [
+        ArchiveEntry(
+            name="secret.txt",
+            size=1,
+            compressed_size=1,
+            modified=datetime(2026, 1, 1),
+            is_dir=False,
+            is_encrypted=True,
+        )
     ]
-    app._ask_password = MagicMock(return_value="correct")
+    with (
+        patch(
+            "kaito.gui.unzip_app.list_archive",
+            side_effect=[PasswordRequiredError(str(archive)), (entries, True)],
+        ),
+        patch.object(app, "_ask_password_for", return_value="correct") as mock_ask,
+    ):
+        app._load_archive(archive)
 
-    app._load_archive(archive)
-
-    assert app._get_password_for(archive) == "correct"
-    assert app._archive_service.list_archive.call_count == 2
-    assert app._archive_service.list_archive.call_args_list[1].kwargs["password"] == (
-        "correct"
-    )
-    assert app._current_archive_path == archive
+    assert app._zip_path == archive
+    assert app._entries == entries
+    assert app._is_encrypted is True
+    mock_ask.assert_called_once_with(archive)
+    app._settings.set_password.assert_called_once_with(str(archive), "correct")
 
 
-def test_default_destination_is_base_directory_not_double_nested(
-    tmp_path: Path,
-) -> None:
+def test_header_encrypted_cancel_aborts_load(tmp_path: Path) -> None:
+    """パスワード入力をキャンセルすると読み込みを中断する"""
     app = _bare_app()
-    archive = tmp_path / "sample.zip"
-    app._current_archive_path = archive
+    archive = tmp_path / "header-encrypted.7z"
+    archive.touch()
+    with (
+        patch(
+            "kaito.gui.unzip_app.list_archive",
+            side_effect=PasswordRequiredError(str(archive)),
+        ),
+        patch.object(app, "_ask_password_for", return_value=None),
+    ):
+        app._load_archive(archive)
 
-    app._update_dest_display()
-
-    app._dest_var.set.assert_called_once_with(str(tmp_path))
+    assert app._zip_path is None
+    app._status_var.set.assert_called()
+    app._settings.set_password.assert_not_called()
 
 
 def test_context_compression_keeps_auto_close_flag_until_completion(
@@ -132,44 +125,3 @@ def test_context_compression_keeps_auto_close_flag_until_completion(
 
     assert app._compress_no_dialog is True
     app._start_compress.assert_called_once_with(tmp_path / "input.zip")
-
-
-def test_compress_done_resets_flag_and_schedules_close() -> None:
-    app = _bare_app()
-    app._is_busy = True
-    app._compress_no_dialog = True
-
-    app._on_compress_done()
-
-    assert app._compress_no_dialog is False
-    assert app._worker_thread is None
-    app.after.assert_called_with(500, app.destroy)
-
-
-def test_close_during_work_cancels_and_waits_for_worker() -> None:
-    app = _bare_app()
-    app.after = MagicMock()
-    app._is_busy = True
-    worker = MagicMock()
-    worker.is_alive.return_value = True
-    app._worker_thread = worker
-
-    with patch("kaito.gui.unzip_app.messagebox.askyesno", return_value=True):
-        app._on_close()
-
-    assert app._closing is True
-    app._archive_service.cancel.assert_called_once_with()
-    app.after.assert_called_with(100, app._wait_for_worker_then_destroy)
-    app.destroy.assert_not_called()
-
-
-def test_worker_shutdown_destroys_only_after_exit() -> None:
-    app = _bare_app()
-    worker = MagicMock()
-    worker.is_alive.return_value = False
-    app._worker_thread = worker
-
-    app._wait_for_worker_then_destroy()
-
-    app._cleanup_temp_dir.assert_called_once_with()
-    app.destroy.assert_called_once_with()

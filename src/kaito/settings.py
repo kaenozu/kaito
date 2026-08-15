@@ -16,8 +16,10 @@ from kaito.domain.models import SafetyLimits
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "system",
-    "language": "日本語",
+    "language": "ja",
     "last_dest": "",
+    "dest_mode": "archive",
+    "fixed_dest": "",
     "open_on_done": True,
     "close_on_done": False,
     "recent_files": [],
@@ -31,7 +33,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 MAX_RECENT_FILES = 10
 _ALLOWED_THEMES = frozenset({"system", "light", "dark"})
-_ALLOWED_LANGUAGES = frozenset({"日本語", "English"})
+_ALLOWED_LANGUAGES = frozenset({"ja", "en"})
+_ALLOWED_DEST_MODES = frozenset({"archive", "last", "fixed"})
 
 
 def _defaults() -> dict[str, Any]:
@@ -75,10 +78,16 @@ def _validate_settings(data: object) -> dict[str, Any]:
     defaults["theme"] = theme if theme in _ALLOWED_THEMES else "system"
 
     language = data.get("language")
-    defaults["language"] = language if language in _ALLOWED_LANGUAGES else "日本語"
+    defaults["language"] = language if language in _ALLOWED_LANGUAGES else "ja"
+
+    dest_mode = data.get("dest_mode")
+    defaults["dest_mode"] = dest_mode if dest_mode in _ALLOWED_DEST_MODES else "archive"
 
     last_dest = data.get("last_dest")
     defaults["last_dest"] = last_dest if isinstance(last_dest, str) else ""
+
+    fixed_dest = data.get("fixed_dest")
+    defaults["fixed_dest"] = fixed_dest if isinstance(fixed_dest, str) else ""
 
     for key in ("open_on_done", "close_on_done"):
         value = data.get(key)
@@ -182,12 +191,12 @@ class SettingsManager:
         return self._data.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        self.set_many(**{key: value})
+        self.set_many({key: value})
 
-    def set_many(self, **kwargs: Any) -> None:
+    def set_many(self, items: dict[str, Any]) -> None:
         """複数設定をまとめて検証・更新し、1度だけ保存する。"""
         proposed = dict(self._data)
-        proposed.update(kwargs)
+        proposed.update(items)
         self._data = _validate_settings(proposed)
         self._dirty = True
         self.save()

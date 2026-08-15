@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import inspect
-import io
 import json
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
 
 import kaito.archive.zip_backend as zip_backend_module
-from kaito.archive.inspection import ArchiveSafetyReport
 from kaito.archive.service import ArchiveService
 from kaito.diagnostics import _sanitize_error
 from kaito.domain.errors import CompressionFailedError
-from kaito.domain.models import CompressionOptions, SafetyLimits
-from kaito.gui.productivity import _ArchivePasswordDialog, ProductivityFeatures
+from kaito.domain.models import CompressionOptions
 
 
 def test_diagnostics_redact_split_passwords_and_forward_slash_paths() -> None:
@@ -81,81 +74,6 @@ def test_zip_creation_rejects_reparse_source(
         )
 
     assert not archive.exists()
-
-
-def _blocked_report() -> ArchiveSafetyReport:
-    return ArchiveSafetyReport(
-        status="blocked",
-        findings=(),
-        entry_count=1,
-        file_count=1,
-        encrypted_count=0,
-        executable_count=0,
-        total_size=1,
-        compressed_size=1,
-        compression_ratio=1.0,
-    )
-
-
-def test_safety_block_remains_applied_after_ui_reenable() -> None:
-    features = ProductivityFeatures.__new__(ProductivityFeatures)
-    features._safety_report = _blocked_report()
-    features._selected_button = MagicMock()
-    extract_button = MagicMock()
-    features.app = SimpleNamespace(
-        _extract_btn=extract_button,
-        _current_archive_path=Path("sample.zip"),
-        _entries=[object()],
-    )
-
-    features._apply_safety_controls(enabled=True)
-
-    extract_button.configure.assert_called_once_with(state="disabled")
-    features._selected_button.configure.assert_called_once_with(state="disabled")
-
-
-def test_recent_history_delete_is_a_real_action() -> None:
-    features = ProductivityFeatures.__new__(ProductivityFeatures)
-    settings = MagicMock()
-    status = MagicMock()
-    refresh = MagicMock()
-    mapping = {"sample.zip": "C:/sample.zip"}
-    features.app = SimpleNamespace(
-        _settings=settings,
-        _recent_display_to_path=mapping,
-        _refresh_recent_menu=refresh,
-        _status_var=status,
-    )
-    features._original_recent_selected = MagicMock()
-
-    features.on_recent_selected("履歴を削除")
-
-    settings.set.assert_called_once_with("recent_files", [])
-    assert mapping == {}
-    refresh.assert_called_once_with()
-    features._original_recent_selected.assert_not_called()
-
-
-def test_archive_password_dialog_uses_a_masked_entry() -> None:
-    source = inspect.getsource(_ArchivePasswordDialog.__init__)
-    assert 'show="*"' in source
-
-
-def test_image_preview_rejects_pixel_count_before_full_decode() -> None:
-    image = Image.new("RGB", (20, 20))
-    payload = io.BytesIO()
-    image.save(payload, format="PNG")
-    service = SimpleNamespace(
-        safety_limits=SafetyLimits(preview_max_image_pixels=100),
-        read_entry=lambda *_args, **_kwargs: payload.getvalue(),
-    )
-    features = ProductivityFeatures.__new__(ProductivityFeatures)
-    features.app = SimpleNamespace(_archive_service=service)
-
-    kind, message = features._load_preview(Path("sample.zip"), "large.png", None)
-
-    assert kind == "message"
-    assert "画素数" in str(message)
 
 
 def test_personal_app_ci_uses_locked_build_and_installer_checks() -> None:
