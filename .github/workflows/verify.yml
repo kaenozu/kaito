@@ -1,7 +1,7 @@
 name: Verify
 
 # ローカル作業（feature/ui-i18n-worker 等）を origin/master へ統合するための
-# 軽量検証ゲート。テスト・pyright・ruff・フォント実測監査のみ実行し、
+# 軽量検証ゲート。テスト・pyright・ruff・フォント実測監査・モックテーマ突合のみ実行し、
 # アーキテクチャに依存しない（patool ベースの旧ブランチでも 7z.dll ベースの
 # master でも動作する）。
 # master 統合後は origin/master の ci.yml（ビルド・インストーラ・GUI acceptance
@@ -87,6 +87,18 @@ jobs:
           $output = & uv run --frozen python tools/font_audit.py --no-html 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath artifacts/font-audit.txt
+          exit $code
+
+      # モックの CSS 変数が theme.py のビジュアルトークンと一致しているか検証する
+      # （tools/check_mock_theme.py）。index.html を手で書き換えた際にライト/ダークの色が
+      # 乖離したり、theme.py に未対応トークンが追加されたりすると exit 1 で落とす。
+      # ファイル解析のみで GUI 不要のため、どの runner でも決定的に動作する。
+      - name: Mock theme check
+        shell: pwsh
+        run: |
+          $output = & uv run --frozen python tools/check_mock_theme.py 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath artifacts/mock-theme-check.txt
           exit $code
 
       - name: Upload verification artifacts

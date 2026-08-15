@@ -19,11 +19,17 @@
     --warn: #b45309;
     --err: #c0392b;
     --tree-head-bg: #f4f6fa;
+    --tree-head-active: #e4e8f0;
+    --tree-fg: #16181d;
+    --tree-sel-bg: #dce9ff;
+    --tree-sel-fg: #16181d;
+    --drop-border: #bcc9e6;
+    --drop-hl: #3b82f6;
     --mono: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
     --sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
     --tree-sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
   }
-  html[data-dark="true"] {
+  html[data-theme="dark"] {
     --bg: #0f1117;
     --panel: #1b1e27;
     --panel-2: #272c38;
@@ -35,6 +41,12 @@
     --warn: #f5c76a;
     --err: #f1948a;
     --tree-head-bg: #212530;
+    --tree-head-active: #2a303e;
+    --tree-fg: #dce4ee;
+    --tree-sel-bg: #2b4d78;
+    --tree-sel-fg: #ffffff;
+    --drop-border: #3b4b6a;
+    --drop-hl: #6fa3ff;
   }
   * { box-sizing: border-box; }
   body {
@@ -180,7 +192,7 @@
 
   /* drop zone */
   .dropzone {
-    border: 2px dashed var(--border);
+    border: 2px dashed var(--drop-border);
     border-radius: 18px;
     padding: 36px 20px;
     text-align: center;
@@ -188,7 +200,7 @@
     display: flex; flex-direction: column; align-items: center; gap: 8px;
     transition: border-color .2s, background .2s;
   }
-  .dropzone.hl { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .dropzone.hl { border-color: var(--drop-hl); background: var(--accent-soft); color: var(--accent); }
   .dz-icon {
     width: 64px; height: 64px; border-radius: 50%;
     background: var(--accent-soft); color: var(--accent);
@@ -219,14 +231,15 @@
     font-family: var(--tree-sans);
     border-bottom: 1px solid var(--border);
   }
+  .tree-head:hover { background: var(--tree-head-active); }
   .tree-row {
     border-bottom: 1px solid var(--border); cursor: pointer;
-    font-family: var(--tree-sans); font-size: 12px;
+    font-family: var(--tree-sans); font-size: 12px; color: var(--tree-fg);
   }
   .tree-row:last-child { border-bottom: none; }
   .tree-row:nth-child(even) { background: var(--bg); }
   .tree-row:hover { background: var(--accent-soft); }
-  .tree-row.sel { background: var(--accent-soft); outline: 1px solid var(--accent); outline-offset: -1px; }
+  .tree-row.sel { background: var(--tree-sel-bg); color: var(--tree-sel-fg); outline: 1px solid var(--accent); outline-offset: -1px; }
   .tree-row .ic { font-size: 13px; text-align: center; }
   .tree-row .n { color: var(--muted); font-family: var(--mono); font-size: 11.5px; text-align: right; }
   .tree-row .sz { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
@@ -261,6 +274,50 @@
   .status.err { color: var(--err); }
   .status.warn { color: var(--warn); }
   .btns { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ---- 設定ダイアログ（settings_dialog.py のカードベース UI 再現） ---- */
+  .dlg-overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(8, 12, 20, .5);
+    display: none; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .dlg-overlay.open { display: flex; }
+  .dlg {
+    width: min(440px, 94vw);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .4);
+    padding: 20px 22px 18px;
+    display: flex; flex-direction: column; gap: 12px;
+    font-family: var(--sans);
+  }
+  .dlg-title { font-size: 20px; font-weight: 700; color: var(--text); }
+  .dlg-sub { font-size: 12.5px; color: var(--muted); margin-top: -8px; }
+  .dlg-card {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 4px 14px 10px;
+  }
+  .dlg-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .dlg-row.comp { justify-content: space-between; }
+  .dlg-label { font-size: 13px; color: var(--text); min-width: 88px; }
+  .dlg-select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-family: var(--sans); font-size: 12.5px;
+    cursor: pointer; min-width: 130px;
+  }
+  .dlg-entry {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; font-size: 12px; color: var(--muted); font-family: var(--tree-sans);
+    min-width: 0;
+  }
+  .dlg-btn {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-family: var(--sans); font-size: 12px; color: var(--text); cursor: pointer;
+    white-space: nowrap;
+  }
+  .dlg-btn:hover { border-color: var(--accent); }
+  .dlg-hint { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+  .dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 
   footer { color: var(--muted); font-size: 12px; margin-top: 26px; text-align: center; }
 </style>
@@ -369,6 +426,8 @@ uv run kaito --uninstall-context-menu</pre>
       <div class="mock-toolbar">
         <button onclick="loadSample()">📦 サンプルZIPを読み込む</button>
         <button onclick="startExtract()" id="extractBtn" disabled>▶ 解凍する（デモ）</button>
+        <button onclick="openSettings()">⚙ 設定ダイアログ</button>
+        <button onclick="toggleLang()" id="langToggle">🌐 English</button>
         <button onclick="resetApp()">✕ リセット</button>
       </div>
 
@@ -378,38 +437,38 @@ uv run kaito --uninstall-context-menu</pre>
           <span class="logo-chip">k</span>
           <div class="mock-head-text">
             <div class="mock-title">kaito</div>
-            <div class="mock-sub">ZIP / RAR / 7z 解凍</div>
+            <div class="mock-sub" data-i18n="app.subtitle">ZIP / RAR / 7z 解凍</div>
           </div>
           <div class="spacer"></div>
-          <button class="mock-btn" onclick="openSettings()">⚙ 設定</button>
+          <button class="mock-btn" onclick="openSettings()" data-i18n="app.settings">⚙ 設定</button>
         </div>
         <div class="mock-body">
 
           <div class="mock-card">
             <div class="mock-row">
-              <span class="mock-label">アーカイブ</span>
+              <span class="mock-label" data-i18n="app.archive_label">アーカイブ</span>
               <div class="mock-entry" id="pathEntry">（未選択）</div>
-              <button class="mock-btn" onclick="loadSample()">開く</button>
-              <button class="mock-btn">最近のファイル ▾</button>
+              <button class="mock-btn" onclick="loadSample()" data-i18n="app.open">開く</button>
+              <button class="mock-btn" data-i18n="app.recent_files">最近のファイル ▾</button>
             </div>
           </div>
 
           <!-- 未選択時 -->
           <div class="dropzone" id="dropzone">
             <div class="dz-icon">⇩</div>
-            <div class="main">ZIP / RAR / 7z ファイルをここにドロップ</div>
-            <div>または「開く」ボタンでファイルを選択できます</div>
+            <div class="main" data-i18n="app.drop_hint">ZIP / RAR / 7z ファイルをここにドロップ</div>
+            <div data-i18n="app.drop_sub">または「開く」ボタンでファイルを選択できます</div>
           </div>
 
           <!-- 読み込み後 -->
           <div class="mock-list" id="mockList">
             <div class="search-row">
-              <span class="mock-label">内容:</span>
-              <input type="text" id="searchBox" placeholder="絞り込み..." oninput="renderTree()">
+              <span class="mock-label" data-i18n="app.contents">内容:</span>
+              <input type="text" id="searchBox" placeholder="絞り込み..." data-i18n-ph="app.search_placeholder" oninput="renderTree()">
             </div>
             <div class="tree">
               <div class="tree-head">
-                <span></span><span>#</span><span>名前</span><span style="text-align:right">サイズ</span><span style="text-align:right">圧縮後</span><span>更新日時</span>
+                <span></span><span>#</span><span data-i18n="tree.name">名前</span><span style="text-align:right" data-i18n="tree.size">サイズ</span><span style="text-align:right" data-i18n="tree.compressed">圧縮後</span><span data-i18n="tree.date">更新日時</span>
               </div>
               <div id="treeRows"></div>
             </div>
@@ -418,9 +477,9 @@ uv run kaito --uninstall-context-menu</pre>
 
           <div class="mock-card">
             <div class="mock-row dest-row">
-              <span class="mock-label">展開先:</span>
+              <span class="mock-label" data-i18n="app.dest_label">展開先:</span>
               <div class="mock-entry" id="destEntry">…</div>
-              <button class="mock-btn">参照</button>
+              <button class="mock-btn" data-i18n="app.browse">参照</button>
             </div>
           </div>
 
@@ -428,19 +487,74 @@ uv run kaito --uninstall-context-menu</pre>
         <div class="mock-bottom">
           <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
           <div class="checks">
-            <label><input type="checkbox" checked> 完了後にフォルダを開く</label>
-            <label><input type="checkbox"> 解凍後に閉じる</label>
+            <label><input type="checkbox" checked> <span data-i18n="app.open_folder_on_done">完了後にフォルダを開く</span></label>
+            <label><input type="checkbox"> <span data-i18n="app.close_on_done">解凍後に閉じる</span></label>
           </div>
           <div class="status" id="statusText">ファイルを選択してください</div>
           <div class="btns">
-            <button class="mock-btn" id="compressBtn" onclick="compressDemo()">圧縮する</button>
-            <button class="mock-btn" id="cancelBtn" style="display:none" onclick="cancelExtract()">キャンセル</button>
-            <button class="mock-btn primary" onclick="startExtract()" id="extractBtn3" style="display:none" disabled>解凍する</button>
+            <button class="mock-btn" id="compressBtn" onclick="compressDemo()" data-i18n="app.compress">圧縮する</button>
+            <button class="mock-btn" id="cancelBtn" style="display:none" onclick="cancelExtract()" data-i18n="app.cancel">キャンセル</button>
+            <button class="mock-btn primary" onclick="startExtract()" id="extractBtn3" style="display:none" disabled data-i18n="app.extract">解凍する</button>
           </div>
         </div>
       </div>
     </div>
   </section>
+
+  <!-- 設定ダイアログ（settings_dialog.py の再現・モーダル） -->
+  <div class="dlg-overlay" id="dlgOverlay">
+    <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+      <div class="dlg-title" id="dlgTitle" data-i18n="settings.heading">kaito の設定</div>
+      <div class="dlg-sub" data-i18n="settings.subtitle">使い方に合わせて外観と圧縮速度を調整できます</div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.theme">テーマ:</span>
+          <select class="dlg-select" id="dlgThemeSelect">
+            <option value="system">system</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.language">言語:</span>
+          <select class="dlg-select" id="dlgLangSelect">
+            <option>日本語</option>
+            <option>English</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.dest_mode">展開先:</span>
+          <select class="dlg-select" id="dlgDestSelect"></select>
+        </div>
+        <div class="dlg-row">
+          <span class="dlg-label" data-i18n="settings.fixed_dest">固定先:</span>
+          <input class="dlg-entry" id="dlgFixedEntry" readonly value="">
+          <button class="dlg-btn" onclick="pickFixedDest()" data-i18n="settings.pick">選択...</button>
+        </div>
+        <div class="dlg-hint" data-i18n="settings.dest_hint">アーカイブを開くたびに展開先をどう決めるか</div>
+      </div>
+
+      <div class="dlg-card">
+        <div class="dlg-row comp">
+          <span class="dlg-label" data-i18n="settings.compression">圧縮速度:</span>
+          <select class="dlg-select" id="dlgCompSelect"></select>
+        </div>
+        <div class="dlg-hint" data-i18n="settings.compression_hint">最速を選ぶと圧縮処理が軽くなります</div>
+      </div>
+
+      <div class="dlg-btns">
+        <button class="mock-btn" onclick="closeSettings()" data-i18n="app.cancel">キャンセル</button>
+        <button class="mock-btn primary" onclick="saveSettings()" data-i18n="settings.save">保存</button>
+      </div>
+    </div>
+  </div>
 
   <footer>kaito — このページは <code>kaito/preview/index.html</code> の自己完結型スタティックプレビューです（サーバー不要）。</footer>
 </div>
@@ -459,6 +573,123 @@ uv run kaito --uninstall-context-menu</pre>
   let selected = null;
   let extracting = false;
 
+  // ---- モック設定（アプリの settings.json 相当） ----
+  const mockSettings = {
+    theme: "system",
+    language: "ja",
+    dest_mode: "archive",
+    fixed_dest: "",
+    compression: 1,
+  };
+
+  // [GENERATED_I18N_START]
+// 生成元: src/kaito/i18n.py (STRINGS) — 手編集禁止。再生成: uv run python tools/gen_mock_i18n.py
+const I18N = {
+  "app.archive_label": { ja: "アーカイブ", en: "Archive" },
+  "app.browse": { ja: "参照", en: "Browse..." },
+  "app.cancel": { ja: "キャンセル", en: "Cancel" },
+  "app.close_on_done": { ja: "解凍後に閉じる", en: "Close after extraction" },
+  "app.compress": { ja: "圧縮する", en: "Compress" },
+  "app.contents": { ja: "内容:", en: "Contents:" },
+  "app.dest_label": { ja: "展開先:", en: "Destination:" },
+  "app.drop_hint": { ja: "ZIP / RAR / 7z ファイルをここにドロップ", en: "Drop ZIP / RAR / 7z files here" },
+  "app.drop_sub": { ja: "または「開く」ボタンでファイルを選択できます", en: "or use the Open button to select a file" },
+  "app.extract": { ja: "解凍する", en: "Extract" },
+  "app.open": { ja: "開く", en: "Open" },
+  "app.open_folder_on_done": { ja: "完了後にフォルダを開く", en: "Open folder when done" },
+  "app.recent_files": { ja: "最近のファイル", en: "Recent Files" },
+  "app.search_placeholder": { ja: "絞り込み...", en: "Filter..." },
+  "app.settings": { ja: "⚙ 設定", en: "⚙ Settings" },
+  "app.status_ready": { ja: "ファイルを選択してください", en: "Select a file to get started" },
+  "app.subtitle": { ja: "ZIP / RAR / 7z 解凍", en: "ZIP / RAR / 7z Extraction" },
+  "comp.fast": { ja: "最速（サイズ大）", en: "Fastest (larger size)" },
+  "comp.max": { ja: "高圧縮（時間長）", en: "Maximum (slower)" },
+  "comp.normal": { ja: "標準", en: "Normal" },
+  "ctx.compress": { ja: "kaitoで圧縮", en: "Compress with kaito" },
+  "ctx.extract": { ja: "kaitoで解凍", en: "Extract with kaito" },
+  "ctx.installed": { ja: "コンテキストメニューを登録しました", en: "Context menu registered" },
+  "ctx.removed": { ja: "コンテキストメニューを削除しました", en: "Context menu removed" },
+  "dest.archive": { ja: "アーカイブと同じフォルダー", en: "Same folder as archive" },
+  "dest.fixed": { ja: "固定フォルダー", en: "Fixed folder" },
+  "dest.last": { ja: "最後に使用したフォルダー", en: "Last used folder" },
+  "dialog.choose_dest": { ja: "展開先フォルダを選択", en: "Select destination folder" },
+  "dialog.choose_fixed_dest": { ja: "固定展開先フォルダを選択", en: "Select fixed destination folder" },
+  "dialog.compress_files": { ja: "圧縮するファイルを選択", en: "Select files to compress" },
+  "dialog.open_archive": { ja: "アーカイブファイルを選択", en: "Select archive file" },
+  "dialog.password": { ja: "パスワード", en: "Password" },
+  "dialog.save_archive": { ja: "圧縮ファイルの保存先", en: "Save archive as" },
+  "filetype.all": { ja: "すべてのファイル", en: "All Files" },
+  "filetype.archive": { ja: "アーカイブ", en: "Archives" },
+  "msg.canceled": { ja: "解凍をキャンセルしました ({n}アーカイブ完了)", en: "Extraction canceled ({n} archive(s) done)" },
+  "msg.canceling": { ja: "解凍をキャンセルしています...", en: "Canceling extraction..." },
+  "msg.compress_candidates": { ja: "{n}個のファイルを圧縮できます", en: "{n} file(s) ready to compress" },
+  "msg.compress_done": { ja: "圧縮完了", en: "Compression complete" },
+  "msg.compress_progress": { ja: "圧縮中: {pct} ({cur}/{total}) - {name}", en: "Compressing: {pct} ({cur}/{total}) - {name}" },
+  "msg.entries": { ja: "{n} 個のエントリ ({size})", en: "{n} entries ({size})" },
+  "msg.error_open": { ja: "エラー: ファイルを開けません ({e})", en: "Error: cannot open file ({e})" },
+  "msg.error_prefix": { ja: "エラー: {msg}", en: "Error: {msg}" },
+  "msg.error_summary": { ja: "{n}アーカイブでエラー", en: "Errors in {n} archive(s)" },
+  "msg.extract_done": { ja: "解凍完了 ({n}アーカイブ)", en: "Extraction complete ({n} archive(s))" },
+  "msg.password_prompt": { ja: "{name} はパスワードで保護されています\nパスワードを入力してください:", en: "{name} is password protected\nEnter the password:" },
+  "msg.password_protected": { ja: " (パスワード保護)", en: " (password protected)" },
+  "msg.preview_image_error": { ja: "画像をプレビューできません ({e})", en: "Could not preview image ({e})" },
+  "msg.preview_read_error": { ja: "プレビューを読み込めませんでした ({e})", en: "Could not load preview ({e})" },
+  "msg.preview_unavailable": { ja: "プレビュー不可 ({ext})", en: "Preview unavailable ({ext})" },
+  "msg.queue_status": { ja: "[{q}アーカイブ] {current}", en: "[{q} archive(s)] {current}" },
+  "msg.warn_preview": { ja: "警告: RAR/7zのプレビューを展開できません ({e})", en: "Warning: could not extract RAR/7z preview ({e})" },
+  "settings.compression": { ja: "圧縮速度:", en: "Compression speed:" },
+  "settings.compression_hint": { ja: "最速を選ぶと圧縮処理が軽くなります", en: "Choosing Fastest makes compression lighter" },
+  "settings.dest_hint": { ja: "アーカイブを開くたびに展開先をどう決めるか", en: "How to choose the destination each time you open an archive" },
+  "settings.dest_mode": { ja: "展開先:", en: "Destination:" },
+  "settings.fixed_dest": { ja: "固定先:", en: "Fixed path:" },
+  "settings.heading": { ja: "kaito の設定", en: "kaito Settings" },
+  "settings.language": { ja: "言語:", en: "Language:" },
+  "settings.pick": { ja: "選択...", en: "Choose..." },
+  "settings.save": { ja: "保存", en: "Save" },
+  "settings.subtitle": { ja: "使い方に合わせて外観と圧縮速度を調整できます", en: "Adjust appearance and compression speed to your needs" },
+  "settings.theme": { ja: "テーマ:", en: "Theme:" },
+  "settings.title": { ja: "設定", en: "Settings" },
+  "tree.compressed": { ja: "圧縮後", en: "Compressed" },
+  "tree.date": { ja: "更新日時", en: "Modified" },
+  "tree.name": { ja: "名前", en: "Name" },
+  "tree.size": { ja: "サイズ", en: "Size" },
+};
+// [GENERATED_I18N_END]
+
+  // デモ専用の文言（アプリの i18n 辞書に存在しないモック限定キー）
+  const MOCK_ONLY = {
+    "status.extracting": { ja: "解凍中: {n} 個のエントリ...", en: "Extracting: {n} entries..." },
+    "status.canceled":   { ja: "解凍をキャンセルしました",     en: "Extraction canceled" },
+    "status.saved":      { ja: "設定を保存しました",           en: "Settings saved" },
+    "status.compress":   { ja: "圧縮モード（ファイル選択ダイアログはデモ未対応）", en: "Compress mode (file picker not in demo)" },
+    "search.none":       { ja: "該当なし",                     en: "No match" },
+  };
+  // 選択肢は i18n キー参照（dest.* / comp.* はアプリ辞書から生成）
+  const DEST_MODES = [
+    { code: "archive", key: "dest.archive" },
+    { code: "last",    key: "dest.last" },
+    { code: "fixed",   key: "dest.fixed" },
+  ];
+  const COMP_LEVELS = [
+    { code: 1, key: "comp.fast" },
+    { code: 6, key: "comp.normal" },
+    { code: 9, key: "comp.max" },
+  ];
+  const curLang = () => mockSettings.language;
+  function t(key, vars) {
+    const entry = I18N[key] || MOCK_ONLY[key] || {};
+    let s = entry[curLang()] || entry.ja || key;
+    if (vars) for (const k in vars) s = s.replace("{" + k + "}", vars[k]);
+    return s;
+  }
+
+  // ステータスは「キー + 変数」で管理し、言語切替後に再翻訳できるようにする
+  let statusKey = null, statusVars = null, statusKind = null;
+  function setStatusKey(key, vars, kind) {
+    statusKey = key; statusVars = vars || null; statusKind = kind || null;
+    setStatus(t(key, vars), statusKind);
+  }
+
   function fmtSize(n) {
     if (n < 1024) return n + " B";
     if (n < 1024**2) return (n/1024).toFixed(1) + " KB";
@@ -466,9 +697,37 @@ uv run kaito --uninstall-context-menu</pre>
   }
   function totalSize() { return entries.reduce((s, e) => s + e.size, 0); }
   function setStatus(msg, kind) {
+    // 生メッセージ表示用（statusKey は setStatusKey が管理するためここでは消さない）
     const el = document.getElementById("statusText");
     el.textContent = msg;
     el.className = "status" + (kind ? " " + kind : "");
+  }
+
+  // ---- テーマ / 言語の適用（アプリの on_theme_changed / on_language_changed 相当） ----
+  function applyTheme(mode) {
+    if (mode === "system") {
+      mode = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.dataset.theme = mode;
+  }
+  function applyLang() {
+    document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+    renderSelectOptions("dlgDestSelect", DEST_MODES);
+    renderSelectOptions("dlgCompSelect", COMP_LEVELS);
+    if (statusKey) setStatus(t(statusKey, statusVars), statusKind);
+  }
+  function renderSelectOptions(id, config) {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    sel.innerHTML = "";
+    config.forEach(opt => {
+      const o = document.createElement("option");
+      o.value = String(opt.code);
+      o.textContent = t(opt.key);
+      sel.appendChild(o);
+    });
+    if (config.some(o => String(o.code) === prev)) sel.value = prev;
   }
 
   function setButtons(mode) {
@@ -499,7 +758,7 @@ uv run kaito --uninstall-context-menu</pre>
     document.getElementById("previewPane").style.display = "none";
     setButtons("extract");
     renderTree();
-    setStatus(entries.length + " 個のエントリ (" + fmtSize(totalSize()) + ")");
+    setStatusKey("msg.entries", { n: entries.length, size: fmtSize(totalSize()) });
   }
 
   function renderTree() {
@@ -523,7 +782,7 @@ uv run kaito --uninstall-context-menu</pre>
       row.onclick = () => selectEntry(i);
       rows.appendChild(row);
     });
-    if (n === 0) rows.innerHTML = '<div class="tree-row" style="cursor:default"><span class="muted" style="grid-column:1/-1">該当なし</span></div>';
+    if (n === 0) rows.innerHTML = '<div class="tree-row" style="cursor:default"><span class="muted" style="grid-column:1/-1">' + t("search.none") + '</span></div>';
   }
 
   function selectEntry(i) {
@@ -548,7 +807,7 @@ uv run kaito --uninstall-context-menu</pre>
     wrap.style.display = "block";
     document.getElementById("extractBtn").disabled = true;
     setButtons("extracting");
-    setStatus("解凍中: " + entries.length + " 個のエントリ...", "warn");
+    setStatusKey("status.extracting", { n: entries.length }, "warn");
     let p = 0;
     const timer = setInterval(() => {
       p += 4 + Math.random() * 9;
@@ -557,7 +816,7 @@ uv run kaito --uninstall-context-menu</pre>
         clearInterval(timer);
         bar.style.width = "100%";
         setTimeout(() => {
-          setStatus("解凍完了 (1アーカイブ)", "ok");
+          setStatusKey("msg.extract_done", { n: 1 }, "ok");
           setTimeout(() => {
             wrap.style.display = "none";
             bar.style.width = "0%";
@@ -578,15 +837,42 @@ uv run kaito --uninstall-context-menu</pre>
     document.getElementById("progressBar").style.width = "0%";
     document.getElementById("extractBtn").disabled = false;
     setButtons("extract");
-    setStatus("解凍をキャンセルしました", "warn");
+    setStatusKey("status.canceled", null, "warn");
   }
 
   function compressDemo() {
-    setStatus("圧縮モード（ファイル選択ダイアログはデモ未対応）", "warn");
+    setStatusKey("status.compress", null, "warn");
   }
 
+  // ---- 設定ダイアログ（settings_dialog.py の再現） ----
   function openSettings() {
-    setStatus("設定ダイアログ（テーマ・言語・展開先など）は実アプリのGUIにあります", "warn");
+    document.getElementById("dlgThemeSelect").value = mockSettings.theme;
+    document.getElementById("dlgLangSelect").value = mockSettings.language === "en" ? "English" : "日本語";
+    renderSelectOptions("dlgDestSelect", DEST_MODES);
+    document.getElementById("dlgDestSelect").value = mockSettings.dest_mode;
+    renderSelectOptions("dlgCompSelect", COMP_LEVELS);
+    document.getElementById("dlgCompSelect").value = String(mockSettings.compression);
+    document.getElementById("dlgFixedEntry").value = mockSettings.fixed_dest;
+    document.getElementById("dlgOverlay").classList.add("open");
+  }
+  function closeSettings() {
+    document.getElementById("dlgOverlay").classList.remove("open");
+  }
+  function saveSettings() {
+    mockSettings.theme = document.getElementById("dlgThemeSelect").value;
+    mockSettings.language = document.getElementById("dlgLangSelect").value === "English" ? "en" : "ja";
+    mockSettings.dest_mode = document.getElementById("dlgDestSelect").value;
+    mockSettings.compression = Number(document.getElementById("dlgCompSelect").value);
+    const fd = document.getElementById("dlgFixedEntry").value.trim();
+    if (fd) mockSettings.fixed_dest = fd;
+    applyTheme(mockSettings.theme);
+    applyLang();
+    saveMockSettings();
+    closeSettings();
+    setStatusKey("status.saved", null, "ok");
+  }
+  function pickFixedDest() {
+    document.getElementById("dlgFixedEntry").value = "C:\\Users\\demo\\Downloads\\extract";
   }
 
   function resetApp() {
@@ -602,7 +888,7 @@ uv run kaito --uninstall-context-menu</pre>
     document.getElementById("progressBar").style.width = "0%";
     document.getElementById("previewPane").style.display = "none";
     setButtons("rest");
-    setStatus("ファイルを選択してください");
+    setStatusKey("app.status_ready");
   }
 
   // ドロップゾーンのハイライト（デモ）
@@ -611,11 +897,42 @@ uv run kaito --uninstall-context-menu</pre>
   dz.addEventListener("dragleave", () => dz.classList.remove("hl"));
   dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("hl"); loadSample(); });
 
-  // テーマ
+  // テーマ（トグルはライト/ダークを直接切替、設定ダイアログと同期）
   function toggleTheme() {
-    const html = document.documentElement;
-    html.dataset.dark = html.dataset.dark === "true" ? "false" : "true";
+    mockSettings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(mockSettings.theme);
+    saveMockSettings();
   }
+
+  // 言語トグル（モック全体を ja/en で切替・設定ダイアログの言語セレクタと同期）
+  function toggleLang() {
+    mockSettings.language = mockSettings.language === "ja" ? "en" : "ja";
+    applyLang();
+    updateLangToggle();
+    saveMockSettings();
+  }
+  function updateLangToggle() {
+    const b = document.getElementById("langToggle");
+    if (b) b.textContent = mockSettings.language === "ja" ? "🌐 English" : "🌐 日本語";
+  }
+
+  // モック設定の localStorage 永続化（アプリの settings.json 相当）
+  function saveMockSettings() {
+    try { localStorage.setItem("kaito-mock-settings", JSON.stringify(mockSettings)); } catch (e) {}
+  }
+  function loadMockSettings() {
+    try {
+      const raw = localStorage.getItem("kaito-mock-settings");
+      if (raw) Object.assign(mockSettings, JSON.parse(raw));
+    } catch (e) {}
+  }
+
+  // 初期化（アプリ起動時の settings 適用相当・言語/テーマは localStorage から復元）
+  loadMockSettings();
+  applyTheme(mockSettings.theme);
+  applyLang();
+  updateLangToggle();
+  setStatusKey("app.status_ready");
 </script>
 </body>
 </html>

@@ -35,6 +35,16 @@ from PIL import ImageGrab
 
 from kaito.gui import theme
 
+# CI（windows-latest）のコンソールは cp1252/cp932 のため、日本語出力で UnicodeEncodeError に
+# ならないよう stdout/stderr を UTF-8 に再構成する。ローカル実行にも影響はない。
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except ValueError:
+            pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FAMILY = "Segoe UI"
 REFERENCE_TEXT = "Aq screenshot (1).png"
