@@ -24,6 +24,7 @@ import argparse
 import importlib.util
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,9 +53,10 @@ def _kaito_importable() -> bool:
     return importlib.util.find_spec("kaito") is not None
 
 
-def _run_one(name: str, script: str, extra: list[str]) -> int:
-    """1 検査を subprocess で実行し、出力をそのまま表示して exit code を返す"""
+def _run_one(name: str, script: str, extra: list[str]) -> tuple[int, float]:
+    """1 検査を subprocess で実行し、出力をそのまま表示して (exit code, 所要秒) を返す"""
     cmd = [sys.executable, str(ROOT / script), *extra]
+    started = time.perf_counter()
     try:
         proc = subprocess.run(
             cmd,
@@ -66,12 +68,12 @@ def _run_one(name: str, script: str, extra: list[str]) -> int:
         )
     except OSError as exc:  # pragma: no cover - スクリプト欠落等
         print(f"  error: {cmd[0]} を起動できません: {exc}", file=sys.stderr)
-        return 127
+        return 127, time.perf_counter() - started
     if proc.stdout:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, file=sys.stderr, end="")
-    return proc.returncode
+    return proc.returncode, time.perf_counter() - started
 
 
 def main() -> int:
@@ -118,20 +120,30 @@ def main() -> int:
         return 2
 
     failed: list[str] = []
+    results: list[tuple[str, int, float]] = []  # (検査名, exit code, 所要秒)
     total = len(selected)
     for i, (name, script, extra) in enumerate(selected, 1):
         print(f"\n--- [{i}/{total}] {name}: {script} {' '.join(extra)} ---")
-        code = _run_one(name, script, extra)
+        code, elapsed = _run_one(name, script, extra)
+        results.append((name, code, elapsed))
         if code != 0:
             failed.append(name)
-            print(f"!! {name} が失敗しました (exit {code})")
+            print(f"!! {name} が失敗しました (exit {code}, {elapsed:.1f}s)")
             if not args.keep_going:
                 break
 
+    # 結果サマリー（実行した検査の 結果 / 所要時間）
+    print("\n== 結果サマリー ==")
+    width = max(len(name) for name, _c, _e in results)
+    for name, code, elapsed in results:
+        status = "OK" if code == 0 else f"NG(exit {code})"
+        print(f"  {name:<{width}}  {status:<10} {elapsed:.1f}s")
+    total_sec = sum(elapsed for _n, _c, elapsed in results)
+
     if failed:
-        print(f"\nNG: 失敗した検査: {', '.join(failed)}")
+        print(f"\nNG: 失敗した検査: {', '.join(failed)}（合計 {total_sec:.1f}s）")
         return 1
-    print(f"\nOK: 全 {total} 検査が成功しました")
+    print(f"\nOK: 全 {total} 検査が成功しました（合計 {total_sec:.1f}s）")
     return 0
 
 
