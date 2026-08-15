@@ -63,10 +63,15 @@ FONT_FAMILY = "Yu Gothic UI"
 # ラテン文字・数字が引き締まって見える（Yu Gothic UI は dense な一覧では太く見える）。
 TREE_FONT_FAMILY = "Segoe UI"
 TREE_FONT_SIZE = 12
+# 入力・データ表示（検索ボックス・パス/宛先エントリ・ステータスバー・プレビュー）も
+# ツリーと同じ Segoe UI に統一する。ファイル名・パス・内容などラテン文字が多いテキストが
+# 多く、日本語 UI ラベル（ボタン等）と区別して引き締めて見せるため。
+UI_FONT_FAMILY = "Segoe UI"
+UI_FONT_SIZE = 12
 
 
 def font(size: int = 13, weight: Literal["normal", "bold"] = "normal") -> ctk.CTkFont:
-    """アプリ標準フォントを作成する"""
+    """アプリ標準フォント（日本語 UI ラベル・ボタン等）を作成する"""
     return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
 
 
@@ -76,6 +81,14 @@ def tree_font(
 ) -> ctk.CTkFont:
     """ファイル一覧（ツリー）用フォントを作成する"""
     return ctk.CTkFont(family=TREE_FONT_FAMILY, size=size, weight=weight)
+
+
+def ui_font(
+    size: int = UI_FONT_SIZE,
+    weight: Literal["normal", "bold"] = "normal",
+) -> ctk.CTkFont:
+    """入力・データ表示用フォント（ツリーと同じ Segoe UI）を作成する"""
+    return ctk.CTkFont(family=UI_FONT_FAMILY, size=size, weight=weight)
 
 
 def pick(pair: tuple[str, str], is_dark: bool) -> str:

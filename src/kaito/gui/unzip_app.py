@@ -212,6 +212,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             fg_color=theme.pick(theme.BG, is_dark),
             border_color=theme.pick(theme.BORDER, is_dark),
             text_color=theme.pick(theme.TEXT, is_dark),
+            font=theme.ui_font(12),
         )
         self._path_entry.grid(row=0, column=1, padx=4, pady=14, sticky="ew")
         self._browse_btn = theme.primary_button(
@@ -299,7 +300,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._contents_label = ctk.CTkLabel(
             self._list_frame,
             text=tr("app.contents"),
-            font=theme.font(13, "bold"),
+            font=theme.ui_font(13, "bold"),
             text_color=theme.pick(theme.TEXT, is_dark),
         )
         self._contents_label.grid(
@@ -317,6 +318,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             border_color=theme.pick(theme.BORDER, is_dark),
             placeholder_text_color=theme.pick(theme.SUBTEXT, is_dark),
             text_color=theme.pick(theme.TEXT, is_dark),
+            font=theme.ui_font(12),
         )
         self._search_entry.grid(
             row=0, column=1, padx=(2, 16), pady=(10, 2), sticky="ew"
@@ -369,7 +371,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             text="",
             anchor="w",
             justify="left",
-            font=theme.font(12),
+            font=theme.ui_font(12),
             text_color=theme.pick(theme.TEXT, is_dark),
         )
         self._preview_label.pack(fill="both", expand=True, padx=10, pady=6)
@@ -396,6 +398,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             fg_color=theme.pick(theme.BG, is_dark),
             border_color=theme.pick(theme.BORDER, is_dark),
             text_color=theme.pick(theme.TEXT, is_dark),
+            font=theme.ui_font(12),
         )
         self._dest_entry.grid(row=0, column=1, padx=4, pady=12, sticky="ew")
         self._dest_btn = theme.secondary_button(
@@ -465,7 +468,7 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             bottom_frame,
             textvariable=self._status_var,
             anchor="w",
-            font=theme.font(12),
+            font=theme.ui_font(12),
             text_color=theme.pick(theme.SUBTEXT, is_dark),
         )
         self._status_label.grid(
