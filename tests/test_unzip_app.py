@@ -1452,6 +1452,27 @@ class TestCompressMethods:
         assert not app._compressing
         app._status_var.set.assert_called_with("エラー: disk full")
 
+    def test_start_compress_flow_no_dialog_keeps_flag(self, app: MagicMock) -> None:
+        """CLI圧縮（no-dialog）はフラグを消費せず、完了時の自動クローズ判定に残す"""
+        app._compress_sources = [Path("a.txt")]
+        app._compress_no_dialog = True
+        with patch.object(app, "_start_compress") as mock_start:
+            app._start_compress_flow()
+            mock_start.assert_called_once()
+        # 旧実装は開始時に False にリセットし、自動クローズが発火しなかった
+        assert app._compress_no_dialog
+
+    def test_on_compress_done_no_dialog_schedules_destroy(self, app: MagicMock) -> None:
+        """CLI圧縮完了時は after(500, destroy) で自動クローズする（exeがハングしない）"""
+        app._compress_no_dialog = True
+        with patch.object(app, "_set_ui_enabled") as mock_set:
+            app._on_compress_done()
+        mock_set.assert_not_called()
+        calls = app.after.call_args_list
+        assert any(call.args[0] == 500 and callable(call.args[1]) for call in calls), (
+            f"after(500, destroy) が呼ばれていません: {calls}"
+        )
+
     def test_drop_starts_compress(self, app: MagicMock, tmp_path: Path) -> None:
         """非アーカイブのファイルをドロップ → 圧縮フロー開始"""
         f = tmp_path / "readme.txt"

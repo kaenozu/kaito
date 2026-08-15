@@ -1105,7 +1105,8 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         if self._compress_no_dialog:
-            self._compress_no_dialog = False
+            # フラグはここで消費せず、_on_compress_done / _on_compress_error が
+            # 自動クローズ（destroy）の判定に使うまで保持する
             first = self._compress_sources[0]
             output = first.parent / (first.stem + ".zip")
             self._start_compress(output)
