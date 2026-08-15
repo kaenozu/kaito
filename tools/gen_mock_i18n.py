@@ -21,6 +21,16 @@ from pathlib import Path
 
 from kaito.i18n import STRINGS
 
+# CI（windows-latest）のコンソールは cp1252/cp932 のため、日本語出力で UnicodeEncodeError に
+# ならないよう stdout/stderr を UTF-8 に再構成する。ローカル実行にも影響はない。
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except ValueError:
+            pass
+
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = ROOT / "preview" / "index.html"
 
@@ -50,7 +60,8 @@ def _render() -> str:
 
 def main() -> int:
     html = INDEX.read_text(encoding="utf-8")
-    if not _PATTERN.search(html):
+    match = _PATTERN.search(html)
+    if match is None:
         print(
             f"error: マーカー {START!r} / {END!r} が {INDEX} に見つかりません",
             file=sys.stderr,
@@ -59,7 +70,7 @@ def main() -> int:
 
     generated = _render()
     if "--check" in sys.argv:
-        current = _PATTERN.search(html).group(0)
+        current = match.group(0)
         if current == generated:
             print(f"OK: {len(STRINGS['ja'])} keys - index.html の I18N は最新です")
             return 0

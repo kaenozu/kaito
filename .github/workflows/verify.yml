@@ -1,7 +1,8 @@
 name: Verify
 
 # ローカル作業（feature/ui-i18n-worker 等）を origin/master へ統合するための
-# 軽量検証ゲート。テスト・pyright・ruff・フォント実測監査・モックテーマ突合のみ実行し、
+# 軽量検証ゲート。テスト・pyright・ruff・モック検証（tools/check_all.py で
+# モック i18n 辞書・テーマ突合・実描画突合・フォント実測監査を一括実行）のみを扱い、
 # アーキテクチャに依存しない（patool ベースの旧ブランチでも 7z.dll ベースの
 # master でも動作する）。
 # master 統合後は origin/master の ci.yml（ビルド・インストーラ・GUI acceptance
@@ -77,28 +78,19 @@ jobs:
           $output | Tee-Object -FilePath artifacts/pytest-output.txt
           exit $code
 
-      # 全 CTk ウィジェットのフォント実測値を Tk に問い合わせて検証する（tools/font_audit.py）。
-      # テーマ不変性（フォントはテーマ非依存）と family が Segoe UI であることを固定し、
-      # フォントの意図しない変更（CTkFont→ttk の GC フォールバック等）を回帰検知する。
-      # 実 Tk ルートが必要なため windows-latest でのみ実行（テストステップも同条件で Tk を使用）。
-      - name: Font audit
+      # tools/ の検査スクリプト一式を実行する（tools/check_all.py）。
+      # Makefile の make check と同一コマンド（uv run --frozen python tools/check_all.py）。
+      # 内容: モック i18n 辞書の整合（gen_mock_i18n --check）/ モック CSS と theme.py
+      # トークンの突合（check_mock_theme）/ 実アプリ描画との突合（check_mock_render）/
+      # フォント実測監査（font_audit）。check_mock_render と font_audit は実 Tk ルートと
+      # 画面キャプチャを使うため windows-latest でのみ実行。キャプチャ不可環境では
+      # 実描画/インク計測が N/A に自動降格し、判定は決定的な項目に基づく。
+      - name: Mock verification (tools/check_all.py)
         shell: pwsh
         run: |
-          $output = & uv run --frozen python tools/font_audit.py --no-html 2>&1
+          $output = & uv run --frozen python tools/check_all.py 2>&1
           $code = $LASTEXITCODE
-          $output | Tee-Object -FilePath artifacts/font-audit.txt
-          exit $code
-
-      # モックの CSS 変数が theme.py のビジュアルトークンと一致しているか検証する
-      # （tools/check_mock_theme.py）。index.html を手で書き換えた際にライト/ダークの色が
-      # 乖離したり、theme.py に未対応トークンが追加されたりすると exit 1 で落とす。
-      # ファイル解析のみで GUI 不要のため、どの runner でも決定的に動作する。
-      - name: Mock theme check
-        shell: pwsh
-        run: |
-          $output = & uv run --frozen python tools/check_mock_theme.py 2>&1
-          $code = $LASTEXITCODE
-          $output | Tee-Object -FilePath artifacts/mock-theme-check.txt
+          $output | Tee-Object -FilePath artifacts/check-all.txt
           exit $code
 
       - name: Upload verification artifacts
