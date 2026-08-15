@@ -56,6 +56,8 @@ _TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json"
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
 _MAX_PREVIEW_CHARS = 2000
 _MAX_IMAGE_DIMENSION = (400, 250)
+# プレビューで1エントリを読み込む最大バイト数（超過時は読み込まず空を返す）
+_MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 
 
 class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -1034,11 +1036,17 @@ def _decode_text(data: bytes, max_chars: int = _MAX_PREVIEW_CHARS) -> str:
     return data.decode("utf-8", errors="replace")[:max_chars]
 
 
-def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | None = None) -> bytes:
+def _read_archive_entry(
+    archive_path: Path | str,
+    name: str,
+    cache_dir: str | None = None,
+    max_bytes: int = _MAX_PREVIEW_BYTES,
+) -> bytes:
     """アーカイブ内の1エントリを読み込む。
 
     ZIPはzipfileで直接読み込み。
     RAR/7zはcache_dir（事前展開済みディレクトリ）があればそこから読み込み、なければ一時展開。
+    巨大なエントリ（max_bytes超）は読み込まず空を返し、メモリ消費を抑える。
     """
     p = Path(archive_path)
     ext = p.suffix.lower()
@@ -1047,6 +1055,8 @@ def _read_archive_entry(archive_path: Path | str, name: str, cache_dir: str | No
         from kaito.unzip import try_zip_with_encodings
 
         def _read_entry(zf: zipfile.ZipFile) -> bytes:
+            if zf.getinfo(name).file_size > max_bytes:
+                return b""
             return zf.read(name)
 
         return try_zip_with_encodings(p, _read_entry)

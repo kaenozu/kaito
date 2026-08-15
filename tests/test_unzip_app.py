@@ -13,7 +13,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from kaito.gui import theme
-from kaito.gui.unzip_app import _format_size, _read_archive_entry, _truncate_path, main as app_main
+from kaito.gui.unzip_app import (
+    _decode_text,
+    _format_size,
+    _read_archive_entry,
+    _truncate_path,
+    main as app_main,
+)
 from kaito.worker import ExtractResult, ExtractWorker, resolve_extract_dest
 
 
@@ -1551,3 +1557,68 @@ class TestTruncatePath:
             assert len(result) <= max_len
             if max_len >= len(name) + 3:
                 assert name in result
+
+
+# ---- プレビューのデコード・サイズ上限（統合ゲート: preview 上限） ----
+
+class TestDecodeText:
+    """_decode_text の文字数上限とエンコーディングフォールバック"""
+
+    def test_truncates_to_max_chars(self) -> None:
+        """2000文字を超えるテキストは切り詰められる"""
+        data = ("あ" * 3000).encode("utf-8")
+        result = _decode_text(data)
+        assert len(result) <= 2000
+
+    def test_utf8_decoded_first(self) -> None:
+        assert _decode_text("こんにちは".encode("utf-8")) == "こんにちは"
+
+    def test_cp932_fallback(self) -> None:
+        """UTF-8でないバイト列はシステムエンコーディングで再試行"""
+        data = "日本語テキスト".encode("cp932")
+        with patch("kaito.gui.unzip_app.locale.getencoding", return_value="cp932"):
+            assert _decode_text(data) == "日本語テキスト"
+
+    def test_invalid_bytes_replaced(self) -> None:
+        """どのエンコーディングでも失敗するバイト列は置換文字で返す"""
+        data = b"\xff\xfe\x00\x01binary"
+        with patch("kaito.gui.unzip_app.locale.getencoding", return_value="utf-8"):
+            result = _decode_text(data)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_custom_max_chars(self) -> None:
+        assert _decode_text(b"abcdef", max_chars=3) == "abc"
+
+
+class TestPreviewSizeLimit:
+    """_read_archive_entry のプレビューサイズ上限（統合ゲート: preview サイズ上限）"""
+
+    def test_entry_within_limit_is_read(self, tmp_path: Path) -> None:
+        z = tmp_path / "small.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a.txt", "hello")
+        assert _read_archive_entry(z, "a.txt", max_bytes=1024) == b"hello"
+
+    def test_entry_over_limit_returns_empty(self, tmp_path: Path) -> None:
+        """上限超過エントリは読み込まず空を返す（メモリ保護）"""
+        z = tmp_path / "big.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("big.txt", b"x" * 5000)
+        assert _read_archive_entry(z, "big.txt", max_bytes=100) == b""
+
+    def test_missing_entry_raises_keyerror(self, tmp_path: Path) -> None:
+        z = tmp_path / "small.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a.txt", "hello")
+        with pytest.raises(KeyError):
+            _read_archive_entry(z, "missing.txt")
+
+    def test_zip_preview_no_subprocess(self, tmp_path: Path) -> None:
+        """ZIPのプレビュー読み取りも subprocess を起動しない"""
+        z = tmp_path / "small.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a.txt", "hello")
+        with patch("subprocess.Popen") as mock_popen:
+            assert _read_archive_entry(z, "a.txt") == b"hello"
+        mock_popen.assert_not_called()

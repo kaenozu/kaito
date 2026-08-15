@@ -4,8 +4,10 @@ unzip.py のテスト
 """
 
 from datetime import datetime
+import os
 from pathlib import Path
 from unittest.mock import patch
+import zipfile
 
 import pytest
 
@@ -526,3 +528,310 @@ class TestExtractArchive:
         f.touch()
         with pytest.raises(ValueError, match="未対応"):
             extract_archive(f, tmp_path / "out")
+
+
+class TestZipCryptoPasswordClassification:
+    """実ZipCrypto（従来のPKWARE暗号化）ZIPのパスワード分類
+
+    統合ゲートの「AES ZIP（正しい/誤った/未指定パスワード）」のうち、
+    現行の標準zipfileが実際に復号できる ZipCrypto 経路を固定する。
+    依存ライブラリなしで本物の暗号化ZIPを作るため、zipfile の復号器
+    （_ZipDecrypter）と対になる暗号化器をテスト内に実装する。
+    正しいパスワードでラウンドトリップできることを各テスト自体が検証する。
+    """
+
+    @staticmethod
+    def _crc_table() -> list[int]:
+        """zipfile の _gen_crc と同じ反射型CRC-32テーブル"""
+        table: list[int] = []
+        for n in range(256):
+            c = n
+            for _ in range(8):
+                c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+            table.append(c)
+        return table
+
+    @classmethod
+    def _update_keys(cls, keys: list[int], ch: int, table: list[int]) -> None:
+        """ZipCrypto の鍵更新（zipfile._ZipDecrypter と同一）"""
+        keys[0] = ((keys[0] >> 8) ^ table[(keys[0] ^ ch) & 0xFF]) & 0xFFFFFFFF
+        keys[1] = (keys[1] + (keys[0] & 0xFF)) & 0xFFFFFFFF
+        keys[1] = (keys[1] * 134775813 + 1) & 0xFFFFFFFF
+        keys[2] = (
+            (keys[2] >> 8) ^ table[(keys[2] ^ (keys[1] >> 24)) & 0xFF]
+        ) & 0xFFFFFFFF
+
+    @classmethod
+    def _encrypt(cls, data: bytes, password: bytes) -> bytes:
+        """ZipCrypto の暗号化（復号器の逆操作）"""
+        table = cls._crc_table()
+        keys = [0x12345678, 0x23456789, 0x34567890]
+        for ch in password:
+            cls._update_keys(keys, ch, table)
+        out = bytearray()
+        for b in data:
+            t = (keys[2] | 2) & 0xFFFF
+            out.append((b ^ (((t * (t ^ 1)) >> 8) & 0xFF)) & 0xFF)
+            cls._update_keys(keys, b, table)
+        return bytes(out)
+
+    @classmethod
+    def _make_zip(cls, path: Path, name: str, data: bytes, password: str) -> None:
+        """単一エントリの本物のZipCrypto暗号化ZIPを作る（STORED）
+
+        zipfile で書き込み → データ部を暗号化し、フラグ・サイズ・
+        チェックバイト（CRC上位バイト）をパッチする。
+        """
+        import struct
+        import zlib
+
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr(name, data)
+        raw = bytearray(path.read_bytes())
+        crc = zlib.crc32(data)
+        check = (crc >> 24) & 0xFF
+        # 12バイトの暗号化ヘッダ（末尾1バイトはチェックバイト）
+        header = bytes([0]) * 11 + bytes([check])
+        enc = cls._encrypt(header + data, password.encode("utf-8"))
+        local_data_off = 30 + len(name.encode("utf-8"))
+        new = bytearray(raw[:local_data_off]) + enc + raw[local_data_off + len(data):]
+        delta = len(enc) - len(data)
+        for i in range(len(new) - 4):
+            sig = bytes(new[i:i + 4])
+            if sig == b"PK\x03\x04":
+                new[i + 6] |= 0x01  # local flags: bit0 (暗号化)
+                new[i + 18:i + 22] = struct.pack("<I", len(enc))
+            elif sig == b"PK\x01\x02":
+                new[i + 8] |= 0x01  # central flags: bit0
+                new[i + 20:i + 24] = struct.pack("<I", len(enc))
+        eocd = new.rfind(b"PK\x05\x06")
+        off = struct.unpack("<I", bytes(new[eocd + 16:eocd + 20]))[0]
+        new[eocd + 16:eocd + 20] = struct.pack("<I", off + delta)
+        path.write_bytes(new)
+
+    def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
+        z = tmp_dir / "secret.zip"
+        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        entries, encrypted = list_entries(z)
+        assert encrypted
+        assert [e.name for e in entries] == ["secret.txt"]
+
+    def test_extract_with_correct_password(self, tmp_dir: Path) -> None:
+        z = tmp_dir / "secret.zip"
+        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        dest = tmp_dir / "out"
+        extract_all(z, dest, password="pw123")
+        assert (dest / "secret.txt").read_text() == "top secret data"
+
+    def test_extract_with_wrong_password_raises(self, tmp_dir: Path) -> None:
+        """誤パスワードは Bad password に分類される（GUIで再入力を促せる）"""
+        z = tmp_dir / "secret.zip"
+        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="Bad password"):
+            extract_all(z, dest, password="wrong")
+        assert not (dest / "secret.txt").exists()
+
+    def test_extract_without_password_raises(self, tmp_dir: Path) -> None:
+        """未指定パスワードは password required に分類される"""
+        z = tmp_dir / "secret.zip"
+        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="password required"):
+            extract_all(z, dest)
+        assert not (dest / "secret.txt").exists()
+
+    def test_unicode_password_roundtrip(self, tmp_dir: Path) -> None:
+        """非ASCIIパスワード（UTF-8エンコード）でもラウンドトリップ"""
+        z = tmp_dir / "uni.zip"
+        self._make_zip(z, "f.txt", b"unicode pw", "パスワード")
+        dest = tmp_dir / "out"
+        extract_all(z, dest, password="パスワード")
+        assert (dest / "f.txt").read_text() == "unicode pw"
+
+
+class TestAesZipBehavior:
+    """AES暗号化ZIP（flag bit6 / method 99）の振る舞い
+
+    現行アーキテクチャ（標準zipfile）はAESを復号できないため、
+    「検出はできるが展開は明確なエラー」になることを固定する。
+    DLLベースの読み取り置換後は、このテストの期待値が
+    「正しいパスワードで展開できる」に変わるべき項目。
+    """
+
+    @staticmethod
+    def _make_zip(
+        path: Path, name: str = "secret.txt", data: bytes = b"payload",
+    ) -> None:
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr(name, data)
+        raw = bytearray(path.read_bytes())
+        for i in range(len(raw) - 4):
+            sig = bytes(raw[i:i + 4])
+            if sig == b"PK\x03\x04":
+                raw[i + 6] |= 0x40  # local flags: bit6 (強力暗号化)
+                raw[i + 8] = 99     # local method: 99 (AES)
+            elif sig == b"PK\x01\x02":
+                raw[i + 8] |= 0x40  # central flags: bit6
+                raw[i + 10] = 99    # central method: 99
+        path.write_bytes(raw)
+
+    def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
+        z = tmp_dir / "aes.zip"
+        self._make_zip(z)
+        entries, encrypted = list_entries(z)
+        assert encrypted
+        assert [e.name for e in entries] == ["secret.txt"]
+
+    def test_extract_raises_clear_error(self, tmp_dir: Path) -> None:
+        """パスワードの有無にかかわらず明確な NotImplementedError"""
+        z = tmp_dir / "aes.zip"
+        self._make_zip(z)
+        dest = tmp_dir / "out"
+        with pytest.raises(NotImplementedError, match="strong encryption"):
+            extract_all(z, dest)
+        with pytest.raises(NotImplementedError, match="strong encryption"):
+            extract_all(z, dest, password="any")
+        assert not (dest / "secret.txt").exists()
+
+
+class TestRar7zPatoolContract:
+    """RAR/7z の patool 経由の契約（統合ゲート: 7z/RAR 読み取り）
+
+    テスト環境に 7z/rar バイナリが無いため mock で契約を検証する。
+    DLLベースの読み取り置換後も、この契約（暗号化検出・エラー分類・
+    password の受け渡し）は維持されるべき。
+    """
+
+    def test_list_7z_normal(self, tmp_path: Path) -> None:
+        a = tmp_path / "test.7z"
+        a.touch()
+        with patch(
+            "kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"],
+        ):
+            entries, encrypted = list_archive(a)
+        assert not encrypted
+        assert [e.name for e in entries] == ["file.txt", "dir/"]
+        assert entries[1].is_dir
+
+    def test_list_7z_encrypted_detected(self, tmp_path: Path) -> None:
+        a = tmp_path / "secret.7z"
+        a.touch()
+        with patch(
+            "kaito.unzip.patoolib.list_archive",
+            side_effect=RuntimeError("password required"),
+        ):
+            entries, encrypted = list_archive(a)
+        assert entries == []
+        assert encrypted
+
+    def test_list_7z_generic_error_propagates(self, tmp_path: Path) -> None:
+        """パスワード/暗号化以外のエラーは暗号化扱いにしない"""
+        a = tmp_path / "broken.7z"
+        a.touch()
+        with patch(
+            "kaito.unzip.patoolib.list_archive",
+            side_effect=RuntimeError("no such program"),
+        ):
+            with pytest.raises(RuntimeError, match="一覧取得に失敗"):
+                list_archive(a)
+
+    def test_extract_7z_normal(self, tmp_path: Path) -> None:
+        a = tmp_path / "test.7z"
+        a.touch()
+        dest = tmp_path / "out"
+        with patch("kaito.unzip.patoolib.extract_archive") as mock_extract:
+            extract_archive(a, dest, password="pw")
+        assert mock_extract.call_args.args[0] == str(a)
+        assert mock_extract.call_args.kwargs["outdir"] == str(dest)
+        assert mock_extract.call_args.kwargs["password"] == "pw"
+
+    def test_extract_7z_header_encrypted_wrong_password(self, tmp_path: Path) -> None:
+        """ヘッダー暗号化7zの誤パスワードは展開エラーに分類される"""
+        a = tmp_path / "secret.7z"
+        a.touch()
+        with patch(
+            "kaito.unzip.patoolib.extract_archive",
+            side_effect=RuntimeError("password required"),
+        ):
+            with pytest.raises(RuntimeError, match="展開に失敗"):
+                extract_archive(a, tmp_path / "out", password="wrong")
+
+    def test_extract_rar_normal(self, tmp_path: Path) -> None:
+        a = tmp_path / "test.rar"
+        a.touch()
+        dest = tmp_path / "out"
+        with patch("kaito.unzip.patoolib.extract_archive") as mock_extract:
+            extract_archive(a, dest, password=None)
+        assert mock_extract.call_args.args[0] == str(a)
+        assert mock_extract.call_args.kwargs["outdir"] == str(dest)
+        assert mock_extract.call_args.kwargs["password"] is None
+
+
+class TestZipReadNoSubprocess:
+    """ZIP読み取り経路は subprocess を起動しない
+
+    統合ゲートの「read operations の subprocess 0 回」のうち、
+    現行で保証できる ZIP 経路を固定する。RAR/7z は現行の patool 経由で
+    subprocess を使うため、DLL 置換後に別途検証する。
+    """
+
+    def test_list_entries_no_subprocess(self, normal_zip: Path) -> None:
+        with patch("subprocess.Popen") as mock_popen:
+            list_entries(normal_zip)
+        mock_popen.assert_not_called()
+
+    def test_extract_no_subprocess(self, normal_zip: Path, tmp_dir: Path) -> None:
+        with patch("subprocess.Popen") as mock_popen:
+            extract_all(normal_zip, tmp_dir / "out")
+        mock_popen.assert_not_called()
+        assert (tmp_dir / "out" / "hello.txt").read_text() == "Hello World"
+
+    def test_list_archive_zip_no_subprocess(self, normal_zip: Path) -> None:
+        with patch("subprocess.Popen") as mock_popen:
+            list_archive(normal_zip)
+        mock_popen.assert_not_called()
+
+
+class TestSymlinkAndPathSafety:
+    """symlink エントリと絶対パスエントリの安全契約
+
+    統合ゲートの「symlink/path traversal」防御のうち、
+    現行の標準zipfileで保証される契約を固定する。
+    """
+
+    def test_symlink_entry_extracted_as_regular_file(self, tmp_dir: Path) -> None:
+        """symlink エントリはシンボリックリンクではなく通常ファイルとして展開"""
+        z = tmp_dir / "symlink.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zi = zipfile.ZipInfo("link")
+            zi.external_attr = (0o120777) << 16  # S_IFLNK | 0777
+            zf.writestr(zi, "../outside.txt")
+            zf.writestr("real.txt", "REAL")
+        dest = tmp_dir / "out"
+        extract_all(z, dest)
+        assert not (dest / "link").is_symlink()
+        assert (dest / "link").read_text() == "../outside.txt"
+        # 展開先の外にファイルが作られていない
+        assert not (tmp_dir / "outside.txt").exists()
+        assert not (tmp_dir.parent / "outside.txt").exists()
+        assert (dest / "real.txt").read_text() == "REAL"
+
+    def test_absolute_path_entry_rejected(self, tmp_dir: Path) -> None:
+        """絶対パス（ルート付き）のエントリは拒否される"""
+        z = tmp_dir / "abs.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("/abs/evil.txt", "x")
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="安全でないパス"):
+            extract_all(z, dest)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows特有のバックスラッシュ型トラバーサル")
+    def test_backslash_traversal_rejected_on_windows(self, tmp_dir: Path) -> None:
+        """バックスラッシュ区切りのパストラバーサルも拒否される"""
+        z = tmp_dir / "bs.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("..\\..\\evil.txt", "x")
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="安全でないパス"):
+            extract_all(z, dest)
