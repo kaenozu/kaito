@@ -15,9 +15,10 @@
     --accent: #3b82f6;
     --accent-hover: #2f6ee0;
     --accent-soft: #eaf1ff;
-    --ok: #1e8e3e;
+    --ok: #15803d;
     --warn: #b45309;
     --err: #c0392b;
+    --tree-head-bg: #f4f6fa;
     --mono: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
     --sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
     --tree-sans: "Segoe UI", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
@@ -30,6 +31,10 @@
     --muted: #9aa4b4;
     --border: #2d3341;
     --accent-soft: #1c2b4a;
+    --ok: #7ed6a0;
+    --warn: #f5c76a;
+    --err: #f1948a;
+    --tree-head-bg: #212530;
   }
   * { box-sizing: border-box; }
   body {
@@ -147,6 +152,14 @@
     padding: 8px 14px; font-size: 12px; color: var(--muted);
     display: flex; justify-content: space-between;
   }
+  .mock-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px 0;
+  }
+  .mock-head-text { display: flex; flex-direction: column; line-height: 1.25; }
+  .mock-title { font-size: 22px; font-weight: 700; color: var(--text); }
+  .mock-sub { font-size: 12px; color: var(--muted); }
+  .mock-header .spacer { flex: 1; }
   .mock-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
   .mock-row { display: flex; align-items: center; gap: 8px; }
@@ -202,7 +215,7 @@
     gap: 6px; padding: 6px 10px; align-items: center;
   }
   .tree-head {
-    background: var(--panel-2); color: var(--muted); font-weight: 700; font-size: 11.5px;
+    background: var(--tree-head-bg); color: var(--muted); font-weight: 700; font-size: 11.5px;
     font-family: var(--tree-sans);
     border-bottom: 1px solid var(--border);
   }
@@ -360,7 +373,16 @@ uv run kaito --uninstall-context-menu</pre>
       </div>
 
       <div class="mock">
-        <div class="mock-titlebar"><span class="mock-title"><i class="logo-chip mini">k</i> kaito v0.9.3</span><span id="mockState">ZIP / RAR / 7z 解凍</span></div>
+        <div class="mock-titlebar"><span>kaito v0.9.3</span></div>
+        <div class="mock-header">
+          <span class="logo-chip">k</span>
+          <div class="mock-head-text">
+            <div class="mock-title">kaito</div>
+            <div class="mock-sub">ZIP / RAR / 7z 解凍</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="mock-btn" onclick="openSettings()">⚙ 設定</button>
+        </div>
         <div class="mock-body">
 
           <div class="mock-card">
@@ -411,9 +433,9 @@ uv run kaito --uninstall-context-menu</pre>
           </div>
           <div class="status" id="statusText">ファイルを選択してください</div>
           <div class="btns">
-            <button class="mock-btn" onclick="startExtract()" id="extractBtn2" disabled>圧縮する</button>
-            <button class="mock-btn">キャンセル</button>
-            <button class="mock-btn primary" onclick="startExtract()" id="extractBtn3" disabled>解凍する</button>
+            <button class="mock-btn" id="compressBtn" onclick="compressDemo()">圧縮する</button>
+            <button class="mock-btn" id="cancelBtn" style="display:none" onclick="cancelExtract()">キャンセル</button>
+            <button class="mock-btn primary" onclick="startExtract()" id="extractBtn3" style="display:none" disabled>解凍する</button>
           </div>
         </div>
       </div>
@@ -449,6 +471,18 @@ uv run kaito --uninstall-context-menu</pre>
     el.className = "status" + (kind ? " " + kind : "");
   }
 
+  function setButtons(mode) {
+    // mode: "rest" | "extract" | "extracting" — アプリの状態遷移に合わせる
+    const comp = document.getElementById("compressBtn");
+    const ext = document.getElementById("extractBtn3");
+    const cancel = document.getElementById("cancelBtn");
+    comp.style.display = mode === "extract" || mode === "extracting" ? "none" : "";
+    comp.disabled = mode === "extracting";
+    ext.style.display = mode === "rest" ? "none" : "";
+    ext.disabled = mode === "extracting" || !entries.length;
+    cancel.style.display = mode === "extracting" ? "" : "none";
+  }
+
   function loadSample() {
     entries = SAMPLE.map(e => ({ ...e }));
     selected = null;
@@ -460,10 +494,10 @@ uv run kaito --uninstall-context-menu</pre>
     list.style.display = "flex";
     document.getElementById("searchBox").value = "";
     document.getElementById("extractBtn").disabled = false;
-    document.getElementById("extractBtn3").disabled = false;
     document.getElementById("progressWrap").style.display = "none";
     document.getElementById("progressBar").style.width = "0%";
     document.getElementById("previewPane").style.display = "none";
+    setButtons("extract");
     renderTree();
     setStatus(entries.length + " 個のエントリ (" + fmtSize(totalSize()) + ")");
   }
@@ -513,8 +547,7 @@ uv run kaito --uninstall-context-menu</pre>
     const bar = document.getElementById("progressBar");
     wrap.style.display = "block";
     document.getElementById("extractBtn").disabled = true;
-    document.getElementById("extractBtn2").disabled = true;
-    document.getElementById("extractBtn3").disabled = true;
+    setButtons("extracting");
     setStatus("解凍中: " + entries.length + " 個のエントリ...", "warn");
     let p = 0;
     const timer = setInterval(() => {
@@ -530,13 +563,30 @@ uv run kaito --uninstall-context-menu</pre>
             bar.style.width = "0%";
             extracting = false;
             document.getElementById("extractBtn").disabled = false;
-            document.getElementById("extractBtn3").disabled = false;
+            setButtons("extract");
           }, 900);
         }, 200);
       } else {
         bar.style.width = p + "%";
       }
     }, 120);
+  }
+
+  function cancelExtract() {
+    extracting = false;
+    document.getElementById("progressWrap").style.display = "none";
+    document.getElementById("progressBar").style.width = "0%";
+    document.getElementById("extractBtn").disabled = false;
+    setButtons("extract");
+    setStatus("解凍をキャンセルしました", "warn");
+  }
+
+  function compressDemo() {
+    setStatus("圧縮モード（ファイル選択ダイアログはデモ未対応）", "warn");
+  }
+
+  function openSettings() {
+    setStatus("設定ダイアログ（テーマ・言語・展開先など）は実アプリのGUIにあります", "warn");
   }
 
   function resetApp() {
@@ -548,10 +598,10 @@ uv run kaito --uninstall-context-menu</pre>
     document.getElementById("dropzone").style.display = "";
     document.getElementById("mockList").style.display = "none";
     document.getElementById("extractBtn").disabled = true;
-    document.getElementById("extractBtn3").disabled = true;
     document.getElementById("progressWrap").style.display = "none";
     document.getElementById("progressBar").style.width = "0%";
     document.getElementById("previewPane").style.display = "none";
+    setButtons("rest");
     setStatus("ファイルを選択してください");
   }
 
