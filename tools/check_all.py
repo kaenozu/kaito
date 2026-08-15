@@ -16,15 +16,18 @@ exit code: 全成功で 0、いずれか失敗で 1、使い方エラーで 2。
     uv run python tools/check_all.py --list       # 対象の一覧
     uv run python tools/check_all.py --only check-mock-i18n,check-mock-theme
     uv run python tools/check_all.py --keep-going # 失敗しても続行
+    uv run python tools/check_all.py --json results.json  # JSON レポートも出力（CI 向け）
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +93,11 @@ def main() -> int:
         action="store_true",
         help="失敗しても次の検査を続行（既定は make と同じく最初の失敗で停止）",
     )
+    parser.add_argument(
+        "--json",
+        metavar="PATH",
+        help="実行結果を JSON レポートとして PATH に書き出す（CI の機械可読向け）",
+    )
     args = parser.parse_args()
 
     names = [name for name, _s, _a in CHECKS]
@@ -139,6 +147,35 @@ def main() -> int:
         status = "OK" if code == 0 else f"NG(exit {code})"
         print(f"  {name:<{width}}  {status:<10} {elapsed:.1f}s")
     total_sec = sum(elapsed for _n, _c, elapsed in results)
+
+    if args.json:
+        payload = {
+            "tool": "check_all.py",
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "success": not failed,
+            "options": {
+                "keep_going": args.keep_going,
+                "only": args.only.split(",") if args.only else None,
+            },
+            "total": len(results),
+            "duration_sec": round(total_sec, 3),
+            "checks": [
+                {
+                    "name": name,
+                    "script": script,
+                    "args": extra,
+                    "exit_code": code,
+                    "duration_sec": round(elapsed, 3),
+                    "ok": code == 0,
+                }
+                for (name, script, extra), (_n, code, elapsed) in zip(selected, results)
+            ],
+        }
+        out = Path(args.json)
+        out.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"JSON レポート: {out}")
 
     if failed:
         print(f"\nNG: 失敗した検査: {', '.join(failed)}（合計 {total_sec:.1f}s）")

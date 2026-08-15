@@ -88,7 +88,7 @@ jobs:
       - name: Mock verification (tools/check_all.py)
         shell: pwsh
         run: |
-          $output = & uv run --frozen python tools/check_all.py 2>&1
+          $output = & uv run --frozen python tools/check_all.py --json artifacts/check-all.json 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath artifacts/check-all.txt
           exit $code
