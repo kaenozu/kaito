@@ -62,8 +62,11 @@ TREE_ROW_HEIGHT = 34
 # （フォールバック）により日本語は Yu Gothic UI で描画される。
 # そのためラテン文字・数字が引き締まり、日本語もそのまま表示できる。
 FONT_FAMILY = "Segoe UI"
-# ファイル一覧・入力/データ表示は 12px を既定とする。
-# （ツリーは ttk のためフォント指定タプル (TREE_FONT_FAMILY, TREE_FONT_SIZE) を使う）
+# ファイル一覧は 12px、入力/データ表示は 12 を既定とする。
+# 注意: CTkFont はサイズをポイント単位で保持する（tk の負値=pt 変換）。
+# 一方、ツリーは ttk のためフォント指定タプル (TREE_FONT_FAMILY, TREE_FONT_SIZE) を使い、
+# こちらは正数 = ピクセル単位。CTkFont を ttk スタイルに渡さないこと（GC で名前付き
+# フォントが削除され Tk デフォルトへフォールバックする）。
 TREE_FONT_FAMILY = "Segoe UI"
 TREE_FONT_SIZE = 12
 UI_FONT_FAMILY = "Segoe UI"
