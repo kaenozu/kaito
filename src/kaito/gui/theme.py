@@ -58,11 +58,24 @@ TREE_ROW_HEIGHT = 34
 
 # --- フォント ---
 FONT_FAMILY = "Yu Gothic UI"
+# ファイル一覧（ツリー）は Windows 標準の Segoe UI を優先する。
+# 日本語グリフは OS のフォントフォールバックで Yu Gothic UI に解決されるため
+# ラテン文字・数字が引き締まって見える（Yu Gothic UI は dense な一覧では太く見える）。
+TREE_FONT_FAMILY = "Segoe UI"
+TREE_FONT_SIZE = 12
 
 
 def font(size: int = 13, weight: Literal["normal", "bold"] = "normal") -> ctk.CTkFont:
     """アプリ標準フォントを作成する"""
     return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
+
+
+def tree_font(
+    size: int = TREE_FONT_SIZE,
+    weight: Literal["normal", "bold"] = "normal",
+) -> ctk.CTkFont:
+    """ファイル一覧（ツリー）用フォントを作成する"""
+    return ctk.CTkFont(family=TREE_FONT_FAMILY, size=size, weight=weight)
 
 
 def pick(pair: tuple[str, str], is_dark: bool) -> str:

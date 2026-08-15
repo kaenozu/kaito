@@ -560,14 +560,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             fieldbackground=bg,
             borderwidth=0,
             rowheight=theme.TREE_ROW_HEIGHT,
-            font=theme.font(13),
+            font=theme.tree_font(),
         )
         style.configure(
             "Treeview.Heading",
             background=heading_bg,
             foreground=fg,
             relief="flat",
-            font=theme.font(13, "bold"),
+            font=theme.tree_font(weight="bold"),
         )
         style.map(
             "Treeview",
