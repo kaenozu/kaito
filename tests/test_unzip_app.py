@@ -1217,16 +1217,11 @@ class TestUnzipAppMethods:
             assert result == b"PNG content"
 
     def test_read_archive_entry_rar_not_found(self, tmp_path: Path) -> None:
-        """展開後にファイルが見つからない場合"""
+        """エントリが見つからない場合は空バイトを返す（プレビュー用フォールバック）"""
         z = tmp_path / "test.rar"
         z.touch()
-        with patch("patoolib.extract_archive") as mock_extract:
-
-            def mock_extract_archive(path, outdir):
-                # 空のディレクトリだけ作成
-                pass
-
-            mock_extract.side_effect = mock_extract_archive
+        with patch("kaito.gui.unzip_app.ArchiveService") as mock_svc:
+            mock_svc.return_value.read_entry.return_value = None
             result = _read_archive_entry(z, "missing.txt")
             assert result == b""
 
