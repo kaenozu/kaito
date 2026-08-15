@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 import patoolib
+from patoolib.util import PatoolError
 
 
 @dataclass
@@ -44,7 +45,7 @@ _ZIP_ENCODINGS: tuple[str, ...] = ()
 # システムロケールに依存しないフォールバック用エンコーディング
 # ZIP仕様ではファイル名のエンコーディングが未定義のため、主要言語圏のエンコーディングを
 # 総当たりで試す（UTF-8→各国語→システムロケールの順）
-_FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "shift_jis", "euc-kr"]
+_FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "euc-kr"]
 
 def get_zip_encodings() -> tuple[str, ...]:
     """ZIPファイル名のデコードに試すエンコーディング一覧
@@ -114,20 +115,24 @@ def try_zip_with_encodings[T](
     Raises:
         RuntimeError: 全エンコーディングで失敗した場合
     """
-    last_zf: zipfile.ZipFile | None = None
-    for enc in _encoding_tries():
-        try:
-            zf = zipfile.ZipFile(zip_path, "r", metadata_encoding=enc)
-        except (UnicodeDecodeError, UnicodeError, LookupError):
-            continue
-        last_zf = zf
-        names = [e.filename for e in zf.infolist()]
-        if not _has_surrogates(names):
-            return operation(zf)
-    # 全エンコーディングでサロゲート発生 → 最後の結果を強制採用
-    if last_zf is not None:
-        return operation(last_zf)
-    raise RuntimeError("ZIPファイルを開けませんでした")
+    opened: list[zipfile.ZipFile] = []
+    try:
+        for enc in _encoding_tries():
+            try:
+                zf = zipfile.ZipFile(zip_path, "r", metadata_encoding=enc)
+            except (UnicodeDecodeError, UnicodeError, LookupError):
+                continue
+            opened.append(zf)
+            names = [e.filename for e in zf.infolist()]
+            if not _has_surrogates(names):
+                return operation(zf)
+        # 全エンコーディングでサロゲート発生 → 最後の結果を強制採用
+        if opened:
+            return operation(opened[-1])
+        raise RuntimeError("ZIPファイルを開けませんでした")
+    finally:
+        for zf in opened:
+            zf.close()
 
 
 def create_archive(
@@ -151,7 +156,7 @@ def create_archive(
     elif ext in ARCHIVE_EXTENSIONS:
         try:
             patoolib.create_archive(str(output), [str(s) for s in sources])
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, PatoolError) as e:
             raise RuntimeError(f"アーカイブの作成に失敗しました: {e}")
     else:
         raise ValueError(f"未対応のアーカイブ形式です: {ext}")
@@ -249,7 +254,7 @@ def extract_archive(
     elif ext in ARCHIVE_EXTENSIONS:
         try:
             patoolib.extract_archive(str(path), outdir=str(dest), password=password)
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, PatoolError) as e:
             raise RuntimeError(f"アーカイブの展開に失敗しました: {e}")
     else:
         raise ValueError(f"未対応のアーカイブ形式です: {ext}")
@@ -270,16 +275,35 @@ def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
             _ = info.filename  # デコードをトリガー
             if info.flag_bits & 0x1 or info.flag_bits & 0x40:
                 is_encrypted = True
+            try:
+                modified = datetime(*info.date_time)
+            except ValueError:
+                # 壊れたアーカイブの不正日時（月=0等）は現在時刻にフォールバック
+                modified = datetime.now()
             entries.append(ZipEntry(
                 name=info.filename,
                 size=info.file_size,
                 compressed_size=info.compress_size,
-                modified=datetime(*info.date_time),
+                modified=modified,
                 is_dir=info.filename.endswith("/"),
             ))
         return entries, is_encrypted
 
     return try_zip_with_encodings(zip_path, _extract_entries)
+
+
+def _validate_entry_path(dest: str | Path, name: str) -> None:
+    """ZIPエントリ名が展開先ディレクトリの外へ出ないことを検証する
+
+    Path traversal攻撃（ZIP slip）対策。ファイル・ディレクトリ両方の
+    エントリに適用する。resolve() 後のパスが dest の厳密な子孫か
+    is_relative_to で判定する（文字列のstartswith比較は
+    ``out`` と ``out_evil`` を誤判定するため使わない）。
+    """
+    dest_resolved = Path(dest).resolve()
+    target_path = (dest_resolved / name).resolve()
+    if not target_path.is_relative_to(dest_resolved):
+        raise RuntimeError(f"安全でないパスが含まれています: {name}")
 
 
 def extract(
@@ -306,15 +330,12 @@ def extract(
         total = len(targets)
 
         for i, name in enumerate(targets):
+            # Path traversal攻撃対策: ディレクトリ/ファイル両方のパスを検証
+            _validate_entry_path(dest, name)
             # ディレクトリエントリは作成のみ
             if name.endswith("/"):
                 (Path(dest) / name).mkdir(parents=True, exist_ok=True)
             else:
-                # Path traversal攻撃対策: パスを検証して安全な場所のみ展開
-                target_path = (Path(dest) / name).resolve()
-                dest_resolved = Path(dest).resolve()
-                if not str(target_path).startswith(str(dest_resolved)):
-                    raise RuntimeError(f"安全でないパスが含まれています: {name}")
                 zf.extract(name, str(dest))
 
             if on_progress:

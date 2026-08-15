@@ -323,6 +323,188 @@ class TestCreateArchive:
             create_archive([src], output)
 
 
+class TestZipSlip:
+    """パストラバーサル（ZIP slip）対策のテスト"""
+
+    @staticmethod
+    def _make_zip(tmp_dir: Path, names: list[str]) -> Path:
+        import zipfile
+        z = tmp_dir / "evil.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            for n in names:
+                if n.endswith("/"):
+                    zf.writestr(n, "")
+                else:
+                    zf.writestr(n, "x")
+        return z
+
+    def test_file_traversal_rejected(self, tmp_dir: Path) -> None:
+        """../ を含むファイルエントリは拒否される"""
+        z = self._make_zip(tmp_dir, ["../evil.txt"])
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="安全でないパス"):
+            extract_all(z, dest)
+        assert not (tmp_dir / "evil.txt").exists()
+
+    def test_dir_entry_traversal_rejected(self, tmp_dir: Path) -> None:
+        """ディレクトリエントリのパストラバーサルも拒否される"""
+        z = self._make_zip(tmp_dir, ["../../pwned/"])
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="安全でないパス"):
+            extract_all(z, dest)
+        assert not (tmp_dir / "pwned").exists()
+        assert not (tmp_dir.parent / "pwned").exists()
+        assert not (tmp_dir.parent.parent / "pwned").exists()
+
+    def test_prefix_sibling_not_confused(self, tmp_dir: Path) -> None:
+        """dest=".../out" に対し ".../out_evil" は別ディレクトリとして拒否される"""
+        z = self._make_zip(tmp_dir, ["../out_evil/pwn.txt"])
+        dest = tmp_dir / "out"
+        with pytest.raises(RuntimeError, match="安全でないパス"):
+            extract_all(z, dest)
+        assert not (tmp_dir / "out_evil").exists()
+
+    def test_safe_nested_extract_ok(self, tmp_dir: Path) -> None:
+        """正当なネスト構造は通常どおり展開される"""
+        z = self._make_zip(tmp_dir, ["sub/a.txt", "sub/deep/b.txt"])
+        dest = tmp_dir / "out"
+        extract_all(z, dest)
+        assert (dest / "sub/a.txt").read_text() == "x"
+        assert (dest / "sub/deep/b.txt").read_text() == "x"
+
+    def test_dir_entry_with_safe_path_ok(self, tmp_dir: Path) -> None:
+        """正当なディレクトリエントリは作成される"""
+        z = self._make_zip(tmp_dir, ["folder/", "folder/a.txt"])
+        dest = tmp_dir / "out"
+        extract_all(z, dest)
+        assert (dest / "folder").is_dir()
+        assert (dest / "folder/a.txt").read_text() == "x"
+
+
+class TestEncodingFallback:
+    """エンコーディングフォールバック（CP932日本語ZIP）のテスト"""
+
+    @staticmethod
+    def _write_cp932_zip(z: Path, name: str, data: str) -> None:
+        """UTF-8で書き込んだZIPのファイル名をCP932バイトに書き換えて再構築する"""
+        import struct
+        import zipfile
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr(name, data)
+        raw = bytearray(z.read_bytes())
+        u8 = name.encode("utf-8")
+        cp = name.encode("cp932")
+        delta = len(u8) - len(cp)
+        # UTF-8フラグ (bit 11 / 0x800) を local header (+7) と central (+9) で落とす
+        i = 0
+        while i < len(raw) - 4:
+            sig = bytes(raw[i:i + 4])
+            if sig == b"PK\x03\x04":
+                raw[i + 7] &= ~0x08
+            elif sig == b"PK\x01\x02":
+                raw[i + 9] &= ~0x08
+            i += 1
+        # ファイル名をCP932バイトに置換（local header と central directory の両方）
+        start = 0
+        while True:
+            idx = raw.find(u8, start)
+            if idx < 0:
+                break
+            raw[idx:idx + len(u8)] = cp
+            start = idx + len(cp)
+        # ファイル名長フィールドを更新（local: +26, central: +28）
+        for i in range(len(raw) - 4):
+            sig = bytes(raw[i:i + 4])
+            if sig == b"PK\x03\x04":
+                raw[i + 26:i + 28] = struct.pack("<H", len(cp))
+            elif sig == b"PK\x01\x02":
+                raw[i + 28:i + 30] = struct.pack("<H", len(cp))
+        # local_offset は先頭エントリのため 0 のまま（補正不要）
+        # EOCD の central directory サイズ (+12) とオフセット (+16) を補正
+        eocd = raw.rfind(b"PK\x05\x06")
+        if eocd >= 0:
+            cd_size = struct.unpack("<I", bytes(raw[eocd + 12:eocd + 16]))[0]
+            raw[eocd + 12:eocd + 16] = struct.pack("<I", cd_size - delta)
+            cd_off = struct.unpack("<I", bytes(raw[eocd + 16:eocd + 20]))[0]
+            raw[eocd + 16:eocd + 20] = struct.pack("<I", cd_off - delta)
+        z.write_bytes(raw)
+
+    def test_list_entries_cp932_japanese(self, tmp_dir: Path) -> None:
+        """CP932エンコードの日本語ファイル名ZIPを一覧できる"""
+        z = tmp_dir / "cp932.zip"
+        self._write_cp932_zip(z, "日本語ファイル.txt", "data")
+        entries, encrypted = list_entries(z)
+        assert not encrypted
+        assert [e.name for e in entries] == ["日本語ファイル.txt"]
+
+    def test_extract_cp932_japanese(self, tmp_dir: Path) -> None:
+        """CP932エンコードの日本語ファイル名ZIPを展開できる"""
+        z = tmp_dir / "cp932.zip"
+        self._write_cp932_zip(z, "日本語ファイル.txt", "data")
+        dest = tmp_dir / "out"
+        extract_all(z, dest)
+        assert (dest / "日本語ファイル.txt").read_text() == "data"
+
+
+class TestBadDate:
+    """壊れたメタデータを持つZIPのテスト"""
+
+    def test_list_entries_bad_date_time(self, tmp_dir: Path) -> None:
+        """不正な日時（月=0）を含むZIPでもクラッシュせず一覧できる"""
+        import zipfile
+        z = tmp_dir / "baddate.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a.txt", "data")
+        raw = bytearray(z.read_bytes())
+        # central directory の date フィールド (offset +12) を 0 に → 月=0
+        for i in range(len(raw) - 4):
+            if bytes(raw[i:i + 4]) == b"PK\x01\x02":
+                raw[i + 12] = 0
+                raw[i + 13] = 0
+                break
+        z.write_bytes(raw)
+        entries, _ = list_entries(z)
+        assert len(entries) == 1
+        assert isinstance(entries[0].modified, datetime)
+
+
+class TestPasswordHandling:
+    """パスワード付きZIPの取り扱い"""
+
+    def test_extract_password_calls_setpassword(self, normal_zip: Path, tmp_dir: Path) -> None:
+        """パスワードがZipFile.setpasswordに渡される"""
+        import zipfile
+        dest = tmp_dir / "out"
+        seen: list[bytes] = []
+        real = zipfile.ZipFile.setpassword
+
+        def spy(self: zipfile.ZipFile, pw: bytes) -> None:
+            seen.append(pw)
+            real(self, pw)
+
+        with patch.object(zipfile.ZipFile, "setpassword", spy):
+            extract_all(normal_zip, dest, password="secret")
+        assert seen == [b"secret"]
+        assert (dest / "hello.txt").read_text() == "Hello World"
+
+    def test_extract_without_password_skips_setpassword(
+        self, normal_zip: Path, tmp_dir: Path,
+    ) -> None:
+        """パスワードなしならsetpasswordは呼ばれない"""
+        import zipfile
+        dest = tmp_dir / "out"
+        seen: list[bytes] = []
+        real = zipfile.ZipFile.setpassword
+
+        def spy(self: zipfile.ZipFile, pw: bytes) -> None:
+            seen.append(pw)
+            real(self, pw)
+
+        with patch.object(zipfile.ZipFile, "setpassword", spy):
+            extract_all(normal_zip, dest)
+        assert seen == []
+
+
 class TestExtractArchive:
     """extract_archive のテスト"""
 
