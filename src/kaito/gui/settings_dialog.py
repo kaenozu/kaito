@@ -48,12 +48,16 @@ class SettingsDialog(ctk.CTkToplevel):
         self.grid_rowconfigure(5, weight=1)
 
         ctk.CTkLabel(
-            self, text=tr("settings.heading"), font=theme.font(20, "bold"),
+            self,
+            text=tr("settings.heading"),
+            font=theme.font(20, "bold"),
             anchor="w",
         ).grid(row=0, column=0, padx=24, pady=(22, 2), sticky="w")
         ctk.CTkLabel(
-            self, text=tr("settings.subtitle"),
-            text_color=theme.SUBTEXT, anchor="w",
+            self,
+            text=tr("settings.subtitle"),
+            text_color=theme.SUBTEXT,
+            anchor="w",
         ).grid(row=1, column=0, padx=24, pady=(0, 14), sticky="w")
 
         # --- テーマ ---
@@ -64,12 +68,13 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkLabel(theme_frame, text=tr("settings.theme"), font=theme.font(13)).grid(
             row=0, column=0, padx=(14, 4), pady=10, sticky="w"
         )
-        self._theme_var = ctk.StringVar(
-            value=self._settings.get("theme", "system")
-        )
+        self._theme_var = ctk.StringVar(value=self._settings.get("theme", "system"))
         self._theme_menu = ctk.CTkOptionMenu(
-            theme_frame, values=["system", "light", "dark"],
-            variable=self._theme_var, width=110, corner_radius=8,
+            theme_frame,
+            values=["system", "light", "dark"],
+            variable=self._theme_var,
+            width=110,
+            corner_radius=8,
         )
         self._theme_menu.grid(row=0, column=1, padx=(4, 14), pady=10, sticky="w")
 
@@ -78,15 +83,18 @@ class SettingsDialog(ctk.CTkToplevel):
         lang_frame.grid(row=3, column=0, padx=24, pady=4, sticky="ew")
         lang_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(lang_frame, text=tr("settings.language"), font=theme.font(13)).grid(
-            row=0, column=0, padx=(14, 4), pady=10, sticky="w"
-        )
+        ctk.CTkLabel(
+            lang_frame, text=tr("settings.language"), font=theme.font(13)
+        ).grid(row=0, column=0, padx=(14, 4), pady=10, sticky="w")
         self._lang_var = ctk.StringVar(
             value=self._lang_label(self._settings.get("language", "ja"))
         )
         self._lang_menu = ctk.CTkOptionMenu(
-            lang_frame, values=list(_LANG_LABELS.values()),
-            variable=self._lang_var, width=110, corner_radius=8,
+            lang_frame,
+            values=list(_LANG_LABELS.values()),
+            variable=self._lang_var,
+            width=110,
+            corner_radius=8,
         )
         self._lang_menu.grid(row=0, column=1, padx=(4, 14), pady=10, sticky="w")
 
@@ -95,55 +103,71 @@ class SettingsDialog(ctk.CTkToplevel):
         dest_frame.grid(row=4, column=0, padx=24, pady=4, sticky="ew")
         dest_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(dest_frame, text=tr("settings.dest_mode"), font=theme.font(13)).grid(
-            row=0, column=0, padx=(14, 4), pady=10, sticky="w"
-        )
+        ctk.CTkLabel(
+            dest_frame, text=tr("settings.dest_mode"), font=theme.font(13)
+        ).grid(row=0, column=0, padx=(14, 4), pady=10, sticky="w")
         self._dest_mode_var = ctk.StringVar(
             value=self._dest_mode_label(self._settings.get("dest_mode", "archive"))
         )
         ctk.CTkOptionMenu(
             dest_frame,
             values=[self._dest_mode_label(m) for m in ("archive", "last", "fixed")],
-            variable=self._dest_mode_var, width=190, corner_radius=8,
+            variable=self._dest_mode_var,
+            width=190,
+            corner_radius=8,
         ).grid(row=0, column=1, padx=(4, 14), pady=10, sticky="w")
         # 固定フォルダーの指定（"固定フォルダー"モードで使用）
         self._fixed_dest_var = ctk.StringVar(
             value=str(self._settings.get("fixed_dest", ""))
         )
-        ctk.CTkLabel(dest_frame, text=tr("settings.fixed_dest"), font=theme.font(13)).grid(
-            row=1, column=0, padx=(14, 4), pady=4, sticky="w"
-        )
+        ctk.CTkLabel(
+            dest_frame, text=tr("settings.fixed_dest"), font=theme.font(13)
+        ).grid(row=1, column=0, padx=(14, 4), pady=4, sticky="w")
         ctk.CTkEntry(
-            dest_frame, textvariable=self._fixed_dest_var, state="readonly",
+            dest_frame,
+            textvariable=self._fixed_dest_var,
+            state="readonly",
         ).grid(row=1, column=1, padx=(4, 4), pady=4, sticky="ew")
         ctk.CTkButton(
-            dest_frame, text=tr("settings.pick"), width=72,
-            fg_color="transparent", border_width=1, border_color="gray65",
-            corner_radius=8, font=theme.font(12), command=self._on_pick_fixed_dest,
+            dest_frame,
+            text=tr("settings.pick"),
+            width=72,
+            fg_color="transparent",
+            border_width=1,
+            border_color="gray65",
+            corner_radius=8,
+            font=theme.font(12),
+            command=self._on_pick_fixed_dest,
         ).grid(row=1, column=2, padx=(0, 14), pady=4)
         ctk.CTkLabel(
-            dest_frame, text=tr("settings.dest_hint"),
-            text_color=theme.SUBTEXT, anchor="w",
+            dest_frame,
+            text=tr("settings.dest_hint"),
+            text_color=theme.SUBTEXT,
+            anchor="w",
         ).grid(row=2, column=0, columnspan=3, padx=14, pady=(2, 10), sticky="w")
 
         # --- 圧縮速度 ---
         compression_frame = ctk.CTkFrame(self, corner_radius=12)
         compression_frame.grid(row=5, column=0, padx=24, pady=4, sticky="ew")
         compression_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(compression_frame, text=tr("settings.compression"), font=theme.font(13)).grid(
-            row=0, column=0, padx=(14, 4), pady=(10, 0), sticky="w"
-        )
+        ctk.CTkLabel(
+            compression_frame, text=tr("settings.compression"), font=theme.font(13)
+        ).grid(row=0, column=0, padx=(14, 4), pady=(10, 0), sticky="w")
         self._compression_var = ctk.StringVar(
             value=self._compression_label(self._settings.get("compression_level", 1))
         )
         ctk.CTkOptionMenu(
             compression_frame,
             values=[self._compression_label(level) for level in (1, 6, 9)],
-            variable=self._compression_var, width=180, corner_radius=8,
+            variable=self._compression_var,
+            width=180,
+            corner_radius=8,
         ).grid(row=0, column=1, padx=(4, 14), pady=(10, 0), sticky="e")
         ctk.CTkLabel(
-            compression_frame, text=tr("settings.compression_hint"),
-            text_color=theme.SUBTEXT, anchor="w",
+            compression_frame,
+            text=tr("settings.compression_hint"),
+            text_color=theme.SUBTEXT,
+            anchor="w",
         ).grid(row=1, column=0, columnspan=2, padx=14, pady=(2, 10), sticky="w")
 
         # --- ボタン ---
@@ -152,14 +176,24 @@ class SettingsDialog(ctk.CTkToplevel):
         btn_frame.grid_columnconfigure((0, 1), weight=0)
 
         ctk.CTkButton(
-            btn_frame, text=tr("app.cancel"), width=90,
-            fg_color="transparent", border_width=1, border_color="gray65",
-            corner_radius=8, font=theme.font(13), command=self.destroy,
+            btn_frame,
+            text=tr("app.cancel"),
+            width=90,
+            fg_color="transparent",
+            border_width=1,
+            border_color="gray65",
+            corner_radius=8,
+            font=theme.font(13),
+            command=self.destroy,
         ).grid(row=0, column=0, padx=(0, 6), pady=4)
         ctk.CTkButton(
-            btn_frame, text=tr("settings.save"), width=90,
-            fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER,
-            text_color=theme.ACCENT_ON, corner_radius=8,
+            btn_frame,
+            text=tr("settings.save"),
+            width=90,
+            fg_color=theme.ACCENT,
+            hover_color=theme.ACCENT_HOVER,
+            text_color=theme.ACCENT_ON,
+            corner_radius=8,
             font=theme.font(13, "bold"),
             command=self._on_save,
         ).grid(row=0, column=1, padx=(6, 0), pady=4)
@@ -168,13 +202,15 @@ class SettingsDialog(ctk.CTkToplevel):
         """設定を保存して閉じる"""
         theme_mode = self._theme_var.get()
         lang_code = self._lang_code(self._lang_var.get())
-        self._settings.set_many({
-            "theme": theme_mode,
-            "language": lang_code,
-            "dest_mode": self._dest_mode_value(),
-            "fixed_dest": self._fixed_dest_var.get(),
-            "compression_level": self._compression_level(),
-        })
+        self._settings.set_many(
+            {
+                "theme": theme_mode,
+                "language": lang_code,
+                "dest_mode": self._dest_mode_value(),
+                "fixed_dest": self._fixed_dest_var.get(),
+                "compression_level": self._compression_level(),
+            }
+        )
 
         if self._on_theme_changed is not None:
             self._on_theme_changed(theme_mode)
@@ -223,7 +259,9 @@ class SettingsDialog(ctk.CTkToplevel):
 
     def _compression_level(self) -> int:
         for level, label in {
-            1: tr("comp.fast"), 6: tr("comp.normal"), 9: tr("comp.max"),
+            1: tr("comp.fast"),
+            6: tr("comp.normal"),
+            9: tr("comp.max"),
         }.items():
             if label == self._compression_var.get():
                 return level

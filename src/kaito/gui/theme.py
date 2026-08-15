@@ -76,6 +76,7 @@ def is_dark() -> bool:
     if mode == "system":
         try:
             import darkdetect
+
             return bool(darkdetect.isDark())
         except ImportError:  # pragma: no cover
             return False
@@ -93,9 +94,15 @@ def primary_button(
 ) -> ctk.CTkButton:
     """アクセント塗りのプライマリボタン"""
     return ctk.CTkButton(
-        parent, text=text, width=width, height=height,
-        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=ACCENT_ON,
-        corner_radius=10, font=font(font_size, "bold" if bold else "normal"),
+        parent,
+        text=text,
+        width=width,
+        height=height,
+        fg_color=ACCENT,
+        hover_color=ACCENT_HOVER,
+        text_color=ACCENT_ON,
+        corner_radius=10,
+        font=font(font_size, "bold" if bold else "normal"),
         command=command,
     )
 
@@ -113,12 +120,18 @@ def secondary_button(
 ) -> ctk.CTkButton:
     """枠線付きのセカンダリボタン"""
     return ctk.CTkButton(
-        parent, text=text, width=width, height=height,
+        parent,
+        text=text,
+        width=width,
+        height=height,
         fg_color=pick(SURFACE_2, is_dark),
         hover_color=pick(BORDER, is_dark),
-        border_width=1, border_color=border_color or pick(BORDER, is_dark),
+        border_width=1,
+        border_color=border_color or pick(BORDER, is_dark),
         text_color=text_color or pick(TEXT, is_dark),
-        corner_radius=10, font=font(font_size), command=command,
+        corner_radius=10,
+        font=font(font_size),
+        command=command,
     )
 
 
@@ -129,9 +142,11 @@ def card(
 ) -> ctk.CTkFrame:
     """カード面（境界線付きの白/ダークカード）"""
     return ctk.CTkFrame(
-        parent, corner_radius=corner_radius,
+        parent,
+        corner_radius=corner_radius,
         fg_color=pick(SURFACE, is_dark),
-        border_width=1, border_color=pick(BORDER, is_dark),
+        border_width=1,
+        border_color=pick(BORDER, is_dark),
     )
 
 
@@ -146,13 +161,20 @@ def option_menu(
 ) -> ctk.CTkOptionMenu:
     """デザインシステム準拠のドロップダウンメニュー"""
     return ctk.CTkOptionMenu(
-        parent, values=values, variable=variable, width=width, height=height,
-        corner_radius=10, fg_color=pick(SURFACE_2, is_dark),
+        parent,
+        values=values,
+        variable=variable,
+        width=width,
+        height=height,
+        corner_radius=10,
+        fg_color=pick(SURFACE_2, is_dark),
         button_color=pick(SURFACE_2, is_dark),
         button_hover_color=pick(BORDER, is_dark),
         text_color=pick(TEXT, is_dark),
         dropdown_fg_color=pick(SURFACE, is_dark),
         dropdown_hover_color=pick(ACCENT_SOFT, is_dark),
         dropdown_text_color=pick(TEXT, is_dark),
-        font=font(13), dropdown_font=font(13), command=command,
+        font=font(13),
+        dropdown_font=font(13),
+        command=command,
     )

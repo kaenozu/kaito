@@ -98,24 +98,36 @@ class ExtractWorker:
             archive_dest.mkdir(parents=True, exist_ok=True)
 
             def on_progress(
-                current: int, total_count: int,
+                current: int,
+                total_count: int,
                 current_name: str = "",
-                _a: str = entry_archive_name, _idx: int = idx,
+                _a: str = entry_archive_name,
+                _idx: int = idx,
             ) -> None:
                 now = time.monotonic()
-                if now - self._last_progress_time < 0.1 and current < total_count:  # pragma: no cover
+                if (
+                    now - self._last_progress_time < 0.1 and current < total_count
+                ):  # pragma: no cover
                     return
                 self._last_progress_time = now
                 pct = current / total_count
                 if self.on_progress is not None:
                     self.on_progress(
-                        _idx + 1, total, _a, pct, current, total_count, current_name,
+                        _idx + 1,
+                        total,
+                        _a,
+                        pct,
+                        current,
+                        total_count,
+                        current_name,
                     )
 
             try:
                 unzip.extract_archive(
-                    archive_path, archive_dest,
-                    password=password, on_progress=on_progress,
+                    archive_path,
+                    archive_dest,
+                    password=password,
+                    on_progress=on_progress,
                 )
                 # 完了したアーカイブは成功として数える
                 result.success_count += 1
@@ -130,7 +142,6 @@ class ExtractWorker:
                 )
 
         return result
-
 
 
 def resolve_extract_dest(

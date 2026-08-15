@@ -59,7 +59,10 @@ class TestI18n:
         i18n.set_language("ja")
         assert i18n.tr("msg.extract_done").format(n=3) == "解凍完了 (3アーカイブ)"
         i18n.set_language("en")
-        assert i18n.tr("msg.extract_done").format(n=3) == "Extraction complete (3 archive(s))"
+        assert (
+            i18n.tr("msg.extract_done").format(n=3)
+            == "Extraction complete (3 archive(s))"
+        )
         assert i18n.tr("msg.password_prompt").format(name="a.zip") == (
             "a.zip is password protected\nEnter the password:"
         )

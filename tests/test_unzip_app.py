@@ -25,6 +25,7 @@ from kaito.worker import ExtractResult, ExtractWorker, resolve_extract_dest
 
 # ---- _format_size のテスト ----
 
+
 class TestFormatSize:
     def test_bytes(self) -> None:
         assert _format_size(0) == "0 B"
@@ -42,11 +43,12 @@ class TestFormatSize:
         assert _format_size(1024 * 1024 * 1024 - 1) == "1024.0 MB"
 
     def test_gigabytes(self) -> None:
-        assert _format_size(1024 ** 3) == "1.0 GB"
-        assert _format_size(3 * 1024 ** 3) == "3.0 GB"
+        assert _format_size(1024**3) == "1.0 GB"
+        assert _format_size(3 * 1024**3) == "3.0 GB"
 
 
 # ---- ツリー用アイコンのテスト ----
+
 
 class TestEntryIcons:
     """フォルダ/ファイルアイコンの描画（ヘッドレスで検証）"""
@@ -57,6 +59,7 @@ class TestEntryIcons:
 
     def test_draw_folder_icon_shape(self) -> None:
         from kaito.gui.unzip_app import _draw_folder_icon
+
         img = _draw_folder_icon(False)
         assert img.mode == "RGBA"
         assert img.size == (16, 16)
@@ -65,6 +68,7 @@ class TestEntryIcons:
 
     def test_draw_file_icon_shape(self) -> None:
         from kaito.gui.unzip_app import _draw_file_icon
+
         img = _draw_file_icon(True)
         assert img.mode == "RGBA"
         assert img.size == (16, 16)
@@ -73,12 +77,14 @@ class TestEntryIcons:
     def test_icons_differ_by_theme(self) -> None:
         """ライト/ダークで配色が切り替わる"""
         from kaito.gui.unzip_app import _draw_file_icon, _draw_folder_icon
+
         assert _draw_folder_icon(False).tobytes() != _draw_folder_icon(True).tobytes()
         assert _draw_file_icon(False).tobytes() != _draw_file_icon(True).tobytes()
 
     def test_ensure_icons_fallback(self, app: MagicMock) -> None:
         """アイコン生成に失敗してもクラッシュせず None にフォールバック"""
         from kaito.gui.unzip_app import UnzipApp
+
         with patch(
             "kaito.gui.unzip_app._make_entry_icons",
             side_effect=RuntimeError("no display"),
@@ -91,6 +97,7 @@ class TestEntryIcons:
         """フォルダ行とファイル行で異なるアイコンが #0 列に設定される"""
         from datetime import datetime
         from kaito.unzip import ZipEntry
+
         app._entries = [
             ZipEntry("a.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
             ZipEntry("dir/", 0, 0, datetime(2026, 1, 1, 0, 0, 0), True),
@@ -104,6 +111,7 @@ class TestEntryIcons:
 
 
 # ---- main() のテスト ----
+
 
 class TestMain:
     def test_main_no_args(self) -> None:
@@ -180,6 +188,7 @@ class TestMain:
 
 # ---- UnzipApp の全メソッドテスト ----
 
+
 def _make_app_mock() -> MagicMock:
     """__init__ を呼ばずにモックしたUnzipAppインスタンスを作成"""
     from kaito.gui.unzip_app import UnzipApp
@@ -245,6 +254,7 @@ def _make_app_mock() -> MagicMock:
 def _init_patches() -> list:
     """__init__ テスト用の共通パッチリストを返す"""
     from kaito.gui.unzip_app import UnzipApp
+
     return [
         patch.object(UnzipApp, "_build_ui"),
         patch.object(UnzipApp, "drop_target_register"),
@@ -273,6 +283,7 @@ class TestUnzipAppInit:
 
     def test_init_no_path(self) -> None:
         from kaito.gui.unzip_app import UnzipApp
+
         with ExitStack() as stack:
             for p in _init_patches():
                 stack.enter_context(p)
@@ -288,6 +299,7 @@ class TestUnzipAppInit:
             zf.writestr("a.txt", "data")
 
         from kaito.gui.unzip_app import UnzipApp
+
         extra = [
             patch.object(UnzipApp, "_path_var", create=True),
             patch.object(UnzipApp, "_dest_var", create=True),
@@ -310,11 +322,14 @@ class TestUnzipAppInit:
     def test_init_restores_saved_dest(self) -> None:
         """過去の展開先は復元しない（常にアーカイブ名ベース）"""
         from kaito.gui.unzip_app import SettingsManager, UnzipApp
+
         with ExitStack() as stack:
             for p in _init_patches():
                 stack.enter_context(p)
             stack.enter_context(patch.object(UnzipApp, "_path_var", create=True))
-            dest_var = stack.enter_context(patch.object(UnzipApp, "_dest_var", create=True))
+            dest_var = stack.enter_context(
+                patch.object(UnzipApp, "_dest_var", create=True)
+            )
             stack.enter_context(patch.object(UnzipApp, "_status_var", create=True))
             stack.enter_context(patch.object(UnzipApp, "_tree", create=True))
             stack.enter_context(patch.object(UnzipApp, "_refresh_tree"))
@@ -323,7 +338,9 @@ class TestUnzipAppInit:
             stack.enter_context(patch.object(UnzipApp, "_extract_btn", create=True))
             stack.enter_context(patch.object(UnzipApp, "_compress_btn", create=True))
             stack.enter_context(patch("customtkinter.CTk.__init__", return_value=None))
-            stack.enter_context(patch.object(SettingsManager, "get", return_value="C:\\saved\\path"))
+            stack.enter_context(
+                patch.object(SettingsManager, "get", return_value="C:\\saved\\path")
+            )
             UnzipApp(cli_path=None)
             # 過去の展開先を復元しなくなった
             dest_var.set.assert_not_called()
@@ -334,16 +351,19 @@ class TestUnzipAppTheme:
 
     def test_resolve_mode_light(self) -> None:
         from kaito.gui.unzip_app import UnzipApp
+
         with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Light"):
             assert not UnzipApp._resolve_mode()
 
     def test_resolve_mode_dark(self) -> None:
         from kaito.gui.unzip_app import UnzipApp
+
         with patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="Dark"):
             assert UnzipApp._resolve_mode()
 
     def test_resolve_mode_system_dark(self) -> None:
         from kaito.gui.unzip_app import UnzipApp
+
         with (
             patch("kaito.gui.unzip_app.ctk.get_appearance_mode", return_value="System"),
             patch("darkdetect.isDark", return_value=True),
@@ -353,6 +373,7 @@ class TestUnzipAppTheme:
     def test_apply_tree_style_dark(self) -> None:
         """暗黙のクラムテーマと色設定をmockで検証(dark)"""
         from kaito.gui.unzip_app import UnzipApp
+
         mock_style = MagicMock(name="mock_style_dark")
         with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
             app = MagicMock()
@@ -370,6 +391,7 @@ class TestUnzipAppTheme:
     def test_apply_tree_style_light(self) -> None:
         """暗黙のクラムテーマと色設定をmockで検証(light)"""
         from kaito.gui.unzip_app import UnzipApp
+
         mock_style = MagicMock(name="mock_style_light")
         with patch("kaito.gui.unzip_app.ttk.Style", return_value=mock_style):
             app = MagicMock()
@@ -452,14 +474,16 @@ class TestUnzipAppMethods:
         app._resolve_mode = MagicMock(return_value=False)
         app._on_drag_enter()
         app._drop_frame.configure.assert_called_with(
-            border_color=theme.DROP_HIGHLIGHT[0], fg_color=theme.ACCENT_SOFT[0],
+            border_color=theme.DROP_HIGHLIGHT[0],
+            fg_color=theme.ACCENT_SOFT[0],
         )
 
     def test_drag_leave_restores(self, app: MagicMock) -> None:
         app._resolve_mode = MagicMock(return_value=False)
         app._on_drag_leave()
         app._drop_frame.configure.assert_called_with(
-            border_color=theme.DROP_BORDER[0], fg_color="transparent",
+            border_color=theme.DROP_BORDER[0],
+            fg_color="transparent",
         )
 
     def test_highlight_drop_drop_frame_missing(self, app: MagicMock) -> None:
@@ -503,7 +527,9 @@ class TestUnzipAppMethods:
         app._status_var.set.assert_called()
         assert app._zip_path is None
 
-    def test_load_archive_with_existing_dest(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_with_existing_dest(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
@@ -514,12 +540,16 @@ class TestUnzipAppMethods:
 
     def _set_dest_settings(self, app: MagicMock, **overrides: object) -> None:
         defaults: dict[str, object] = {
-            "dest_mode": "archive", "last_dest": "", "fixed_dest": "",
+            "dest_mode": "archive",
+            "last_dest": "",
+            "fixed_dest": "",
         }
         defaults.update(overrides)
         app._settings.get.side_effect = lambda k, d=None: defaults.get(k, d)
 
-    def test_load_archive_dest_mode_archive(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_archive(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
@@ -527,7 +557,9 @@ class TestUnzipAppMethods:
         app._load_archive(z)
         app._dest_var.set.assert_called_with(str(z.parent / z.stem))
 
-    def test_load_archive_dest_mode_last_valid(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_last_valid(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         last_dir = tmp_path / "last"
         last_dir.mkdir()
         z = tmp_path / "test.zip"
@@ -537,7 +569,9 @@ class TestUnzipAppMethods:
         app._load_archive(z)
         app._dest_var.set.assert_called_with(str(last_dir))
 
-    def test_load_archive_dest_mode_last_invalid(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_last_invalid(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         """last_dest が存在しない場合はアーカイブ基準にフォールバック"""
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
@@ -546,7 +580,9 @@ class TestUnzipAppMethods:
         app._load_archive(z)
         app._dest_var.set.assert_called_with(str(z.parent / z.stem))
 
-    def test_load_archive_dest_mode_fixed_valid(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_fixed_valid(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         fixed_dir = tmp_path / "fixed"
         fixed_dir.mkdir()
         z = tmp_path / "test.zip"
@@ -556,7 +592,9 @@ class TestUnzipAppMethods:
         app._load_archive(z)
         app._dest_var.set.assert_called_with(str(fixed_dir))
 
-    def test_load_archive_dest_mode_fixed_invalid(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_fixed_invalid(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         """固定フォルダーが存在しない場合はアーカイブ基準にフォールバック"""
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
@@ -565,7 +603,9 @@ class TestUnzipAppMethods:
         app._load_archive(z)
         app._dest_var.set.assert_called_with(str(z.parent / z.stem))
 
-    def test_load_archive_dest_mode_unknown(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_dest_mode_unknown(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         """未知のdest_modeはarchiveとして扱う"""
         z = tmp_path / "test.zip"
         with zipfile.ZipFile(z, "w") as zf:
@@ -577,6 +617,7 @@ class TestUnzipAppMethods:
     def test_refresh_tree(self, app: MagicMock) -> None:
         from datetime import datetime
         from kaito.unzip import ZipEntry
+
         app._entries = [
             ZipEntry("file.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
             ZipEntry("dir/", 0, 0, datetime(2026, 1, 1, 0, 0, 0), True),
@@ -590,6 +631,7 @@ class TestUnzipAppMethods:
         """検索絞り込みでエントリがフィルターされる"""
         from datetime import datetime
         from kaito.unzip import ZipEntry
+
         app._entries = [
             ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
             ZipEntry("world.txt", 200, 160, datetime(2026, 1, 1, 0, 0, 0), False),
@@ -603,6 +645,7 @@ class TestUnzipAppMethods:
         """該当なしの検索でもクラッシュしない"""
         from datetime import datetime
         from kaito.unzip import ZipEntry
+
         app._entries = [
             ZipEntry("hello.txt", 100, 80, datetime(2026, 6, 2, 10, 0, 0), False),
         ]
@@ -696,7 +739,9 @@ class TestUnzipAppMethods:
         app._worker = worker
         app._on_extract_done = MagicMock()
         # after() に登録されたコールバックを即時実行する
-        app.after.side_effect = lambda _delay, callback, *args, **kwargs: callback(*args, **kwargs)
+        app.after.side_effect = lambda _delay, callback, *args, **kwargs: callback(
+            *args, **kwargs
+        )
         app._run_worker()
         assert (dest / z.stem / "a.txt").read_text() == "data"
         app._on_extract_done.assert_called_once()
@@ -715,7 +760,9 @@ class TestUnzipAppMethods:
         worker.cancel()
         app._worker = worker
         app._on_extract_done = MagicMock()
-        app.after.side_effect = lambda _delay, callback, *args, **kwargs: callback(*args, **kwargs)
+        app.after.side_effect = lambda _delay, callback, *args, **kwargs: callback(
+            *args, **kwargs
+        )
         app._run_worker()
         result = app._on_extract_done.call_args[0][0]
         assert result.canceled
@@ -751,7 +798,9 @@ class TestUnzipAppMethods:
             mock_popen.assert_called_once_with(["explorer", str(out)])
 
     def test_on_extract_done_opens_actual_dest_single(
-        self, app: MagicMock, tmp_path: Path,
+        self,
+        app: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """単一アーカイブ時は実際の展開先（_extracted_dests[0]）を開く"""
         app._extracting = True
@@ -765,7 +814,9 @@ class TestUnzipAppMethods:
             patch("subprocess.Popen") as mock_popen,
             patch("sys.platform", "win32"),
         ):
-            app._on_extract_done(ExtractResult(success_count=1, extracted_dests=[real_dest]))
+            app._on_extract_done(
+                ExtractResult(success_count=1, extracted_dests=[real_dest])
+            )
             mock_popen.assert_called_once_with(["explorer", str(real_dest)])
 
     def test_on_extract_done_dest_missing_no_explorer(self, app: MagicMock) -> None:
@@ -786,7 +837,9 @@ class TestUnzipAppMethods:
         app._extracting = True
         app._open_on_done_var.get.return_value = False
         app._archive_queue = [(Path("a.zip"), False)]
-        app._settings.get.side_effect = lambda k, d=None: {"dest_mode": "fixed"}.get(k, d)
+        app._settings.get.side_effect = lambda k, d=None: {"dest_mode": "fixed"}.get(
+            k, d
+        )
         app._on_extract_done(ExtractResult(success_count=1))
         saved = app._settings.set_many.call_args[0][0]
         assert "last_dest" not in saved
@@ -797,7 +850,9 @@ class TestUnzipAppMethods:
         app._open_on_done_var.get.return_value = False
         app._archive_queue = [(Path("a.zip"), False)]
         app._dest_var.get.return_value = "C:\\out"
-        app._settings.get.side_effect = lambda k, d=None: {"dest_mode": "last"}.get(k, d)
+        app._settings.get.side_effect = lambda k, d=None: {"dest_mode": "last"}.get(
+            k, d
+        )
         app._on_extract_done(ExtractResult(success_count=1))
         saved = app._settings.set_many.call_args[0][0]
         assert saved["last_dest"] == "C:\\out"
@@ -841,10 +896,22 @@ class TestUnzipAppMethods:
     def test_retranslate(self, app: MagicMock) -> None:
         """言語切替で全静的テキストが再設定される"""
         for attr in (
-            "_header_subtitle", "_settings_btn", "_archive_label", "_browse_btn",
-            "_drop_label", "_drop_sub_label", "_contents_label", "_search_entry",
-            "_tree", "_dest_label", "_dest_btn", "_open_check", "_close_check",
-            "_compress_btn", "_extract_btn", "_cancel_btn",
+            "_header_subtitle",
+            "_settings_btn",
+            "_archive_label",
+            "_browse_btn",
+            "_drop_label",
+            "_drop_sub_label",
+            "_contents_label",
+            "_search_entry",
+            "_tree",
+            "_dest_label",
+            "_dest_btn",
+            "_open_check",
+            "_close_check",
+            "_compress_btn",
+            "_extract_btn",
+            "_cancel_btn",
         ):
             setattr(app, attr, MagicMock())
         with patch.object(app, "_refresh_recent_menu") as mock_refresh:
@@ -898,7 +965,8 @@ class TestUnzipAppMethods:
         with patch("kaito.gui.unzip_app.SettingsDialog") as mock_dlg:
             app._on_open_settings()
             mock_dlg.assert_called_once_with(
-                parent=app, settings=app._settings,
+                parent=app,
+                settings=app._settings,
                 on_theme_changed=app._on_theme_changed,
                 on_language_changed=app._on_language_changed,
             )
@@ -953,6 +1021,7 @@ class TestUnzipAppMethods:
     def test_show_preview_text(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         import zipfile
+
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("hello.txt", "Hello World")
         app._zip_path = z
@@ -965,6 +1034,7 @@ class TestUnzipAppMethods:
         import zipfile
         from PIL import Image
         import io
+
         buf = io.BytesIO()
         Image.new("RGB", (10, 10), color="red").save(buf, "PNG")
         with zipfile.ZipFile(z, "w") as zf:
@@ -982,6 +1052,7 @@ class TestUnzipAppMethods:
     def test_preview_text_success(self, app: MagicMock, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         import zipfile
+
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("hello.txt", "Hello World")
         app._zip_path = z
@@ -997,6 +1068,7 @@ class TestUnzipAppMethods:
 
     def test_show_preview_with_tempdir(self, app: MagicMock) -> None:
         import tempfile
+
         td = tempfile.TemporaryDirectory()
         app._temp_dir = td
         app.__dict__["_preview_label"] = MagicMock()
@@ -1018,6 +1090,7 @@ class TestUnzipAppMethods:
         import zipfile
         from PIL import Image
         import io
+
         buf = io.BytesIO()
         Image.new("RGB", (50, 30), color="red").save(buf, "PNG")
         with zipfile.ZipFile(z, "w") as zf:
@@ -1038,6 +1111,7 @@ class TestUnzipAppMethods:
     def test_read_archive_entry_zip(self, tmp_path: Path) -> None:
         z = tmp_path / "test.zip"
         import zipfile
+
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("hello.txt", "data")
         assert _read_archive_entry(z, "hello.txt") == b"data"
@@ -1052,11 +1126,13 @@ class TestUnzipAppMethods:
         z = tmp_path / "test.rar"
         z.touch()
         with patch("patoolib.extract_archive") as mock_extract:
+
             def mock_extract_archive(path, outdir):
                 # 疑似的にファイルをサブディレクトリに作成（fallback検索をテスト）
                 extracted = Path(outdir) / "subdir" / "hello.txt"
                 extracted.parent.mkdir(parents=True, exist_ok=True)
                 extracted.write_bytes(b"RAR content")
+
             mock_extract.side_effect = mock_extract_archive
             result = _read_archive_entry(z, "hello.txt")
             assert result == b"RAR content"
@@ -1068,7 +1144,9 @@ class TestUnzipAppMethods:
         app._dest_var.get.return_value = ""
         mock_entries = []
         with (
-            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
+            patch(
+                "kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)
+            ),
             patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
             patch("patoolib.extract_archive"),
         ):
@@ -1078,16 +1156,22 @@ class TestUnzipAppMethods:
             app._load_archive(z)
             assert app._temp_dir is not None
 
-    def test_load_archive_rar_extract_fail(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_rar_extract_fail(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         """RAR pre-extractionが失敗してもクラッシュしない"""
         z = tmp_path / "test.rar"
         z.touch()
         app._dest_var.get.return_value = ""
         mock_entries = []
         with (
-            patch("kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)),
+            patch(
+                "kaito.gui.unzip_app.list_archive", return_value=(mock_entries, False)
+            ),
             patch("kaito.gui.unzip_app.tempfile.TemporaryDirectory") as mock_tmpdir,
-            patch("patoolib.extract_archive", side_effect=RuntimeError("extract failed")),
+            patch(
+                "patoolib.extract_archive", side_effect=RuntimeError("extract failed")
+            ),
         ):
             mock_td = MagicMock()
             mock_tmpdir.return_value = mock_td
@@ -1095,7 +1179,9 @@ class TestUnzipAppMethods:
             app._load_archive(z)  # should not raise
             assert app._temp_dir is not None
 
-    def test_load_archive_cleanup_old_temp(self, app: MagicMock, tmp_path: Path) -> None:
+    def test_load_archive_cleanup_old_temp(
+        self, app: MagicMock, tmp_path: Path
+    ) -> None:
         """2つ目のZIPを開くとき前のRAR展開をクリーンアップ"""
         old_td = MagicMock()
         app._temp_dir = old_td
@@ -1122,10 +1208,12 @@ class TestUnzipAppMethods:
         z = tmp_path / "test.7z"
         z.touch()
         with patch("patoolib.extract_archive") as mock_extract:
+
             def mock_extract_archive(path, outdir):
                 extracted = Path(outdir) / "subdir" / "image.png"
                 extracted.parent.mkdir(parents=True, exist_ok=True)
                 extracted.write_bytes(b"PNG content")
+
             mock_extract.side_effect = mock_extract_archive
             result = _read_archive_entry(z, "subdir/image.png")
             assert result == b"PNG content"
@@ -1135,15 +1223,18 @@ class TestUnzipAppMethods:
         z = tmp_path / "test.rar"
         z.touch()
         with patch("patoolib.extract_archive") as mock_extract:
+
             def mock_extract_archive(path, outdir):
                 # 空のディレクトリだけ作成
                 pass
+
             mock_extract.side_effect = mock_extract_archive
             result = _read_archive_entry(z, "missing.txt")
             assert result == b""
 
 
 # ---- SettingsDialog のテスト ----
+
 
 class TestSettingsDialog:
     """SettingsDialog の各機能をモックでテスト"""
@@ -1171,6 +1262,7 @@ class TestSettingsDialog:
 
     def test_save_applies_theme(self) -> None:
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = self._make_dlg()
         SettingsDialog._on_save(dlg)
         dlg._settings.set_many.assert_called_once()
@@ -1187,6 +1279,7 @@ class TestSettingsDialog:
     def test_save_no_callback(self) -> None:
         """on_theme_changedがNoneでもクラッシュしない"""
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = self._make_dlg()
         dlg._on_theme_changed = None
         dlg._on_language_changed = None
@@ -1196,6 +1289,7 @@ class TestSettingsDialog:
     def test_dest_mode_value_mapping(self) -> None:
         """ラベル→設定値の変換マッピング"""
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
         dlg._dest_mode_var = MagicMock()
         mapping = {
@@ -1212,14 +1306,24 @@ class TestSettingsDialog:
 
     def test_dest_mode_label_mapping(self) -> None:
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
-        assert SettingsDialog._dest_mode_label(dlg, "archive") == "アーカイブと同じフォルダー"
-        assert SettingsDialog._dest_mode_label(dlg, "last") == "最後に使用したフォルダー"
+        assert (
+            SettingsDialog._dest_mode_label(dlg, "archive")
+            == "アーカイブと同じフォルダー"
+        )
+        assert (
+            SettingsDialog._dest_mode_label(dlg, "last") == "最後に使用したフォルダー"
+        )
         assert SettingsDialog._dest_mode_label(dlg, "fixed") == "固定フォルダー"
-        assert SettingsDialog._dest_mode_label(dlg, "unknown") == "アーカイブと同じフォルダー"
+        assert (
+            SettingsDialog._dest_mode_label(dlg, "unknown")
+            == "アーカイブと同じフォルダー"
+        )
 
     def test_compression_label_mapping(self) -> None:
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
         assert SettingsDialog._compression_label(dlg, 1) == "最速（サイズ大）"
         assert SettingsDialog._compression_label(dlg, 6) == "標準"
@@ -1229,6 +1333,7 @@ class TestSettingsDialog:
 
     def test_compression_level_mapping(self) -> None:
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
         dlg._compression_var = MagicMock()
         mapping = {"最速（サイズ大）": 1, "標準": 6, "高圧縮（時間長）": 9}
@@ -1241,6 +1346,7 @@ class TestSettingsDialog:
     def test_lang_label_mapping(self) -> None:
         """言語コード→表示名の変換"""
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
         assert SettingsDialog._lang_label(dlg, "ja") == "日本語"
         assert SettingsDialog._lang_label(dlg, "en") == "English"
@@ -1249,6 +1355,7 @@ class TestSettingsDialog:
     def test_lang_code_mapping(self) -> None:
         """表示名→言語コードの変換（未知の表示名はjaにフォールバック）"""
         from kaito.gui.settings_dialog import SettingsDialog
+
         dlg = SettingsDialog.__new__(SettingsDialog)
         assert SettingsDialog._lang_code(dlg, "日本語") == "ja"
         assert SettingsDialog._lang_code(dlg, "English") == "en"
@@ -1256,6 +1363,7 @@ class TestSettingsDialog:
 
 
 # ---- _truncate_path のテスト ----
+
 
 class TestCompressMethods:
     """圧縮機能メソッドのテスト"""
@@ -1275,7 +1383,9 @@ class TestCompressMethods:
         f2 = tmp_path / "b.txt"
         f2.touch()
         with (
-            patch("tkinter.filedialog.askopenfilenames", return_value=(str(f1), str(f2))),
+            patch(
+                "tkinter.filedialog.askopenfilenames", return_value=(str(f1), str(f2))
+            ),
             patch.object(app, "_start_compress_flow") as mock_flow,
         ):
             app._on_compress()
@@ -1321,7 +1431,9 @@ class TestCompressMethods:
 
     def test_do_compress_error(self, app: MagicMock, tmp_path: Path) -> None:
         output = tmp_path / "out.zip"
-        with patch("kaito.gui.unzip_app.create_archive", side_effect=RuntimeError("fail")):
+        with patch(
+            "kaito.gui.unzip_app.create_archive", side_effect=RuntimeError("fail")
+        ):
             app._do_compress([], output)
             # _on_compress_error は after 経由で呼ばれる
             assert app.after.called
@@ -1362,11 +1474,16 @@ class TestContextMenu:
     def test_install_context_menu(self) -> None:
         mock_key = MagicMock()
         with (
-            patch("kaito.gui.unzip_app.CreateKeyEx", return_value=mock_key) as mock_create,
+            patch(
+                "kaito.gui.unzip_app.CreateKeyEx", return_value=mock_key
+            ) as mock_create,
             patch("kaito.gui.unzip_app.SetValueEx") as mock_set,
-            patch("kaito.gui.unzip_app._get_exe_path", return_value=Path("C:\\kaito.exe")),
+            patch(
+                "kaito.gui.unzip_app._get_exe_path", return_value=Path("C:\\kaito.exe")
+            ),
         ):
             from kaito.gui.unzip_app import install_context_menu
+
             install_context_menu()
             assert mock_create.call_count == 12  # SFA(3)*2 + *(1)*2 + *(1)*2 + Dir(1)*2
             assert mock_set.call_count == 12
@@ -1389,6 +1506,7 @@ class TestContextMenu:
             patch("kaito.gui.unzip_app.QueryInfoKey", return_value=(0, 0)),
         ):
             from kaito.gui.unzip_app import uninstall_context_menu
+
             uninstall_context_menu()  # should not crash
 
 
@@ -1440,13 +1558,24 @@ class TestResolveExtractDest:
     def test_single_root_no_double_nesting(self) -> None:
         """全エントリが1つのトップレベルディレクトリを共有 → dest直下"""
         from kaito.unzip import ZipEntry
+
         dest = Path("C:\\out")
         archive = Path("C:\\myproject.zip")
         entries = [
-            ZipEntry(name="myproject/file1.js", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
-            ZipEntry(name="myproject/sub/file2.js", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
+            ZipEntry(
+                name="myproject/file1.js",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ZipEntry(
+                name="myproject/sub/file2.js",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
         ]
         result = resolve_extract_dest(dest, archive, entries)
         assert result == dest
@@ -1454,13 +1583,24 @@ class TestResolveExtractDest:
     def test_root_files_creates_subfolder(self) -> None:
         """ルート直下にファイルがある → archive_stemサブフォルダを作成"""
         from kaito.unzip import ZipEntry
+
         dest = Path("C:\\out")
         archive = Path("C:\\archive.zip")
         entries = [
-            ZipEntry(name="readme.txt", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
-            ZipEntry(name="sub/file.txt", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
+            ZipEntry(
+                name="readme.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ZipEntry(
+                name="sub/file.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
         ]
         result = resolve_extract_dest(dest, archive, entries)
         assert result == dest / "archive"
@@ -1475,13 +1615,24 @@ class TestResolveExtractDest:
     def test_multiple_roots(self) -> None:
         """複数のトップレベルディレクトリ → archive_stemサブフォルダ"""
         from kaito.unzip import ZipEntry
+
         dest = Path("C:\\out")
         archive = Path("C:\\multi.zip")
         entries = [
-            ZipEntry(name="dir1/a.txt", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
-            ZipEntry(name="dir2/b.txt", size=0, compressed_size=0,
-                     modified=datetime.now(), is_dir=False),
+            ZipEntry(
+                name="dir1/a.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
+            ZipEntry(
+                name="dir2/b.txt",
+                size=0,
+                compressed_size=0,
+                modified=datetime.now(),
+                is_dir=False,
+            ),
         ]
         result = resolve_extract_dest(dest, archive, entries)
         assert result == dest / "multi"
@@ -1560,6 +1711,7 @@ class TestTruncatePath:
 
 
 # ---- プレビューのデコード・サイズ上限（統合ゲート: preview 上限） ----
+
 
 class TestDecodeText:
     """_decode_text の文字数上限とエンコーディングフォールバック"""

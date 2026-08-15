@@ -16,6 +16,7 @@ def tmp_dir() -> Path:
     d = Path(tempfile.mkdtemp())
     yield d
     import shutil
+
     shutil.rmtree(d, ignore_errors=True)
 
 

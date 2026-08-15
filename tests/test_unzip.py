@@ -74,6 +74,7 @@ class TestListEntries:
     def test_encrypted_flag(self, tmp_dir: Path) -> None:
         """central directoryのflag_bits(bit0)が立っているZIP"""
         import zipfile
+
         z = tmp_dir / "encrypted.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("secret.txt", "data")
@@ -81,7 +82,7 @@ class TestListEntries:
         # central directory header (PK\x01\x02) の flag_bits(offset 8) を書き換え
         patched = False
         for i in range(len(raw) - 4):
-            if raw[i:i+4] == b'PK\x01\x02':
+            if raw[i : i + 4] == b"PK\x01\x02":
                 raw[i + 8] |= 0x01
                 patched = True
                 break
@@ -140,7 +141,9 @@ class TestExtract:
         extract_all(normal_zip, dest, password="unused")
         assert (dest / "hello.txt").read_text() == "Hello World"
 
-    def test_extract_dir_entries(self, zip_with_dir_entries: Path, tmp_dir: Path) -> None:
+    def test_extract_dir_entries(
+        self, zip_with_dir_entries: Path, tmp_dir: Path
+    ) -> None:
         dest = tmp_dir / "out"
         extract_all(zip_with_dir_entries, dest)
         assert (dest / "folder").is_dir()
@@ -212,7 +215,9 @@ class TestListArchive:
         rar = tmp_path / "test.rar"
         rar.touch()
         with (
-            patch("kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"]),
+            patch(
+                "kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"]
+            ),
         ):
             entries, encrypted = list_archive(rar)
             assert len(entries) == 2
@@ -225,7 +230,10 @@ class TestListArchive:
     def test_list_patool_password_protected(self, tmp_path: Path) -> None:
         rar = tmp_path / "secret.rar"
         rar.touch()
-        with patch("kaito.unzip.patoolib.list_archive", side_effect=RuntimeError("password required")):
+        with patch(
+            "kaito.unzip.patoolib.list_archive",
+            side_effect=RuntimeError("password required"),
+        ):
             entries, encrypted = list_archive(rar)
             assert entries == []
             assert encrypted
@@ -259,6 +267,7 @@ class TestCreateArchive:
 
         assert output.exists()
         import zipfile
+
         with zipfile.ZipFile(output) as zf:
             names = zf.namelist()
             assert "a.txt" in names
@@ -278,6 +287,7 @@ class TestCreateArchive:
         create_archive([src_dir], output)
 
         import zipfile
+
         with zipfile.ZipFile(output) as zf:
             names = zf.namelist()
             assert "myfolder/file1.txt" in names
@@ -291,6 +301,7 @@ class TestCreateArchive:
         output = tmp_dir / "out.zip"
 
         calls: list[tuple[int, int, str]] = []
+
         def progress(cur: int, total: int, name: str = "") -> None:
             calls.append((cur, total, name))
 
@@ -331,6 +342,7 @@ class TestZipSlip:
     @staticmethod
     def _make_zip(tmp_dir: Path, names: list[str]) -> Path:
         import zipfile
+
         z = tmp_dir / "evil.zip"
         with zipfile.ZipFile(z, "w") as zf:
             for n in names:
@@ -391,6 +403,7 @@ class TestEncodingFallback:
         """UTF-8で書き込んだZIPのファイル名をCP932バイトに書き換えて再構築する"""
         import struct
         import zipfile
+
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr(name, data)
         raw = bytearray(z.read_bytes())
@@ -400,7 +413,7 @@ class TestEncodingFallback:
         # UTF-8フラグ (bit 11 / 0x800) を local header (+7) と central (+9) で落とす
         i = 0
         while i < len(raw) - 4:
-            sig = bytes(raw[i:i + 4])
+            sig = bytes(raw[i : i + 4])
             if sig == b"PK\x03\x04":
                 raw[i + 7] &= ~0x08
             elif sig == b"PK\x01\x02":
@@ -412,23 +425,23 @@ class TestEncodingFallback:
             idx = raw.find(u8, start)
             if idx < 0:
                 break
-            raw[idx:idx + len(u8)] = cp
+            raw[idx : idx + len(u8)] = cp
             start = idx + len(cp)
         # ファイル名長フィールドを更新（local: +26, central: +28）
         for i in range(len(raw) - 4):
-            sig = bytes(raw[i:i + 4])
+            sig = bytes(raw[i : i + 4])
             if sig == b"PK\x03\x04":
-                raw[i + 26:i + 28] = struct.pack("<H", len(cp))
+                raw[i + 26 : i + 28] = struct.pack("<H", len(cp))
             elif sig == b"PK\x01\x02":
-                raw[i + 28:i + 30] = struct.pack("<H", len(cp))
+                raw[i + 28 : i + 30] = struct.pack("<H", len(cp))
         # local_offset は先頭エントリのため 0 のまま（補正不要）
         # EOCD の central directory サイズ (+12) とオフセット (+16) を補正
         eocd = raw.rfind(b"PK\x05\x06")
         if eocd >= 0:
-            cd_size = struct.unpack("<I", bytes(raw[eocd + 12:eocd + 16]))[0]
-            raw[eocd + 12:eocd + 16] = struct.pack("<I", cd_size - delta)
-            cd_off = struct.unpack("<I", bytes(raw[eocd + 16:eocd + 20]))[0]
-            raw[eocd + 16:eocd + 20] = struct.pack("<I", cd_off - delta)
+            cd_size = struct.unpack("<I", bytes(raw[eocd + 12 : eocd + 16]))[0]
+            raw[eocd + 12 : eocd + 16] = struct.pack("<I", cd_size - delta)
+            cd_off = struct.unpack("<I", bytes(raw[eocd + 16 : eocd + 20]))[0]
+            raw[eocd + 16 : eocd + 20] = struct.pack("<I", cd_off - delta)
         z.write_bytes(raw)
 
     def test_list_entries_cp932_japanese(self, tmp_dir: Path) -> None:
@@ -454,13 +467,14 @@ class TestBadDate:
     def test_list_entries_bad_date_time(self, tmp_dir: Path) -> None:
         """不正な日時（月=0）を含むZIPでもクラッシュせず一覧できる"""
         import zipfile
+
         z = tmp_dir / "baddate.zip"
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("a.txt", "data")
         raw = bytearray(z.read_bytes())
         # central directory の date フィールド (offset +12) を 0 に → 月=0
         for i in range(len(raw) - 4):
-            if bytes(raw[i:i + 4]) == b"PK\x01\x02":
+            if bytes(raw[i : i + 4]) == b"PK\x01\x02":
                 raw[i + 12] = 0
                 raw[i + 13] = 0
                 break
@@ -473,9 +487,12 @@ class TestBadDate:
 class TestPasswordHandling:
     """パスワード付きZIPの取り扱い"""
 
-    def test_extract_password_calls_setpassword(self, normal_zip: Path, tmp_dir: Path) -> None:
+    def test_extract_password_calls_setpassword(
+        self, normal_zip: Path, tmp_dir: Path
+    ) -> None:
         """パスワードがZipFile.setpasswordに渡される"""
         import zipfile
+
         dest = tmp_dir / "out"
         seen: list[bytes] = []
         real = zipfile.ZipFile.setpassword
@@ -490,10 +507,13 @@ class TestPasswordHandling:
         assert (dest / "hello.txt").read_text() == "Hello World"
 
     def test_extract_without_password_skips_setpassword(
-        self, normal_zip: Path, tmp_dir: Path,
+        self,
+        normal_zip: Path,
+        tmp_dir: Path,
     ) -> None:
         """パスワードなしならsetpasswordは呼ばれない"""
         import zipfile
+
         dest = tmp_dir / "out"
         seen: list[bytes] = []
         real = zipfile.ZipFile.setpassword
@@ -594,19 +614,19 @@ class TestZipCryptoPasswordClassification:
         header = bytes([0]) * 11 + bytes([check])
         enc = cls._encrypt(header + data, password.encode("utf-8"))
         local_data_off = 30 + len(name.encode("utf-8"))
-        new = bytearray(raw[:local_data_off]) + enc + raw[local_data_off + len(data):]
+        new = bytearray(raw[:local_data_off]) + enc + raw[local_data_off + len(data) :]
         delta = len(enc) - len(data)
         for i in range(len(new) - 4):
-            sig = bytes(new[i:i + 4])
+            sig = bytes(new[i : i + 4])
             if sig == b"PK\x03\x04":
                 new[i + 6] |= 0x01  # local flags: bit0 (暗号化)
-                new[i + 18:i + 22] = struct.pack("<I", len(enc))
+                new[i + 18 : i + 22] = struct.pack("<I", len(enc))
             elif sig == b"PK\x01\x02":
                 new[i + 8] |= 0x01  # central flags: bit0
-                new[i + 20:i + 24] = struct.pack("<I", len(enc))
+                new[i + 20 : i + 24] = struct.pack("<I", len(enc))
         eocd = new.rfind(b"PK\x05\x06")
-        off = struct.unpack("<I", bytes(new[eocd + 16:eocd + 20]))[0]
-        new[eocd + 16:eocd + 20] = struct.pack("<I", off + delta)
+        off = struct.unpack("<I", bytes(new[eocd + 16 : eocd + 20]))[0]
+        new[eocd + 16 : eocd + 20] = struct.pack("<I", off + delta)
         path.write_bytes(new)
 
     def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
@@ -661,19 +681,21 @@ class TestAesZipBehavior:
 
     @staticmethod
     def _make_zip(
-        path: Path, name: str = "secret.txt", data: bytes = b"payload",
+        path: Path,
+        name: str = "secret.txt",
+        data: bytes = b"payload",
     ) -> None:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as zf:
             zf.writestr(name, data)
         raw = bytearray(path.read_bytes())
         for i in range(len(raw) - 4):
-            sig = bytes(raw[i:i + 4])
+            sig = bytes(raw[i : i + 4])
             if sig == b"PK\x03\x04":
                 raw[i + 6] |= 0x40  # local flags: bit6 (強力暗号化)
-                raw[i + 8] = 99     # local method: 99 (AES)
+                raw[i + 8] = 99  # local method: 99 (AES)
             elif sig == b"PK\x01\x02":
                 raw[i + 8] |= 0x40  # central flags: bit6
-                raw[i + 10] = 99    # central method: 99
+                raw[i + 10] = 99  # central method: 99
         path.write_bytes(raw)
 
     def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
@@ -707,7 +729,8 @@ class TestRar7zPatoolContract:
         a = tmp_path / "test.7z"
         a.touch()
         with patch(
-            "kaito.unzip.patoolib.list_archive", return_value=["file.txt", "dir/"],
+            "kaito.unzip.patoolib.list_archive",
+            return_value=["file.txt", "dir/"],
         ):
             entries, encrypted = list_archive(a)
         assert not encrypted
@@ -826,7 +849,9 @@ class TestSymlinkAndPathSafety:
         with pytest.raises(RuntimeError, match="安全でないパス"):
             extract_all(z, dest)
 
-    @pytest.mark.skipif(os.name != "nt", reason="Windows特有のバックスラッシュ型トラバーサル")
+    @pytest.mark.skipif(
+        os.name != "nt", reason="Windows特有のバックスラッシュ型トラバーサル"
+    )
     def test_backslash_traversal_rejected_on_windows(self, tmp_dir: Path) -> None:
         """バックスラッシュ区切りのパストラバーサルも拒否される"""
         z = tmp_dir / "bs.zip"

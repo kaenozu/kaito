@@ -32,13 +32,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "app.compress": "圧縮する",
         "app.extract": "解凍する",
         "app.cancel": "キャンセル",
-
         # ---- ツリー見出し ----
         "tree.name": "名前",
         "tree.size": "サイズ",
         "tree.compressed": "圧縮後",
         "tree.date": "更新日時",
-
         # ---- 設定ダイアログ (gui/settings_dialog.py) ----
         "settings.title": "設定",
         "settings.heading": "kaito の設定",
@@ -58,7 +56,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "comp.fast": "最速（サイズ大）",
         "comp.normal": "標準",
         "comp.max": "高圧縮（時間長）",
-
         # ---- ダイアログタイトル ----
         "dialog.open_archive": "アーカイブファイルを選択",
         "dialog.choose_dest": "展開先フォルダを選択",
@@ -66,11 +63,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "dialog.compress_files": "圧縮するファイルを選択",
         "dialog.save_archive": "圧縮ファイルの保存先",
         "dialog.password": "パスワード",
-
         # ---- ファイルタイプ ----
         "filetype.archive": "アーカイブ",
         "filetype.all": "すべてのファイル",
-
         # ---- ステータス・メッセージ ----
         "msg.compress_candidates": "{n}個のファイルを圧縮できます",
         "msg.queue_status": "[{q}アーカイブ] {current}",
@@ -89,7 +84,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "msg.password_prompt": "{name} はパスワードで保護されています\nパスワードを入力してください:",
         "msg.compress_progress": "圧縮中: {pct} ({cur}/{total}) - {name}",
         "msg.compress_done": "圧縮完了",
-
         # ---- コンテキストメニュー ----
         "ctx.extract": "kaitoで解凍",
         "ctx.compress": "kaitoで圧縮",
@@ -114,12 +108,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "app.compress": "Compress",
         "app.extract": "Extract",
         "app.cancel": "Cancel",
-
         "tree.name": "Name",
         "tree.size": "Size",
         "tree.compressed": "Compressed",
         "tree.date": "Modified",
-
         "settings.title": "Settings",
         "settings.heading": "kaito Settings",
         "settings.subtitle": "Adjust appearance and compression speed to your needs",
@@ -138,17 +130,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "comp.fast": "Fastest (larger size)",
         "comp.normal": "Normal",
         "comp.max": "Maximum (slower)",
-
         "dialog.open_archive": "Select archive file",
         "dialog.choose_dest": "Select destination folder",
         "dialog.choose_fixed_dest": "Select fixed destination folder",
         "dialog.compress_files": "Select files to compress",
         "dialog.save_archive": "Save archive as",
         "dialog.password": "Password",
-
         "filetype.archive": "Archives",
         "filetype.all": "All Files",
-
         "msg.compress_candidates": "{n} file(s) ready to compress",
         "msg.queue_status": "[{q} archive(s)] {current}",
         "msg.error_open": "Error: cannot open file ({e})",
@@ -166,7 +155,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "msg.password_prompt": "{name} is password protected\nEnter the password:",
         "msg.compress_progress": "Compressing: {pct} ({cur}/{total}) - {name}",
         "msg.compress_done": "Compression complete",
-
         "ctx.extract": "Extract with kaito",
         "ctx.compress": "Compress with kaito",
         "ctx.installed": "Context menu registered",

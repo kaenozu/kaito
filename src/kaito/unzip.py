@@ -19,6 +19,7 @@ from patoolib.util import PatoolError
 @dataclass
 class ZipEntry:
     """アーカイブ内の1エントリの情報"""
+
     name: str
     size: int
     compressed_size: int
@@ -32,6 +33,7 @@ ProgressCallback = Callable[[int, int, str], None]
 
 class PasswordPrompt(Protocol):
     """パスワード入力のためのプロトコル"""
+
     def __call__(self) -> str | None: ...
 
 
@@ -46,6 +48,7 @@ _ZIP_ENCODINGS: tuple[str, ...] = ()
 # ZIP仕様ではファイル名のエンコーディングが未定義のため、主要言語圏のエンコーディングを
 # 総当たりで試す（UTF-8→各国語→システムロケールの順）
 _FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "euc-kr"]
+
 
 def get_zip_encodings() -> tuple[str, ...]:
     """ZIPファイル名のデコードに試すエンコーディング一覧
@@ -235,7 +238,13 @@ def _list_patool_archive(path: str | Path) -> tuple[list[ZipEntry], bool]:
             return [], True
         raise RuntimeError(f"アーカイブの一覧取得に失敗しました: {e}")
     entries = [
-        ZipEntry(name=n, size=0, compressed_size=0, modified=datetime.now(), is_dir=n.endswith("/"))
+        ZipEntry(
+            name=n,
+            size=0,
+            compressed_size=0,
+            modified=datetime.now(),
+            is_dir=n.endswith("/"),
+        )
         for n in names
     ]
     return entries, False
@@ -268,6 +277,7 @@ def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
     暗号化検出は general purpose bit flag の bit0 (ZipCrypto) および
     bit6 (強力暗号化 / AES) を確認する。
     """
+
     def _extract_entries(zf: zipfile.ZipFile) -> tuple[list[ZipEntry], bool]:
         entries: list[ZipEntry] = []
         is_encrypted = False
@@ -280,13 +290,15 @@ def list_entries(zip_path: str | Path) -> tuple[list[ZipEntry], bool]:
             except ValueError:
                 # 壊れたアーカイブの不正日時（月=0等）は現在時刻にフォールバック
                 modified = datetime.now()
-            entries.append(ZipEntry(
-                name=info.filename,
-                size=info.file_size,
-                compressed_size=info.compress_size,
-                modified=modified,
-                is_dir=info.filename.endswith("/"),
-            ))
+            entries.append(
+                ZipEntry(
+                    name=info.filename,
+                    size=info.file_size,
+                    compressed_size=info.compress_size,
+                    modified=modified,
+                    is_dir=info.filename.endswith("/"),
+                )
+            )
         return entries, is_encrypted
 
     return try_zip_with_encodings(zip_path, _extract_entries)
@@ -322,6 +334,7 @@ def extract(
         on_progress: 進捗コールバック (current, total)
         members: 展開するエントリ名のリスト（None=すべて）
     """
+
     def _do_extract(zf: zipfile.ZipFile) -> None:
         if password is not None:
             zf.setpassword(password.encode("utf-8"))
@@ -352,6 +365,9 @@ def extract_all(
 ) -> None:
     """全エントリを展開（extract に委譲、members=Noneですべて展開）"""
     extract(
-        zip_path, dest, password=password, on_progress=on_progress,
+        zip_path,
+        dest,
+        password=password,
+        on_progress=on_progress,
         members=None,
     )

@@ -16,6 +16,7 @@ DARK = True
 
 # ---- コントラスト計算 (WCAG 2.x) ----
 
+
 def _channel(value: int) -> float:
     value /= 255
     if value <= 0.03928:
@@ -147,7 +148,8 @@ class TestThemeSnapshot:
             if isinstance(value, str) and value.startswith("#"):
                 color_tokens.add(name)
             elif (
-                isinstance(value, tuple) and len(value) == 2
+                isinstance(value, tuple)
+                and len(value) == 2
                 and all(isinstance(c, str) and c.startswith("#") for c in value)
             ):
                 color_tokens.add(name)

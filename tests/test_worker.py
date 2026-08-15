@@ -115,6 +115,7 @@ class TestExtractWorker:
         call_count = 0
 
         from kaito import unzip as unzip_module
+
         real_extract = unzip_module.extract_archive  # 実物を保持
 
         def real_extract_wrapper(*args, **kwargs):
@@ -126,7 +127,9 @@ class TestExtractWorker:
             else:
                 raise AssertionError("2つ目のアーカイブは処理されないはず")
 
-        with patch("kaito.worker.unzip.extract_archive", side_effect=real_extract_wrapper):
+        with patch(
+            "kaito.worker.unzip.extract_archive", side_effect=real_extract_wrapper
+        ):
             result = worker.run()
 
         assert result.canceled
@@ -144,8 +147,10 @@ class TestExtractWorker:
 
         with patch("kaito.worker.unzip.extract_archive") as mock_extract:
             worker = ExtractWorker(
-                [z1, z2], dest,
-                active_password="secret", active_zip_path=z1,
+                [z1, z2],
+                dest,
+                active_password="secret",
+                active_zip_path=z1,
             )
             worker.run()
 
