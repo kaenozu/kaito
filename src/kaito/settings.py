@@ -14,13 +14,22 @@ import platformdirs
 DEFAULT_SETTINGS = {
     "theme": "system",
     "last_dest": "",
+    "dest_mode": "archive",
+    "fixed_dest": "",
     "open_on_done": True,
     "close_on_done": False,
     "recent_files": [],
     "compression_level": 1,
+    "language": "ja",
 }
 
 MAX_RECENT_FILES = 10
+
+# 列挙型の設定キー: 有効値以外が保存されようとしたらデフォルトに戻す
+_ENUM_SETTINGS: dict[str, tuple[Any, ...]] = {
+    "dest_mode": ("archive", "last", "fixed"),
+    "language": ("ja", "en"),
+}
 
 
 class SettingsManager:
@@ -43,11 +52,22 @@ class SettingsManager:
         try:
             raw = self._path.read_text(encoding="utf-8")
             loaded = json.loads(raw)
-            self._data = {**DEFAULT_SETTINGS, **loaded}
+            if isinstance(loaded, dict):
+                self._data = {**DEFAULT_SETTINGS, **loaded}
+            else:
+                # JSONとしては有効でもdictでない（[] や "str" 等）場合は破棄
+                self._data = dict(DEFAULT_SETTINGS)
         except (FileNotFoundError, json.JSONDecodeError):
             self._data = dict(DEFAULT_SETTINGS)
         except (PermissionError, OSError, UnicodeDecodeError):
             self._data = dict(DEFAULT_SETTINGS)
+
+    @staticmethod
+    def _sanitize(items: dict[str, Any]) -> None:
+        """列挙型の設定キーに不正な値が入らないよう検証する"""
+        for key, valid in _ENUM_SETTINGS.items():
+            if key in items and items[key] not in valid:
+                items[key] = DEFAULT_SETTINGS[key]
 
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,7 +83,15 @@ class SettingsManager:
         return self._data.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        self._data[key] = value
+        items = {key: value}
+        self._sanitize(items)
+        self._data[key] = items[key]
+        self.save()
+
+    def set_many(self, items: dict[str, Any]) -> None:
+        """複数の設定を一括で更新し、1回だけ保存する"""
+        self._sanitize(items)
+        self._data.update(items)
         self.save()
 
     def add_recent_file(self, path: str) -> None:
