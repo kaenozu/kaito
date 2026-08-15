@@ -22,7 +22,8 @@ sys.setrecursionlimit(5000)
 
 
 def _version_tuple(version: str) -> tuple[int, int, int, int]:
-    parts = [int(part) for part in version.split(".")]
+    # "0.12.0.dev0" のような dev サフィックスは Windows の数値版に載せられない
+    parts = [int(part) for part in version.split(".") if part.isdigit()]
     parts.extend([0] * (4 - len(parts)))
     return tuple(parts[:4])  # type: ignore[return-value]
 
