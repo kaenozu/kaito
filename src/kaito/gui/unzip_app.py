@@ -556,6 +556,9 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 theme.TREE_LIGHT_SELECT_FG,
             )
             heading_active = theme.TREE_LIGHT_HEADER_ACTIVE
+        # ttk にはフォント指定タプルを渡す（CTkFont を渡すと一時オブジェクトの
+        # GC で名前付きフォントが削除され Tk デフォルトへフォールバックするため）。
+        # 正の size はピクセル単位（負はポイント）。
         style.configure(
             "Treeview",
             background=bg,
@@ -563,14 +566,14 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
             fieldbackground=bg,
             borderwidth=0,
             rowheight=theme.TREE_ROW_HEIGHT,
-            font=theme.tree_font(),
+            font=(theme.TREE_FONT_FAMILY, theme.TREE_FONT_SIZE),
         )
         style.configure(
             "Treeview.Heading",
             background=heading_bg,
             foreground=fg,
             relief="flat",
-            font=theme.tree_font(weight="bold"),
+            font=(theme.TREE_FONT_FAMILY, theme.TREE_FONT_SIZE, "bold"),
         )
         style.map(
             "Treeview",

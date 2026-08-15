@@ -387,6 +387,15 @@ class TestUnzipAppTheme:
             assert call.kwargs["fieldbackground"] == theme.TREE_DARK_BG
             assert call.kwargs["borderwidth"] == 0
             assert call.kwargs["rowheight"] == theme.TREE_ROW_HEIGHT
+            # ttk にはフォント指定タプル（正数=px）を渡す（CTkFont の GC 落ち防止）
+            assert call.kwargs["font"] == (theme.TREE_FONT_FAMILY, theme.TREE_FONT_SIZE)
+            heading = mock_style.configure.call_args_list[1]
+            assert heading.args[0] == "Treeview.Heading"
+            assert heading.kwargs["font"] == (
+                theme.TREE_FONT_FAMILY,
+                theme.TREE_FONT_SIZE,
+                "bold",
+            )
 
     def test_apply_tree_style_light(self) -> None:
         """暗黙のクラムテーマと色設定をmockで検証(light)"""
@@ -404,6 +413,7 @@ class TestUnzipAppTheme:
             assert call.kwargs["fieldbackground"] == theme.TREE_LIGHT_BG
             assert call.kwargs["borderwidth"] == 0
             assert call.kwargs["rowheight"] == theme.TREE_ROW_HEIGHT
+            assert call.kwargs["font"] == (theme.TREE_FONT_FAMILY, theme.TREE_FONT_SIZE)
 
 
 class TestUnzipAppMethods:

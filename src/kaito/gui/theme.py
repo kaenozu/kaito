@@ -57,30 +57,22 @@ TREE_DARK_SELECT_FG = "#ffffff"
 TREE_ROW_HEIGHT = 34
 
 # --- フォント ---
-FONT_FAMILY = "Yu Gothic UI"
-# ファイル一覧（ツリー）は Windows 標準の Segoe UI を優先する。
-# 日本語グリフは OS のフォントフォールバックで Yu Gothic UI に解決されるため
-# ラテン文字・数字が引き締まって見える（Yu Gothic UI は dense な一覧では太く見える）。
+# アプリ全体は Windows 標準の Segoe UI を基本とする。
+# Segoe UI 自体は日本語グリフを持たないが、Windows のフォントリンク
+# （フォールバック）により日本語は Yu Gothic UI で描画される。
+# そのためラテン文字・数字が引き締まり、日本語もそのまま表示できる。
+FONT_FAMILY = "Segoe UI"
+# ファイル一覧・入力/データ表示は 12px を既定とする。
+# （ツリーは ttk のためフォント指定タプル (TREE_FONT_FAMILY, TREE_FONT_SIZE) を使う）
 TREE_FONT_FAMILY = "Segoe UI"
 TREE_FONT_SIZE = 12
-# 入力・データ表示（検索ボックス・パス/宛先エントリ・ステータスバー・プレビュー）も
-# ツリーと同じ Segoe UI に統一する。ファイル名・パス・内容などラテン文字が多いテキストが
-# 多く、日本語 UI ラベル（ボタン等）と区別して引き締めて見せるため。
 UI_FONT_FAMILY = "Segoe UI"
 UI_FONT_SIZE = 12
 
 
 def font(size: int = 13, weight: Literal["normal", "bold"] = "normal") -> ctk.CTkFont:
-    """アプリ標準フォント（日本語 UI ラベル・ボタン等）を作成する"""
+    """アプリ標準フォント（UI ラベル・ボタン等）を作成する"""
     return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
-
-
-def tree_font(
-    size: int = TREE_FONT_SIZE,
-    weight: Literal["normal", "bold"] = "normal",
-) -> ctk.CTkFont:
-    """ファイル一覧（ツリー）用フォントを作成する"""
-    return ctk.CTkFont(family=TREE_FONT_FAMILY, size=size, weight=weight)
 
 
 def ui_font(
