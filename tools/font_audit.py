@@ -227,11 +227,11 @@ def _build_widgets(parent) -> list[tuple[str, str, str, Callable[[], dict]]]:
     )
 
     # ボタン（プライマリ/セカンダリ: theme ヘルパー経由）
-    # アプリは bold を渡さない（デフォルト bold=False → weight は normal）
+    # プライマリは既定 bold=True（セカンダリは normal）
     btn_primary = theme.primary_button(parent, text="抽出", command=lambda: None)
     add(
         "CTkButton primary",
-        "theme.primary_button (font(13))",
+        "theme.primary_button (font(13,bold))",
         "font13",
         lambda: str(btn_primary.cget("font")),
     )

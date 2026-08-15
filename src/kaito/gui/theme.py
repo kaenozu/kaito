@@ -113,9 +113,9 @@ def primary_button(
     width: int = 100,
     height: int = 40,
     font_size: int = 13,
-    bold: bool = False,
+    bold: bool = True,
 ) -> ctk.CTkButton:
-    """アクセント塗りのプライマリボタン"""
+    """アクセント塗りのプライマリボタン（既定で bold にして強調）"""
     return ctk.CTkButton(
         parent,
         text=text,
