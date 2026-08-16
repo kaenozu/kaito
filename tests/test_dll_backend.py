@@ -85,6 +85,52 @@ def _create_header_encrypted_7z(directory: Path) -> Path:
     return archive
 
 
+def _write_cp932_zip(z: Path, name: str, data: str) -> None:
+    """UTF-8で書き込んだZIPのファイル名をCP932バイトに書き換えて再構築する"""
+    import struct
+    import zipfile
+
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr(name, data)
+    raw = bytearray(z.read_bytes())
+    u8 = name.encode("utf-8")
+    cp = name.encode("cp932")
+    delta = len(u8) - len(cp)
+    # UTF-8フラグ (bit 11 / 0x800) を local header (+7) と central (+9) で落とす
+    i = 0
+    while i < len(raw) - 4:
+        sig = bytes(raw[i : i + 4])
+        if sig == b"PK\x03\x04":
+            raw[i + 7] &= ~0x08
+        elif sig == b"PK\x01\x02":
+            raw[i + 9] &= ~0x08
+        i += 1
+    # ファイル名をCP932バイトに置換（local header と central directory の両方）
+    start = 0
+    while True:
+        idx = raw.find(u8, start)
+        if idx < 0:
+            break
+        raw[idx : idx + len(u8)] = cp
+        start = idx + len(cp)
+    # ファイル名長フィールドを更新（local: +26, central: +28）
+    for i in range(len(raw) - 4):
+        sig = bytes(raw[i : i + 4])
+        if sig == b"PK\x03\x04":
+            raw[i + 26 : i + 28] = struct.pack("<H", len(cp))
+        elif sig == b"PK\x01\x02":
+            raw[i + 28 : i + 30] = struct.pack("<H", len(cp))
+    # local_offset は先頭エントリのため 0 のまま（補正不要）
+    # EOCD の central directory サイズ (+12) とオフセット (+16) を補正
+    eocd = raw.rfind(b"PK\x05\x06")
+    if eocd >= 0:
+        cd_size = struct.unpack("<I", bytes(raw[eocd + 12 : eocd + 16]))[0]
+        raw[eocd + 12 : eocd + 16] = struct.pack("<I", cd_size - delta)
+        cd_off = struct.unpack("<I", bytes(raw[eocd + 16 : eocd + 20]))[0]
+        raw[eocd + 16 : eocd + 20] = struct.pack("<I", cd_off - delta)
+    z.write_bytes(raw)
+
+
 # ---------------------------------------------------------------------------
 # 一覧・読み出し・展開
 # ---------------------------------------------------------------------------
@@ -320,3 +366,38 @@ def test_read_operations_spawn_no_subprocess(
         backend.read_entry(normal_rar, "test.txt")
 
         assert popen_mock.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ZIP 名のエンコーディング (CP932 等の非UTF-8名)
+# ---------------------------------------------------------------------------
+
+
+def test_zip_entry_names_decodes_cp932(tmp_path: Path) -> None:
+    """CP932 名の ZIP をロケールに依らず正しくデコードできる。"""
+    from kaito.archive.dll_backend import _zip_entry_names
+
+    z = tmp_path / "cp932.zip"
+    _write_cp932_zip(z, "日本語ファイル.txt", "data")
+    assert _zip_entry_names(z) == ["日本語ファイル.txt"]
+    # 非ZIP は None (DLL の名前を使う)
+    assert _zip_entry_names(tmp_path / "plain.txt") is None
+
+
+def test_dll_backend_lists_cp932_zipname(tmp_path: Path) -> None:
+    """英語ロケールでも CP932 名の ZIP が正しい名前で一覧・展開できる。
+
+    7-Zip はシステムのコードページで ZIP 名をデコードするため、英語 Windows
+    では CP932 名が mojibake になる。DLL バックエンドは中央ディレクトリから
+    デコードし直した名前で置き換える。
+    """
+    backend = DllArchiveBackend()
+    z = tmp_path / "cp932.zip"
+    _write_cp932_zip(z, "日本語ファイル.txt", "data")
+
+    info = backend.list_archive(z)
+    assert [entry.name for entry in info.entries] == ["日本語ファイル.txt"]
+
+    dest = tmp_path / "out"
+    backend.extract(z, ExtractionOptions(dest_dir=dest))
+    assert (dest / "日本語ファイル.txt").read_text() == "data"

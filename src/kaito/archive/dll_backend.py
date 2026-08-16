@@ -6,6 +6,10 @@ zip / 7z / rar の一覧・展開・プレビュー読み出し・整合性検�
 で処理する。パスワードはプロセス内 (ICryptoGetTextPassword / BSTR) で供給され、
 読み取り処理中に subprocess を一切生まない (CLI の -p<password> 引数露出なし)。
 
+ZIP のファイル名は 7-Zip がシステムのコードページでデコードするため、英語
+ロケールでは CP932 等の名前が mojibake になる。ZIP に限り中央ディレクトリを
+zip_encoding.get_zip_encodings() のフォールバックでデコードし直して補正する。
+
 作成 (圧縮) は対象外: 平文 ZIP は zip_backend.ZipBackend (zipfile)、
 暗号化 ZIP / 7z は sevenzip_backend.SevenZipBackend (7z.exe CLI) が担う。
 """
@@ -41,6 +45,7 @@ from kaito.archive.sevenzip_dll import (
     kUnsupportedMethod,
     kWrongPassword,
 )
+from kaito.archive.zip_encoding import get_zip_encodings
 from kaito.domain.errors import (
     CancelledError,
     ExtractionFailedError,
@@ -63,6 +68,40 @@ _SIGNATURES = {
 }
 
 _EPOCH = datetime(1970, 1, 1)
+
+
+def _has_surrogates(names: list[str]) -> bool:
+    """名前リストに surrogateescape 由来の surrogate が含まれるかを返す。"""
+    return any(
+        0xDC80 <= ord(character) <= 0xDCFF for name in names for character in name
+    )
+
+
+def _zip_entry_names(path: Path) -> Optional[list[str]]:
+    """ZIP の中央ディレクトリからファイル名を取得する。
+
+    7-Zip (IInArchive) は UTF-8 フラグのない ZIP 名をシステムのコードページで
+    デコードするため、CP932 等の日本語 ZIP を英語ロケールの Windows で読むと
+    mojibake になる。ZIP に限り中央ディレクトリを get_zip_encodings() の順で
+    strict デコードし、最初に成功したエンコーディングの名前を使う (旧 zipfile
+    読み取り系と同じ挙動)。戻り値は中央ディレクトリ順 = DLL のアイテム順の
+    名前リスト。ZIP 以外や読めない場合は None を返す。
+    """
+    import zipfile
+
+    if path.suffix.lower() != ".zip":
+        return None
+    last_names: Optional[list[str]] = None
+    for encoding in get_zip_encodings():
+        try:
+            with zipfile.ZipFile(path, "r", metadata_encoding=encoding) as archive:
+                names = [info.filename for info in archive.infolist()]
+        except (OSError, UnicodeError, LookupError):
+            continue
+        last_names = names
+        if not _has_surrogates(names):
+            return names
+    return last_names
 
 
 def _signature_matches(path: Path, extension: str) -> bool:
@@ -254,6 +293,20 @@ class DllArchiveBackend:
             is_link=item.is_link,
         )
 
+    def _items(self, path: Path, opened: Any) -> list[Any]:
+        """アイテムを取得し、ZIP 名の文字化けを中央ディレクトリ基準で補正する。
+
+        7-Zip はシステムのコードページで ZIP 名をデコードするため、日本語
+        CP932 の ZIP を英語ロケールで読むと mojibake になる。ZIP に限り
+        _zip_entry_names() の名前で置き換える (アイテム数が一致する場合のみ)。
+        """
+        items = opened.list_items()
+        names = _zip_entry_names(path)
+        if names is not None and len(names) == len(items):
+            for item, name in zip(items, names):
+                item.name = name
+        return items
+
     # ------------------------------------------------------------------
     # 一覧
     # ------------------------------------------------------------------
@@ -261,7 +314,7 @@ class DllArchiveBackend:
     def list_archive(self, path: Path, password: Optional[str] = None) -> ArchiveInfo:
         self._check_cancelled()
         with self._open(path, password) as opened:
-            items = opened.list_items()
+            items = self._items(path, opened)
         entries = [self._entry_from_item(item, path) for item in items]
         return ArchiveInfo(
             path=path,
@@ -305,7 +358,7 @@ class DllArchiveBackend:
     def extract(self, path: Path, options: ExtractionOptions) -> None:
         self._check_cancelled()
         with self._open(path, options.password) as opened:
-            items = opened.list_items()
+            items = self._items(path, opened)
             entries = [self._entry_from_item(item, path) for item in items]
 
             selected = entries
@@ -368,7 +421,7 @@ class DllArchiveBackend:
     ) -> Optional[bytes]:
         self._check_cancelled()
         with self._open(path, password) as opened:
-            items = opened.list_items()
+            items = self._items(path, opened)
             entry = next(
                 (item for item in items if item.name.replace("\\", "/") == entry_name),
                 None,
