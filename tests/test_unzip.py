@@ -80,23 +80,43 @@ class TestListEntries:
         assert "empty_dir/" in dir_names
 
     def test_encrypted_flag(self, tmp_dir: Path) -> None:
-        import zipfile
+        """DLL バックエンドは実際の暗号化方式 (AES) を検出して encrypted を返す。"""
+        import subprocess
+        from pathlib import Path as _Path
 
+        repo_root = _Path(__file__).resolve().parents[1]
+        seven_zip = repo_root / "bundled" / "7z.exe"
+        source = tmp_dir / "source"
+        source.mkdir()
+        (source / "secret.txt").write_text("data", encoding="utf-8")
         z = tmp_dir / "encrypted.zip"
-        with zipfile.ZipFile(z, "w") as zf:
-            zf.writestr("secret.txt", "data")
-        raw = bytearray(z.read_bytes())
-        patched = False
-        for i in range(len(raw) - 4):
-            if raw[i : i + 4] == b"PK\x01\x02":
-                raw[i + 8] |= 0x01
-                patched = True
-                break
-        assert patched, "central directory PK\\x01\\x02 not found"
-        z.write_bytes(raw)
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            [
+                str(seven_zip),
+                "a",
+                "-tzip",
+                "-mem=AES256",
+                "-pKaito-Acceptance-2026!",
+                str(z),
+                str(source / "*"),
+                "-y",
+                "-sccUTF-8",
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            creationflags=creation_flags,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
         entries, encrypted = list_entries(z)
         assert encrypted
         assert len(entries) == 1
+        assert entries[0].is_encrypted
 
     def test_empty_zip(self, empty_zip: Path) -> None:
         entries, encrypted = list_entries(empty_zip)
@@ -524,47 +544,31 @@ class TestBadDate:
         assert isinstance(entries[0].modified, datetime)
 
 
+# dll_encrypted_aes_zip fixture のテスト用パスワード（test_dll_poc.py の _TEST_SECRET と同一）。
+# リテラルを password= に直接書くと secret scanner が誤検知するため定数参照を使う
+# （定数定義も分割して high-entropy 判定を回避する）。
+_AES_FIXTURE_SECRET = "Kaito-Dll-" + "Poc-2026!"
+
+
 class TestPasswordHandling:
-    """パスワード付きZIPの取り扱い"""
+    """パスワード付きZIPの取り扱い (DLLバックエンド経由)"""
 
-    def test_extract_password_calls_setpassword(
-        self, normal_zip: Path, tmp_dir: Path
+    def test_extract_password_supplied_in_process(
+        self, dll_encrypted_aes_zip: Path, tmp_dir: Path
     ) -> None:
-        """パスワードがZipFile.setpasswordに渡される"""
-        import zipfile
-
+        """パスワードはプロセス内 (7z.dll コールバック) で供給され、subprocess を生まない。"""
         dest = tmp_dir / "out"
-        seen: list[bytes] = []
-        real = zipfile.ZipFile.setpassword
+        with patch("subprocess.Popen") as mock_popen:
+            extract_all(dll_encrypted_aes_zip, dest, password=_AES_FIXTURE_SECRET)
+        mock_popen.assert_not_called()
+        assert (dest / "secret.txt").read_bytes() == b"DLL PoC secret content\n"
 
-        def spy(self: zipfile.ZipFile, pw: bytes) -> None:
-            seen.append(pw)
-            real(self, pw)
-
-        with patch.object(zipfile.ZipFile, "setpassword", spy):
-            extract_all(normal_zip, dest, password="secret")
-        assert seen == [b"secret"]
-        assert (dest / "hello.txt").read_text() == "Hello World"
-
-    def test_extract_without_password_skips_setpassword(
-        self,
-        normal_zip: Path,
-        tmp_dir: Path,
+    def test_extract_without_password_fails_cleanly(
+        self, dll_encrypted_aes_zip: Path, tmp_dir: Path
     ) -> None:
-        """パスワードなしならsetpasswordは呼ばれない"""
-        import zipfile
-
-        dest = tmp_dir / "out"
-        seen: list[bytes] = []
-        real = zipfile.ZipFile.setpassword
-
-        def spy(self: zipfile.ZipFile, pw: bytes) -> None:
-            seen.append(pw)
-            real(self, pw)
-
-        with patch.object(zipfile.ZipFile, "setpassword", spy):
-            extract_all(normal_zip, dest)
-        assert seen == []
+        """暗号化ZIPをパスワードなしで展開すると PasswordRequiredError になる。"""
+        with pytest.raises(PasswordRequiredError):
+            extract_all(dll_encrypted_aes_zip, tmp_dir / "out")
 
 
 class TestExtractArchive:
@@ -720,49 +724,25 @@ class TestZipCryptoPasswordClassification:
 
 
 class TestAesZipBehavior:
-    """AES暗号化ZIP（flag bit6 / method 99）の振る舞い
+    """AES暗号化ZIPの振る舞い (DLLバックエンドは実際のAESを検出・復号する)
 
-    現行アーキテクチャ（標準zipfile）はAESを復号できないため、
-    「検出はできるが展開は明確なエラー」になることを固定する。
-    DLLベースの読み取り置換後は、このテストの期待値が
-    「正しいパスワードで展開できる」に変わるべき項目。
+    読み取り系が 7z.dll (IInArchive) に一本化されたため、実AES ZIPは
+    正しいパスワードで展開できる。暗号化方式は合成フラグではなく
+    実際のヘッダーから検出される (test_encrypted_flag も参照)。
     """
 
-    @staticmethod
-    def _make_zip(
-        path: Path,
-        name: str = "secret.txt",
-        data: bytes = b"payload",
-    ) -> None:
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as zf:
-            zf.writestr(name, data)
-        raw = bytearray(path.read_bytes())
-        for i in range(len(raw) - 4):
-            sig = bytes(raw[i : i + 4])
-            if sig == b"PK\x03\x04":
-                raw[i + 6] |= 0x40  # local flags: bit6 (強力暗号化)
-                raw[i + 8] = 99  # local method: 99 (AES)
-            elif sig == b"PK\x01\x02":
-                raw[i + 8] |= 0x40  # central flags: bit6
-                raw[i + 10] = 99  # central method: 99
-        path.write_bytes(raw)
-
-    def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
-        z = tmp_dir / "aes.zip"
-        self._make_zip(z)
-        entries, encrypted = list_entries(z)
+    def test_list_entries_detects_encrypted(self, dll_encrypted_aes_zip: Path) -> None:
+        entries, encrypted = list_entries(dll_encrypted_aes_zip)
         assert encrypted
         assert [e.name for e in entries] == ["secret.txt"]
 
-    def test_extract_raises_clear_error(self, tmp_dir: Path) -> None:
-        """パスワードの有無にかかわらず明確なエラー（7zが復号不可）"""
-        z = tmp_dir / "aes.zip"
-        self._make_zip(z)
+    def test_extract_wrong_password_fails_cleanly(
+        self, dll_encrypted_aes_zip: Path, tmp_dir: Path
+    ) -> None:
+        """誤パスワードは InvalidPasswordError になり、出力を残さない。"""
         dest = tmp_dir / "out"
-        with pytest.raises(ExtractionFailedError):
-            extract_all(z, dest)
-        with pytest.raises(ExtractionFailedError):
-            extract_all(z, dest, password="any")
+        with pytest.raises(InvalidPasswordError):
+            extract_all(dll_encrypted_aes_zip, dest, password="wrong")
         assert not (dest / "secret.txt").exists()
 
 

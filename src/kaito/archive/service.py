@@ -1,7 +1,7 @@
 """
 src/kaito/archive/service.py
 アーカイブ操作のサービス層 (GUIとバックエンドの橋渡し)
-関連: archive/zip_backend.py, archive/sevenzip_backend.py, gui/unzip_app.py
+関連: archive/dll_backend.py, archive/zip_backend.py, archive/sevenzip_backend.py, gui/unzip_app.py
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from kaito.archive.inspection import (
     inspect_archive,
 )
 from kaito.archive.safety import ensure_no_reparse_ancestors
+from kaito.archive.dll_backend import DllArchiveBackend
 from kaito.archive.sevenzip_backend import SevenZipBackend
 from kaito.archive.zip_backend import ZipBackend
 from kaito.domain.errors import (
@@ -45,10 +46,11 @@ class ArchiveService:
     ) -> None:
         self._cancel_event = cancel_event or threading.Event()
         self._safety_limits = safety_limits or SafetyLimits()
-        self._zip_backend = ZipBackend(
+        self._dll_backend = DllArchiveBackend(
             cancel_event=self._cancel_event,
             preview_max_size=self._safety_limits.preview_max_size,
         )
+        self._zip_backend = ZipBackend(cancel_event=self._cancel_event)
         self._sevenzip_backend = SevenZipBackend(
             cancel_event=self._cancel_event,
             preview_max_size=self._safety_limits.preview_max_size,
@@ -73,6 +75,12 @@ class ArchiveService:
     def is_supported(self, path: str | Path) -> bool:
         return Path(path).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
+    @staticmethod
+    def _ensure_supported(path: Path) -> None:
+        extension = path.suffix.lower()
+        if extension not in ArchiveService.SUPPORTED_EXTENSIONS:
+            raise UnsupportedFormatError(extension)
+
     def is_creation_supported(self, path: str | Path) -> bool:
         extension = Path(path).suffix.lower()
         if extension == ".zip":
@@ -81,27 +89,15 @@ class ArchiveService:
             return self._sevenzip_backend.supports_creation(extension)
         return False
 
-    def _get_backend(self, path: str | Path) -> ZipBackend | SevenZipBackend:
-        extension = Path(path).suffix.lower()
-        if extension == ".zip":
-            return self._zip_backend
-        if extension in {".rar", ".7z"}:
-            return self._sevenzip_backend
-        raise UnsupportedFormatError(extension)
-
     @staticmethod
     def _raise_if_backend_unavailable(
-        backend: SevenZipBackend, archive_path: str | Path
+        backend: object, archive_path: str | Path
     ) -> None:
-        available, error_message = backend.check_tool_availability()
+        available, error_message = backend.check_tool_availability()  # type: ignore[attr-defined]
         if not available:
             raise ExternalToolNotFoundError(
                 "7z (7-Zip)", error_message, archive_path=str(archive_path)
             )
-
-    def _encrypted_zip_uses_sevenzip(self, path: str | Path) -> bool:
-        """暗号化ZIPはAESを含めて同梱7-Zipで処理する。"""
-        return self._zip_backend.list_archive(Path(path)).is_encrypted
 
     def _effective_extraction_options(
         self, options: ExtractionOptions
@@ -122,10 +118,10 @@ class ArchiveService:
     def list_archive(
         self, path: str | Path, password: Optional[str] = None
     ) -> ArchiveInfo:
-        backend = self._get_backend(path)
-        if isinstance(backend, SevenZipBackend):
-            self._raise_if_backend_unavailable(backend, path)
-        return backend.list_archive(Path(path), password=password)
+        archive_path = Path(path)
+        self._ensure_supported(archive_path)
+        self._raise_if_backend_unavailable(self._dll_backend, archive_path)
+        return self._dll_backend.list_archive(archive_path, password=password)
 
     def analyze_archive(self, info: ArchiveInfo) -> ArchiveSafetyReport:
         """一覧情報だけを使って非破壊の安全診断を行う。"""
@@ -136,16 +132,9 @@ class ArchiveService:
     ) -> IntegrityCheckResult:
         """展開せずに全データのCRC/整合性を検査する。"""
         archive_path = Path(path)
-        if archive_path.suffix.lower() == ".zip" and self._encrypted_zip_uses_sevenzip(
-            archive_path
-        ):
-            self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
-            return self._sevenzip_backend.test_archive(archive_path, password=password)
-
-        backend = self._get_backend(archive_path)
-        if isinstance(backend, SevenZipBackend):
-            self._raise_if_backend_unavailable(backend, archive_path)
-        return backend.test_archive(archive_path, password=password)
+        self._ensure_supported(archive_path)
+        self._raise_if_backend_unavailable(self._dll_backend, archive_path)
+        return self._dll_backend.test_archive(archive_path, password=password)
 
     def backend_info(self) -> dict[str, object]:
         """診断レポート用に7-Zipバックエンド情報を返す。"""
@@ -153,18 +142,10 @@ class ArchiveService:
 
     def extract(self, path: str | Path, options: ExtractionOptions) -> None:
         archive_path = Path(path)
+        self._ensure_supported(archive_path)
         effective_options = self._effective_extraction_options(options)
-        if archive_path.suffix.lower() == ".zip" and self._encrypted_zip_uses_sevenzip(
-            archive_path
-        ):
-            self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
-            self._sevenzip_backend.extract(archive_path, effective_options)
-            return
-
-        backend = self._get_backend(archive_path)
-        if isinstance(backend, SevenZipBackend):
-            self._raise_if_backend_unavailable(backend, archive_path)
-        backend.extract(archive_path, effective_options)
+        self._raise_if_backend_unavailable(self._dll_backend, archive_path)
+        self._dll_backend.extract(archive_path, effective_options)
 
     def create(self, options: CompressionOptions) -> None:
         if options.output_path.exists():
@@ -208,22 +189,9 @@ class ArchiveService:
         self, path: str | Path, entry_name: str, password: Optional[str] = None
     ) -> Optional[bytes]:
         archive_path = Path(path)
-        extension = archive_path.suffix.lower()
-        if extension == ".zip":
-            if self._encrypted_zip_uses_sevenzip(archive_path):
-                self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
-                return self._sevenzip_backend.read_entry(
-                    archive_path, entry_name, password=password
-                )
-            return self._zip_backend.read_entry(
-                archive_path, entry_name, password=password
-            )
-        if extension in {".rar", ".7z"}:
-            self._raise_if_backend_unavailable(self._sevenzip_backend, archive_path)
-            return self._sevenzip_backend.read_entry(
-                archive_path, entry_name, password=password
-            )
-        return None
+        self._ensure_supported(archive_path)
+        self._raise_if_backend_unavailable(self._dll_backend, archive_path)
+        return self._dll_backend.read_entry(archive_path, entry_name, password=password)
 
     def check_sevenzip_available(self) -> tuple[bool, Optional[str]]:
         return self._sevenzip_backend.check_tool_availability()

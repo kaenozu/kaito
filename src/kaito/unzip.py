@@ -1,9 +1,9 @@
 """
 src/kaito/unzip.py
-ZIP/RAR/7zファイルの解凍・圧縮コアロジック (新アーキテクチャへの委譲)
-ZIP: zipfile 標準ライブラリ
-RAR/7z: 7-Zip CLI (7z.exe)
-関連: archive/service.py, archive/zip_backend.py, archive/sevenzip_backend.py
+ZIP/RAR/7zファイルの解凍・圧縮コアロジック (ArchiveServiceへの委譲)
+読み取り (ZIP/RAR/7z): 同梱 7z.dll (archive/dll_backend.py)
+作成 (平文 ZIP): zipfile / 作成 (暗号化 ZIP・7z): 7z.exe CLI
+関連: archive/service.py, archive/dll_backend.py, archive/zip_backend.py, archive/sevenzip_backend.py
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from kaito.archive.service import ArchiveService
+from kaito.archive.zip_encoding import get_zip_encodings  # noqa: F401 (再エクスポート)
 from kaito.domain.models import (
     ArchiveEntry,
     ExtractionOptions,
@@ -34,33 +35,6 @@ ZipEntry = ArchiveEntry
 ProgressCallback = Callable[[int, int, str], None]
 
 ARCHIVE_EXTENSIONS = frozenset({".zip", ".rar", ".7z"})
-
-# ZIPファイル名のエンコーディング解決
-_ZIP_ENCODINGS: tuple[str, ...] = ()
-_FALLBACK_ENCODINGS = ["utf-8", "cp932", "gbk", "cp949", "shift_jis", "euc-kr"]
-
-
-def get_zip_encodings() -> tuple[str, ...]:
-    """ZIPファイル名のデコードに試すエンコーディング一覧"""
-    global _ZIP_ENCODINGS
-    if not _ZIP_ENCODINGS:
-        import locale
-
-        seen: set[str] = set()
-        encodings: list[str] = []
-        for enc in _FALLBACK_ENCODINGS:
-            if enc not in seen:
-                seen.add(enc)
-                encodings.append(enc)
-        try:
-            sys_enc = locale.getencoding()
-            sys_lower = sys_enc.lower()
-            if sys_lower not in (e.lower() for e in seen):
-                encodings.append(sys_enc)
-        except Exception:
-            pass
-        _ZIP_ENCODINGS = tuple(encodings)
-    return _ZIP_ENCODINGS
 
 
 def is_supported(path: str | Path) -> bool:

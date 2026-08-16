@@ -19,11 +19,12 @@ from kaito.domain.errors import CancelledError
 from kaito.domain.models import CompressionOptions, ExtractionOptions
 
 
-def test_service_shares_cancel_event_with_both_backends() -> None:
+def test_service_shares_cancel_event_with_all_backends() -> None:
     cancel_event = threading.Event()
 
     service = ArchiveService(cancel_event=cancel_event)
 
+    assert service._dll_backend._cancel_event is cancel_event
     assert service._zip_backend._cancel_event is cancel_event
     assert service._sevenzip_backend._cancel_event is cancel_event
 

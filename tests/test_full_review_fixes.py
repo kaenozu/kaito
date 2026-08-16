@@ -148,21 +148,20 @@ def test_7zip_pinned_definition_is_single_source_of_truth() -> None:
     assert f"{pinned['dll_sha256']}  7z.dll" in sums
 
 
-def test_test_suite_does_not_spawn_bundled_7z() -> None:
-    """テスト実行時に bundled/7z.exe を subprocess で起動しない (回帰ガード)。
+def test_test_suite_spawns_bundled_7z_only_with_no_window() -> None:
+    """テスト内の 7z.exe 起動は CREATE_NO_WINDOW 付きに限る (回帰ガード)。
 
-    コンソール窓のポップアップ防止と外部依存ゼロのため、テストコードから
-    7z.exe を起動してはならない。アーカイブフィクスチャは
-    tests/fixtures/archive/ の uuencode 済み固定バイナリからデコードする。
+    AES暗号化フィクスチャの作成は bundled/7z.exe に依存するため、
+    「起動しない」から「コンソール窓を出さずに起動する」へ不変条件を更新する。
+    読み取り系が subprocess を生まないことは test_zip_read_path_is_unified_on_7z_dll
+    が別途検証する。
     """
     conftest = Path("tests/conftest.py").read_text(encoding="utf-8")
-    assert "_run_7z" not in conftest
-    assert "subprocess" not in conftest
+    assert "_run_7z" in conftest
+    assert "CREATE_NO_WINDOW" in conftest
 
-    dll_poc = Path("tests/test_dll_poc.py").read_text(encoding="utf-8")
-    assert "bundled/7z.exe" not in dll_poc
-    assert "_create_encrypted_zip" not in dll_poc
-    assert "_create_encrypted_7z" not in dll_poc
+    unzip = Path("tests/test_unzip.py").read_text(encoding="utf-8")
+    assert "CREATE_NO_WINDOW" in unzip
 
     encrypted_zip = Path("tests/test_encrypted_zip.py").read_text(encoding="utf-8")
     assert "subprocess" not in encrypted_zip
@@ -266,3 +265,38 @@ def test_preview_limits_are_user_configurable() -> None:
     assert 'self._settings.get("preview_max_size"' in unzip_compact
     assert 'self._settings.get("preview_max_image_pixels"' in unzip_compact
     assert 'tr("settings.preview")' in dialog_src
+
+
+def test_zip_read_path_is_unified_on_7z_dll() -> None:
+    """読み取り系は DllArchiveBackend (7z.dll) に統一され、zipfile は作成専用。
+
+    ZIP の stdlib zipfile 読み取りパスが復活すると回帰を検出する。
+    """
+    service = Path("src/kaito/archive/service.py").read_text(encoding="utf-8")
+    zip_backend = Path("src/kaito/archive/zip_backend.py").read_text(encoding="utf-8")
+    dll_backend = Path("src/kaito/archive/dll_backend.py").read_text(encoding="utf-8")
+
+    # 読み取り系は DllArchiveBackend にルーティングされる
+    assert "self._dll_backend.list_archive" in service
+    assert "self._dll_backend.read_entry" in service
+    assert "self._dll_backend.extract" in service
+    assert "self._dll_backend.test_archive" in service
+    assert "_encrypted_zip_uses_sevenzip" not in service
+
+    # 作成のみが既存バックエンド (zipfile / 7z CLI) に残る
+    assert "self._zip_backend.create" in service
+    assert "self._sevenzip_backend.create" in service
+    assert "self._zip_backend.extract" not in service
+    assert "self._sevenzip_backend.extract" not in service
+    assert "self._sevenzip_backend.list_archive" not in service
+
+    # zip_backend は作成専用 (読み取りメソッドを持たない)
+    assert "def create" in zip_backend
+    for method in ("def list_archive", "def read_entry", "def test_archive"):
+        assert method not in zip_backend
+    assert "def extract" not in zip_backend
+
+    # DLL バックエンドはプロセスを生まない (読み取り時のパスワード露出ゼロ)
+    assert "import subprocess" not in dll_backend
+    assert "subprocess.Popen" not in dll_backend
+    assert "subprocess.run" not in dll_backend
