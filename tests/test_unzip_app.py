@@ -1250,6 +1250,10 @@ class TestSettingsDialog:
         dlg._fixed_dest_var.get.return_value = "C:\\fixed"
         dlg._compression_var = MagicMock()
         dlg._compression_var.get.return_value = "標準"
+        dlg._preview_size_var = MagicMock()
+        dlg._preview_size_var.get.return_value = "10"
+        dlg._preview_pixels_var = MagicMock()
+        dlg._preview_pixels_var.get.return_value = "1200"
         dlg.destroy = MagicMock()
         return dlg
 

@@ -143,6 +143,17 @@ class UnzipApp(ctk.CTk, TkinterDnD.DnDWrapper):
                         "safety_max_path_length", SafetyLimits.max_path_length
                     )
                 ),
+                preview_max_size=int(
+                    self._settings.get(
+                        "preview_max_size", SafetyLimits.preview_max_size
+                    )
+                ),
+                preview_max_image_pixels=int(
+                    self._settings.get(
+                        "preview_max_image_pixels",
+                        SafetyLimits.preview_max_image_pixels,
+                    )
+                ),
             )
         )
 

@@ -22,7 +22,7 @@ The runner prepares test data, captures Before evidence, launches the packaged `
 2. **Rapid preview switching** — Alternate quickly between text and image entries and confirm the UI remains responsive and stale results do not overwrite the latest selection.
 3. **Blocked safety report** — Confirm full and selected extraction remain disabled after a blocked safety result.
 4. **Recent-history deletion** — Delete recent history, restart kaito, and confirm entries do not return.
-5. **Oversized image preview** — Confirm an oversized image is rejected without a hang or crash.
+5. **Oversized image preview** — Confirm an oversized image is rejected without a hang or crash. The size/pixel limits are user-configurable in 設定 → プレビュー上限 (MB / 万画素); confirm lowering a limit takes effect after restart.
 6. **Empty selected folder** — Create and extract a ZIP containing a completely empty selected root folder.
 7. **Explorer integration** — Install the generated installer, verify context-menu commands, uninstall, and confirm registrations are removed.
 

@@ -39,13 +39,13 @@ class SettingsDialog(ctk.CTkToplevel):
         self._on_language_changed = on_language_changed
 
         self.title(tr("settings.title"))
-        self.geometry("440x480")
+        self.geometry("440x560")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(6, weight=1)
 
         ctk.CTkLabel(
             self,
@@ -170,9 +170,37 @@ class SettingsDialog(ctk.CTkToplevel):
             anchor="w",
         ).grid(row=1, column=0, columnspan=2, padx=14, pady=(2, 10), sticky="w")
 
+        # --- プレビュー上限 ---
+        preview_frame = ctk.CTkFrame(self, corner_radius=12)
+        preview_frame.grid(row=6, column=0, padx=24, pady=4, sticky="ew")
+        preview_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            preview_frame,
+            text=tr("settings.preview"),
+            font=theme.font(13),
+        ).grid(row=0, column=0, columnspan=2, padx=14, pady=(8, 2), sticky="w")
+        ctk.CTkLabel(
+            preview_frame,
+            text=tr("settings.preview_max_size"),
+            font=theme.font(12),
+        ).grid(row=1, column=0, padx=(14, 4), pady=4, sticky="w")
+        self._preview_size_var = ctk.StringVar(value=self._preview_size_mb())
+        ctk.CTkEntry(
+            preview_frame, textvariable=self._preview_size_var, width=120
+        ).grid(row=1, column=1, padx=(4, 14), pady=4, sticky="e")
+        ctk.CTkLabel(
+            preview_frame,
+            text=tr("settings.preview_max_pixels"),
+            font=theme.font(12),
+        ).grid(row=2, column=0, padx=(14, 4), pady=(0, 10), sticky="w")
+        self._preview_pixels_var = ctk.StringVar(value=self._preview_pixels_man())
+        ctk.CTkEntry(
+            preview_frame, textvariable=self._preview_pixels_var, width=120
+        ).grid(row=2, column=1, padx=(4, 14), pady=(0, 10), sticky="e")
+
         # --- ボタン ---
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=6, column=0, padx=24, pady=(12, 20), sticky="e")
+        btn_frame.grid(row=7, column=0, padx=24, pady=(12, 20), sticky="e")
         btn_frame.grid_columnconfigure((0, 1), weight=0)
 
         ctk.CTkButton(
@@ -209,6 +237,8 @@ class SettingsDialog(ctk.CTkToplevel):
                 "dest_mode": self._dest_mode_value(),
                 "fixed_dest": self._fixed_dest_var.get(),
                 "compression_level": self._compression_level(),
+                "preview_max_size": self._preview_size_bytes(),
+                "preview_max_image_pixels": self._preview_pixels(),
             }
         )
 
@@ -266,3 +296,29 @@ class SettingsDialog(ctk.CTkToplevel):
             if label == self._compression_var.get():
                 return level
         return 1
+
+    def _preview_size_mb(self) -> str:
+        value = self._settings.get("preview_max_size")
+        try:
+            return str(max(1, int(value) // (1024 * 1024)))
+        except (TypeError, ValueError):
+            return "10"
+
+    def _preview_pixels_man(self) -> str:
+        value = self._settings.get("preview_max_image_pixels")
+        try:
+            return str(max(1, int(value) // 10_000))
+        except (TypeError, ValueError):
+            return "1200"
+
+    def _preview_size_bytes(self) -> int:
+        try:
+            return max(1, int(float(self._preview_size_var.get()) * 1024 * 1024))
+        except (ValueError, TypeError):
+            return int(self._settings.get("preview_max_size"))
+
+    def _preview_pixels(self) -> int:
+        try:
+            return max(1, int(float(self._preview_pixels_var.get()) * 10_000))
+        except (ValueError, TypeError):
+            return int(self._settings.get("preview_max_image_pixels"))
