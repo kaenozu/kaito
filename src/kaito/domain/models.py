@@ -7,7 +7,7 @@ src/kaito/domain/models.py
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
@@ -85,11 +85,15 @@ class ExtractionOptions:
     password: Optional[str] = None
     members: Optional[list[str]] = None
     on_progress: Optional[ProgressCallback] = None
-    max_total_size: int = 10 * 1024 * 1024 * 1024
-    max_file_size: int = 2 * 1024 * 1024 * 1024
-    max_entries: int = 100000
-    max_compression_ratio: float = 1000.0
-    max_path_length: int = 260
+    max_total_size: int = field(default_factory=lambda: SafetyLimits().max_total_size)
+    max_file_size: int = field(
+        default_factory=lambda: SafetyLimits().max_single_file_size
+    )
+    max_entries: int = field(default_factory=lambda: SafetyLimits().max_entries)
+    max_compression_ratio: float = field(
+        default_factory=lambda: SafetyLimits().max_compression_ratio
+    )
+    max_path_length: int = field(default_factory=lambda: SafetyLimits().max_path_length)
 
 
 @dataclass

@@ -222,3 +222,27 @@ def test_registry_inventory_is_single_source_of_truth() -> None:
 
     # インストーラーのアンインストール AppId と一致
     assert inv["app_id"] in iss
+
+
+def test_extraction_options_defaults_derive_from_safety_limits() -> None:
+    """ExtractionOptions の上限既定値は SafetyLimits から導出する（二重定義の構造的排除）。"""
+    source = Path("src/kaito/domain/models.py").read_text(encoding="utf-8")
+
+    # 上限の既定値は SafetyLimits から default_factory で導出する（折り返し整形に依存しない compact 比較）
+    compact = "".join(source.split())
+    assert "field(default_factory=lambda:SafetyLimits().max_total_size)" in compact
+    assert (
+        "field(default_factory=lambda:SafetyLimits().max_single_file_size)" in compact
+    )
+    assert "field(default_factory=lambda:SafetyLimits().max_entries)" in compact
+    assert (
+        "field(default_factory=lambda:SafetyLimits().max_compression_ratio)" in compact
+    )
+    assert "field(default_factory=lambda:SafetyLimits().max_path_length)" in compact
+
+    # 上限のリテラル値は SafetyLimits に 1 回だけ定義する（ExtractionOptions に再掲しない）
+    assert source.count("10 * 1024 * 1024 * 1024") == 1
+    assert source.count("2 * 1024 * 1024 * 1024") == 1
+    assert source.count("max_entries: int = 100000") == 1
+    assert source.count("max_compression_ratio: float = 1000.0") == 1
+    assert source.count("max_path_length: int = 260") == 1
