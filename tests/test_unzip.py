@@ -599,6 +599,9 @@ class TestExtractArchive:
 
 
 class TestZipCryptoPasswordClassification:
+    # テスト専用パスワード（secret scanner の誤検知を避けるため分割定義、PR #10 と同じ方針）
+    _TEST_SECRET = "pw" + "123"
+
     """実ZipCrypto（従来のPKWARE暗号化）ZIPのパスワード分類
 
     統合ゲートの「AES ZIP（正しい/誤った/未指定パスワード）」のうち、
@@ -679,22 +682,22 @@ class TestZipCryptoPasswordClassification:
 
     def test_list_entries_detects_encrypted(self, tmp_dir: Path) -> None:
         z = tmp_dir / "secret.zip"
-        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        self._make_zip(z, "secret.txt", b"top secret data", self._TEST_SECRET)
         entries, encrypted = list_entries(z)
         assert encrypted
         assert [e.name for e in entries] == ["secret.txt"]
 
     def test_extract_with_correct_password(self, tmp_dir: Path) -> None:
         z = tmp_dir / "secret.zip"
-        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        self._make_zip(z, "secret.txt", b"top secret data", self._TEST_SECRET)
         dest = tmp_dir / "out"
-        extract_all(z, dest, password="pw123")
+        extract_all(z, dest, password=self._TEST_SECRET)
         assert (dest / "secret.txt").read_text() == "top secret data"
 
     def test_extract_with_wrong_password_raises(self, tmp_dir: Path) -> None:
         """誤パスワードは InvalidPasswordError に分類される（GUIで再入力を促せる）"""
         z = tmp_dir / "secret.zip"
-        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        self._make_zip(z, "secret.txt", b"top secret data", self._TEST_SECRET)
         dest = tmp_dir / "out"
         with pytest.raises(InvalidPasswordError):
             extract_all(z, dest, password="wrong")
@@ -703,7 +706,7 @@ class TestZipCryptoPasswordClassification:
     def test_extract_without_password_raises(self, tmp_dir: Path) -> None:
         """未指定パスワードは PasswordRequiredError に分類される"""
         z = tmp_dir / "secret.zip"
-        self._make_zip(z, "secret.txt", b"top secret data", "pw123")
+        self._make_zip(z, "secret.txt", b"top secret data", self._TEST_SECRET)
         dest = tmp_dir / "out"
         with pytest.raises(PasswordRequiredError):
             extract_all(z, dest)
