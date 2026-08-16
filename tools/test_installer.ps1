@@ -20,16 +20,22 @@ $SelfTestOutput = Join-Path $ArtifactsDir 'kaito-installed-self-test.txt'
 $BackendOutput = Join-Path $ArtifactsDir 'kaito-installed-backend.json'
 $ArchiveSmokeOutput = Join-Path $ArtifactsDir 'kaito-installed-archive-smoke.json'
 
-$ExtractKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
-    "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_extract"
+$InventoryPath = Join-Path $PSScriptRoot 'registry-inventory.json'
+if (-not (Test-Path -LiteralPath $InventoryPath -PathType Leaf)) {
+    throw "Registry inventory is missing: $InventoryPath"
 }
-$TestKeys = @('.zip', '.rar', '.7z') | ForEach-Object {
-    "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\kaito_test"
-}
-$CompressKeys = @(
-    'HKCU:\Software\Classes\*\shell\kaito_compress',
-    'HKCU:\Software\Classes\Directory\shell\kaito_compress'
-)
+$Inventory = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
+
+# レジストリ鍵の在庫（拡張子・アクション）は tools/registry-inventory.json に一元管理。
+$ExtractKeys = @($Inventory.extensions | ForEach-Object {
+    "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\$($Inventory.extract_action)"
+})
+$TestKeys = @($Inventory.extensions | ForEach-Object {
+    "HKCU:\Software\Classes\SystemFileAssociations\$_\shell\$($Inventory.test_action)"
+})
+$CompressKeys = @($Inventory.compress_roots | ForEach-Object {
+    "HKCU:\Software\Classes\$_\shell\$($Inventory.compress_action)"
+})
 $ContextKeys = @($ExtractKeys + $TestKeys + $CompressKeys)
 
 try {
@@ -102,11 +108,13 @@ try {
     foreach ($Key in $ContextKeys) {
         if (-not (Test-Path $Key)) { throw "Context-menu key missing: $Key" }
     }
-    if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_extract') {
-        throw 'Extract action must not be registered for unsupported .txt files'
-    }
-    if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.txt\shell\kaito_test') {
-        throw 'Integrity-test action must not be registered for unsupported .txt files'
+    foreach ($Extension in $Inventory.probe_extensions) {
+        if (Test-Path "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\$($Inventory.extract_action)") {
+            throw "Extract action must not be registered for unsupported $Extension files"
+        }
+        if (Test-Path "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\$($Inventory.test_action)") {
+            throw "Integrity-test action must not be registered for unsupported $Extension files"
+        }
     }
 
     $Uninstaller = Join-Path $InstallDir 'unins000.exe'

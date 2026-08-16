@@ -23,16 +23,12 @@ function Test-IsAdministrator {
 }
 
 function Get-RegistrySnapshot {
-    $keys = @(
-        'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\kaito_extract',
-        'HKCU:\Software\Classes\SystemFileAssociations\.rar\shell\kaito_extract',
-        'HKCU:\Software\Classes\SystemFileAssociations\.7z\shell\kaito_extract',
-        'HKCU:\Software\Classes\*\shell\kaito_compress',
-        'HKCU:\Software\Classes\Directory\shell\kaito_compress',
-        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B8F4C3D2-E1A0-4F6B-9C8D-7E5A3B2C1D0F}_is1'
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Keys
     )
 
-    return @($keys | ForEach-Object {
+    return @($Keys | ForEach-Object {
         [ordered]@{
             path = $_
             exists = Test-Path -LiteralPath $_
@@ -155,6 +151,23 @@ if ($InstallPath) {
     $InstallPath = [System.IO.Path]::GetFullPath($InstallPath)
 }
 
+$InventoryPath = Join-Path $PSScriptRoot 'registry-inventory.json'
+if (-not (Test-Path -LiteralPath $InventoryPath -PathType Leaf)) {
+    throw "Registry inventory is missing: $InventoryPath"
+}
+$Inventory = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
+
+# レジストリ鍵の在庫（拡張子・アクション・GUID）は tools/registry-inventory.json に一元管理。
+$RegistryKeys = @()
+foreach ($Extension in $Inventory.extensions) {
+    $RegistryKeys += "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\$($Inventory.extract_action)"
+    $RegistryKeys += "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\$($Inventory.test_action)"
+}
+foreach ($Root in $Inventory.compress_roots) {
+    $RegistryKeys += "HKCU:\Software\Classes\$Root\shell\$($Inventory.compress_action)"
+}
+$RegistryKeys += "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{$($Inventory.app_id)}_is1"
+
 New-Item -ItemType Directory -Path $EvidenceRoot -Force | Out-Null
 
 $os = Get-CimInstance Win32_OperatingSystem
@@ -196,7 +209,7 @@ $snapshot = [ordered]@{
     system_7zip_commands = $systemSevenZip
     program_files_7zip = $programFilesSevenZip
     processes = Get-ProcessSnapshot
-    registry = Get-RegistrySnapshot
+    registry = Get-RegistrySnapshot -Keys $RegistryKeys
     install_path = [ordered]@{
         path = $InstallPath
         exists = if ($InstallPath) { Test-Path -LiteralPath $InstallPath } else { $null }
@@ -211,7 +224,7 @@ $snapshot = [ordered]@{
 if ($Phase -eq 'After') {
     Start-Sleep -Seconds 2
     $processesAfterDelay = Get-ProcessSnapshot
-    $registryAfterDelay = Get-RegistrySnapshot
+    $registryAfterDelay = Get-RegistrySnapshot -Keys $RegistryKeys
     $tempAfterDelay = Get-TempSnapshot
 
     $kaitoProcesses = @($processesAfterDelay | Where-Object { $_.name -eq 'kaito.exe' })

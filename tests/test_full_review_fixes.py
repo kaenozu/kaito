@@ -186,3 +186,39 @@ def test_manual_acceptance_runner_chains_prepare_and_evidence() -> None:
     assert prepare.count("Kaito-Acceptance-") == 1
     assert prepare.count("2026!") == 1
     assert prepare.count("12345678") == 1
+
+
+def test_registry_inventory_is_single_source_of_truth() -> None:
+    inv = json.loads(Path("tools/registry-inventory.json").read_text(encoding="utf-8"))
+    installer_test = Path("tools/test_installer.ps1").read_text(encoding="utf-8")
+    evidence = Path("tools/collect_acceptance_evidence.ps1").read_text(encoding="utf-8")
+    context_menu = Path("src/kaito/context_menu.py").read_text(encoding="utf-8")
+    iss = Path("installer/kaito.iss").read_text(encoding="utf-8")
+
+    # 両検証スクリプトはレジストリ在庫を tools/registry-inventory.json から読む
+    assert "registry-inventory.json" in installer_test
+    assert "registry-inventory.json" in evidence
+
+    # 在庫の値（拡張子・アクション名・AppId）を PS1 に直書きしない
+    for literal in (
+        ".zip",
+        ".rar",
+        ".7z",
+        "kaito_extract",
+        "kaito_test",
+        "kaito_compress",
+        "B8F4C3D2",
+    ):
+        assert literal not in installer_test
+        assert literal not in evidence
+
+    # ランタイム（context_menu.py）の登録定義と一致
+    for extension in inv["extensions"]:
+        assert f'"{extension}"' in context_menu
+    for action in (inv["extract_action"], inv["test_action"], inv["compress_action"]):
+        assert action in context_menu
+    for label in inv["labels"].values():
+        assert label in context_menu
+
+    # インストーラーのアンインストール AppId と一致
+    assert inv["app_id"] in iss
