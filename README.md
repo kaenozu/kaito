@@ -164,7 +164,7 @@ kaitoは7-Zip 26.02の`7z.exe`と`7z.dll`を同梱します。
 
 ## テストデータ
 
-RAR E2Eテストには、固定コミットのlibarchive公式テストfixtureを使用しています。出典、ライセンス、uuencode入力とデコード後RARのSHA-256は`tests/fixtures/rar/`に記録されています。fixtureはリリース成果物には含まれません。
+RAR E2Eテストには、固定コミットのlibarchive公式テストfixtureを使用しています。出典、ライセンス、uuencode入力とデコード後RARのSHA-256は`tests/fixtures/rar/`に記録されています。fixtureはビルド成果物には含まれません。
 
 ## 既知の制限
 
