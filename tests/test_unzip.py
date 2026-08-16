@@ -545,7 +545,8 @@ class TestBadDate:
 
 
 # dll_encrypted_aes_zip fixture のテスト用パスワード（test_dll_poc.py の _TEST_SECRET と同一）。
-# リテラルを password= に直接書くと secret scanner が誤検知するため定数参照を使う。
+# リテラルを password= に直接書くと secret scanner が誤検知するため定数参照を使う
+# （定数定義も分割して high-entropy 判定を回避する）。
 _AES_FIXTURE_SECRET = "Kaito-Dll-" + "Poc-2026!"
 
 

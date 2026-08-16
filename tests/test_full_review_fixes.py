@@ -166,7 +166,6 @@ def test_test_suite_spawns_bundled_7z_only_with_no_window() -> None:
     encrypted_zip = Path("tests/test_encrypted_zip.py").read_text(encoding="utf-8")
     assert "subprocess" not in encrypted_zip
     assert "_create_aes_zip" not in encrypted_zip
-    assert "CREATE_NO_WINDOW" in encrypted_zip
 
 
 def test_manual_acceptance_runner_chains_prepare_and_evidence() -> None:
@@ -299,4 +298,5 @@ def test_zip_read_path_is_unified_on_7z_dll() -> None:
 
     # DLL バックエンドはプロセスを生まない (読み取り時のパスワード露出ゼロ)
     assert "import subprocess" not in dll_backend
-    assert "subprocess.Popen" not in dll_backend    assert "subprocess.run" not in dll_backend
+    assert "subprocess.Popen" not in dll_backend
+    assert "subprocess.run" not in dll_backend

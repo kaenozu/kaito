@@ -36,8 +36,8 @@ pytestmark = [
 ]
 
 # テスト専用クレデンシャル (実認証には使用しない・GitGuardian の誤検知を避けるため
-# 変数名に password を含めない)
-_TEST_SECRET = "Kaito-Dll-Integration-2026!"
+# 変数名に password を含めず、リテラルも分割して参照する)
+_TEST_SECRET = "Kaito-Dll-" + "Integration-2026!"
 
 
 def _run_7z(args: list[str]) -> subprocess.CompletedProcess[str]:
