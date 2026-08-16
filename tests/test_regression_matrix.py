@@ -42,8 +42,8 @@ MATRIX: list[tuple[str, str, str]] = [
     ),
     (
         "zip.aes.extract",
-        "AES ZIPの展開は明確なエラー（ExtractionFailedError）",
-        "test_unzip.py::TestAesZipBehavior::test_extract_raises_clear_error",
+        "AES ZIPの展開（正しいパスワードで展開 / 誤パスワードは InvalidPasswordError）",
+        "test_unzip.py::TestAesZipBehavior::test_extract_wrong_password_fails_cleanly",
     ),
     (
         "zip.password.correct",

@@ -30,7 +30,6 @@ No validation can make an archive parser risk-free. Keep kaito and its bundled 7
 - Creating encrypted archives still invokes the bundled `7z.exe` CLI, whose `-p` switch places the password in the process command line. On Windows, another process running as the same user may be able to inspect process command lines while an encrypted archive is being created.
 - Avoid handling sensitive encrypted archives on shared or untrusted Windows sessions.
 
->>>>>>> 129b429 (feat: 読み取り系バックエンドを同梱 7z.dll (IInArchive) に一本化)
 ## Bundled backend integrity
 
 Packaged builds only use the bundled `7z.exe` and `7z.dll`. Their SHA-256 values are fixed in source and in `bundled/SHA256SUMS`. A frozen executable does not fall back to a system-installed 7-Zip when the bundled copy is missing or has the wrong hash.
