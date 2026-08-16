@@ -167,3 +167,22 @@ def test_test_suite_does_not_spawn_bundled_7z() -> None:
     encrypted_zip = Path("tests/test_encrypted_zip.py").read_text(encoding="utf-8")
     assert "subprocess" not in encrypted_zip
     assert "_create_aes_zip" not in encrypted_zip
+
+
+def test_manual_acceptance_runner_chains_prepare_and_evidence() -> None:
+    runner = Path("tools/run_manual_acceptance.ps1").read_text(encoding="utf-8")
+    prepare = Path("tools/prepare_acceptance.ps1").read_text(encoding="utf-8")
+
+    # ワンコマンドの手動受け入れセッション（prepare -> Before -> 起動 -> After）
+    assert "prepare_acceptance.ps1" in runner
+    assert "collect_acceptance_evidence.ps1" in runner
+    assert "-Phase Before" in runner
+    assert "-Phase After" in runner
+    assert "GUI_ACCEPTANCE.md" in runner
+
+    # テスト用パスワードは名前付き定数に集約（断片リテラルは定義の1箇所のみ）
+    assert "EncryptedArchivePassword" in prepare
+    assert "EncryptedRarPassword" in prepare
+    assert prepare.count("Kaito-Acceptance-") == 1
+    assert prepare.count("2026!") == 1
+    assert prepare.count("12345678") == 1

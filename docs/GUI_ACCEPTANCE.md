@@ -6,6 +6,16 @@ This checklist complements automated tests for personal use. Run it when a chang
 
 The `packaged-gui-smoke` job runs focused regressions, builds `kaito.exe`, starts the packaged GUI, requires a live top-level window, captures a screenshot, and uploads the executable and test output.
 
+## Manual session (one command)
+
+For a local acceptance session with evidence, build the artifacts first, then run:
+
+```powershell
+pwsh tools/run_manual_acceptance.ps1 -ArtifactRoot <repo-or-build-root>
+```
+
+The runner prepares test data, captures Before evidence, launches the packaged `kaito.exe`, waits for you to complete the checks below, then captures After evidence with a cleanup assessment (no leftover kaito or bundled 7-Zip processes).
+
 ## Optional interaction checks
 
 1. **Encrypted extraction password** — Confirm extraction-password fields are masked, cancel clears the value, and reopening does not restore it.
