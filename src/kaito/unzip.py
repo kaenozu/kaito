@@ -8,6 +8,7 @@ ZIP/RAR/7zファイルの解凍・圧縮コアロジック (ArchiveServiceへの
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -64,14 +65,18 @@ def extract_archive(
     dest: str | Path,
     password: Optional[str] = None,
     on_progress: Optional[ProgressCallback] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> None:
-    """アーカイブを展開する"""
+    """アーカイブを展開する。
+
+    `cancel_event` が指定された場合は、その同一 Event を ArchiveService と
+    backend へ渡し、進行中の展開処理までキャンセルを伝播する。
+    """
 
     def cb(current: int, total: int, name: str) -> None:
         if on_progress:
             on_progress(current, total, name)
 
-    # 展開先の SafetyLimits を適用
     limits = SafetyLimits()
     options = ExtractionOptions(
         dest_dir=Path(dest),
@@ -82,7 +87,12 @@ def extract_archive(
         max_entries=limits.max_entries,
         max_compression_ratio=limits.max_compression_ratio,
     )
-    _get_service().extract(path, options)
+    service = (
+        ArchiveService(cancel_event=cancel_event)
+        if cancel_event is not None
+        else _get_service()
+    )
+    service.extract(path, options)
 
 
 def extract(
