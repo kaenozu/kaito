@@ -223,9 +223,7 @@ class ArchiveService:
         archive_path = Path(path)
         self._ensure_supported(archive_path)
         self._raise_if_backend_unavailable(self._dll_backend, archive_path)
-        data = self._dll_backend.read_entry(
-            archive_path, entry_name, password=password
-        )
+        data = self._dll_backend.read_entry(archive_path, entry_name, password=password)
         if data is not None:
             self._validate_preview_image_pixels(entry_name, data, archive_path)
         return data
