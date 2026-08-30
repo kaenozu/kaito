@@ -6,10 +6,13 @@ src/kaito/archive/service.py
 
 from __future__ import annotations
 
+import io
 import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional
+
+from PIL import Image
 
 from kaito.archive.inspection import (
     ArchiveSafetyReport,
@@ -23,6 +26,7 @@ from kaito.archive.zip_backend import ZipBackend
 from kaito.domain.errors import (
     CompressionFailedError,
     ExternalToolNotFoundError,
+    UnsafeArchiveError,
     UnsupportedFormatError,
 )
 from kaito.domain.models import (
@@ -31,6 +35,11 @@ from kaito.domain.models import (
     CompressionOptions,
     ExtractionOptions,
     SafetyLimits,
+)
+
+
+_PREVIEW_IMAGE_EXTENSIONS = frozenset(
+    {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"}
 )
 
 
@@ -185,13 +194,41 @@ class ArchiveService:
             )
         raise UnsupportedFormatError(extension)
 
+    def _validate_preview_image_pixels(
+        self, entry_name: str, data: bytes, archive_path: Path
+    ) -> None:
+        """画像をデコードする前にヘッダー寸法だけでピクセル上限を検証する。"""
+        if Path(entry_name).suffix.lower() not in _PREVIEW_IMAGE_EXTENSIONS:
+            return
+
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+        except (OSError, ValueError):
+            # 破損/非画像データは従来どおりGUI側のプレビュー失敗処理へ渡す。
+            return
+
+        pixels = width * height
+        limit = self._safety_limits.preview_max_image_pixels
+        if pixels > limit:
+            raise UnsafeArchiveError(
+                f"画像プレビューの画素数が上限を超えています "
+                f"({width}x{height}={pixels} > {limit})",
+                archive_path=str(archive_path),
+            )
+
     def read_entry(
         self, path: str | Path, entry_name: str, password: Optional[str] = None
     ) -> Optional[bytes]:
         archive_path = Path(path)
         self._ensure_supported(archive_path)
         self._raise_if_backend_unavailable(self._dll_backend, archive_path)
-        return self._dll_backend.read_entry(archive_path, entry_name, password=password)
+        data = self._dll_backend.read_entry(
+            archive_path, entry_name, password=password
+        )
+        if data is not None:
+            self._validate_preview_image_pixels(entry_name, data, archive_path)
+        return data
 
     def check_sevenzip_available(self) -> tuple[bool, Optional[str]]:
         return self._sevenzip_backend.check_tool_availability()
