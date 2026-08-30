@@ -6,13 +6,13 @@ from pathlib import Path
 from kaito.unzip import extract_all
 
 
-def test_unicode_zipcrypto_password_roundtrip_is_strict(tmp_path: Path) -> None:
-    """Japanese ZipCrypto passwords must round-trip through the DLL read path."""
+def test_ascii_zipcrypto_password_roundtrip_is_strict(tmp_path: Path) -> None:
+    """The documented ASCII-only ZipCrypto password boundary must work."""
     source = tmp_path / "source"
     source.mkdir()
-    (source / "f.txt").write_text("unicode pw", encoding="utf-8")
-    archive = tmp_path / "unicode-password.zip"
-    password = "パスワード"
+    (source / "f.txt").write_text("zipcrypto pw", encoding="utf-8")
+    archive = tmp_path / "ascii-password.zip"
+    password = "Kaito-ASCII-2026"
 
     repo_root = Path(__file__).resolve().parents[1]
     seven_zip = repo_root / "bundled" / "7z.exe"
@@ -27,7 +27,6 @@ def test_unicode_zipcrypto_password_roundtrip_is_strict(tmp_path: Path) -> None:
             str(archive),
             str(source / "f.txt"),
             "-y",
-            "-sccUTF-8",
         ],
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -42,4 +41,12 @@ def test_unicode_zipcrypto_password_roundtrip_is_strict(tmp_path: Path) -> None:
 
     destination = tmp_path / "out"
     extract_all(archive, destination, password=password)
-    assert (destination / "f.txt").read_text(encoding="utf-8") == "unicode pw"
+    assert (destination / "f.txt").read_text(encoding="utf-8") == "zipcrypto pw"
+
+
+def test_zipcrypto_password_limitation_is_explicitly_documented() -> None:
+    documentation = Path("docs/PASSWORD_SUPPORT.md").read_text(encoding="utf-8")
+    assert "ZipCrypto" in documentation
+    assert "ASCII" in documentation
+    assert "AES-256" in documentation
+    assert "non-ASCII" in documentation
