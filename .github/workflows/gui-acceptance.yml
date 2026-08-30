@@ -1,6 +1,20 @@
 name: GUI acceptance
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/gui-acceptance.yml"
+      - "docs/GUI_ACCEPTANCE.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "build.spec"
+      - "installer/**"
+      - "src/kaito/archive/**"
+      - "src/kaito/gui/**"
+      - "src/kaito/diagnostics.py"
+      - "tests/test_full_review_fixes.py"
+      - "tests/test_productivity_services.py"
   pull_request:
     branches: [master]
     paths:
