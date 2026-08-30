@@ -128,15 +128,19 @@ class ExtractWorker:
                     archive_dest,
                     password=password,
                     on_progress=on_progress,
+                    cancel_event=self.cancel_event,
                 )
                 # 完了したアーカイブは成功として数える
                 result.success_count += 1
                 result.extracted_dests.append(archive_dest)
-                # キャンセルはアーカイブ単位の境界で確認（完了済みは数える）
+                # キャンセルはアーカイブ単位の境界でも確認（完了済みは数える）
                 if self.cancel_event.is_set():
                     result.canceled = True
                     break
             except Exception as exc:  # アーカイブ単位で失敗を集計して続行
+                if self.cancel_event.is_set():
+                    result.canceled = True
+                    break
                 result.errors.append(
                     ExtractError(archive_name=entry_archive_name, message=str(exc))
                 )
