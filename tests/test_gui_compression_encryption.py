@@ -23,7 +23,9 @@ _TEST_PASSWORD = "Kaito-GUI-Acceptance-2026!"
 
 
 @pytest.mark.parametrize("suffix", [".zip", ".7z"])
-def test_password_enabled_create_archive_round_trip(tmp_path: Path, suffix: str) -> None:
+def test_password_enabled_create_archive_round_trip(
+    tmp_path: Path, suffix: str
+) -> None:
     """The public GUI wrapper must reach real encrypted ZIP/7z creation."""
     source = tmp_path / "secret.txt"
     source.write_text("encrypted from GUI path", encoding="utf-8")
@@ -77,7 +79,9 @@ def test_cancelled_password_prompt_does_not_start_or_create_artifact(
         _compress_sources = [source]
         _compress_no_dialog = False
 
-        def _prompt_compression_password(self, _output: Path) -> CompressionPasswordChoice:
+        def _prompt_compression_password(
+            self, _output: Path
+        ) -> CompressionPasswordChoice:
             return CompressionPasswordChoice(cancelled=True, password=None)
 
         def _start_compress(self, target: Path, password: str | None = None) -> None:
