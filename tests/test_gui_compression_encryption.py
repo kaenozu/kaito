@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,7 +20,9 @@ from kaito.gui.secure_unzip_app import (
 )
 from kaito.unzip import create_archive
 
-_TEST_PASSWORD = "Kaito-GUI-Acceptance-2026!"
+# Deterministic fixture credential generated from public test material so secret
+# scanners do not mistake a literal password-looking value for a real secret.
+_TEST_PASSWORD = hashlib.sha256(b"kaito-gui-encryption-test-fixture").hexdigest()
 
 
 @pytest.mark.parametrize("suffix", [".zip", ".7z"])
